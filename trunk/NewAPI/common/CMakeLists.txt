@@ -1,0 +1,70 @@
+# build 目录下执行：
+#  指定上级cmakelists 文件，生成makefile   
+#    cmake -DCMAKE_BUILD_TYPE=Release ..
+#    cmake -DCMAKE_BUILD_TYPE=Debug ..
+#  make -j4（4线程并行编译）
+
+# 指定CMake最低版本
+cmake_minimum_required(VERSION 3.10)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
+
+# cmake 生成 compile_commands.json
+# cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
+# 手动 ln -s build/compile_commands.json ./compile_commands.json 供clangd用
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# 指定C++标准（与settings.json对齐）
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 核心：模拟Linux编译环境
+set(CMAKE_SYSTEM_NAME Linux)
+# 静态编译标志（检查静态链接问题）
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+# 启用所有警告
+add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
+
+# ================= 编译选项配置 =================
+# 全局基础 FLAGS
+set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+
+# Debug模式（极致调试）
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
+# Release模式（低延迟+高性能）
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
+
+# 链接器优化（剔除未使用段+加固）+ 必需的系统动态库
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-lpthread -lrt -ldl")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Wl,--gc-sections -Wl,-z,relro,-z,now -lpthread -lrt -ldl")
+
+set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "-lpthread -lrt -ldl")
+set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "-Wl,--gc-sections -Wl,-z,relro,-z,now -lpthread -lrt -ldl")
+
+# ================= 输出目录配置 =================
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
+
+# 收集common的源文件（src下所有.cpp）
+file(GLOB COMMON_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+
+# 编译为静态库（名称：lbcommon）
+# 加 -fPIC 让静态库可被 SHARED 库链接（api 输出 .so 需要）
+add_library(lbcommon STATIC ${COMMON_SRC})
+set_target_properties(lbcommon PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# 指定common的头文件路径（供其他模块引用）
+target_include_directories(lbcommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# 查找SolarFlare zf库（TCPDirect）
+# find_library(ZF_LIB NAMES zf PATHS /opt/solarflare/lib /usr/local/lib NO_DEFAULT_PATH)
+# if(ZF_LIB)
+#    target_link_libraries(lbcommon PUBLIC ${ZF_LIB})
+#    target_include_directories(lbcommon PUBLIC /opt/solarflare/include)
+#    add_compile_options(-DHAS_TCPDIRECT)
+# endif()
+
+# 链接必要的系统库
+target_link_libraries(lbcommon PUBLIC pthread rt dl)

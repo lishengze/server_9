@@ -1,0 +1,10 @@
+# 构建产物
+build/
+*.o
+*.a
+*.so
+
+# 工具/缓存
+.cache/
+.codebuddy/
+.hermes/

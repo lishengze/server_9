@@ -1,0 +1,180 @@
+
+第一步，使用 ai 生成基础库的架构 markdown 文件
+请使用相应的工具，遍历读取 /home/zouy/src/common/include 和 /home/zouy/src/common/src 
+下的所有源文件，进行深度逆向分析，不要遗漏任何文件。
+分析完成后，保存到向量库中，并将完整的分析报告写入到 
+/home/zouy/src/common/lbcommon_arch.md 文件中。
+如果一次无法完成整个工作，请合理拆分。
+
+common/include 下的头文件按如下分类组织
+1. 基础库类型与错误定义：
+   comm_sys.h , comm_errno.h 
+2. 通用工具函数封装：
+   mutils.h , cstr_utils.h , lib_loader.h , sort_comm.h
+3. 文件解析:
+   ini_file.h , csv_file.h
+4. 环形队列:
+   que_comm.h , que_swr_buf.h , que_mth_buf.h , que_proc_buf.h , que_swr_fixed.h , que_mth_fixed.h , que_spw_fixed.h
+5. 并发与同步控制
+   matomic.h , mlock.h , state_machine.h , wait_poll.h , wait_wake.h
+6. 内存池
+   fix_pool.h , dync_pool.h , shmem_pool.h
+7. 特殊用途的数据结构
+   hash_comm.h , hash_map_mth.h , hash_vec.h , ring_hash.h , ring_window.h , smth_vec.h
+8. 异步事件与线程
+   mevent.h , time_event.h , thread_comm.h , simple_thread.h , mthread.h , time_thread.h
+9. 日志
+   mlog.h
+10. 网络异步IO
+   comm_sock , comm_aio.h , tcp_ch.h , udp_ch.h , heart_manage.h , aio_recv_buf.h , aio_recv_pool.h , aio_recv_que.h , aio_tcp.h , aio_udp.h 
+
+该 Markdown 文件必须严格遵循以下结构，不要遗漏任何一项：
+
+第一部分：代码风格与规范提取
+
+    提炼出该库使用的命名规范（如：函数名是下划线还是驼峰？是否有特定前缀？结构体是否有 t_ 或 _s 后缀？）
+    注释风格（Doxygen? 行内注释规范?）
+    错误处理机制风格（返回错误码? 全局变量? 断言?）
+    日志打印规范
+
+第二部分：功能模块分类总览
+
+    请不要按文件列表罗列，而是根据代码的实际用途，将 common 下的类/结构体/函数
+	按上面要求分类组织，总结概括每个模块的职责和核心特点。
+
+第三部分：各功能模块详细说明
+
+    请按照第二部分的几个功能模块分类，使用 Markdown 的二级或三级标题为每个分类建立独立章节。
+    在每个分类章节下，详细说明：
+        该分类包含的核心数据结构（附带简要说明）
+        该分类对外暴露的 API 函数签名及功能详解
+        该分类特有的内存管理规则和使用避坑指南
+
+请确保最终输出是一个排版清晰、带有完整分类目录结构的单一 Markdown 文件。
+
+
+
+第二步，使用 ai 生成规划 markdown 文件
+# 目标
+请你根据这份 lb_common 公共库完整架构文档（@docs/lb_common_arch.md），帮我做一次“规则与提示的规划”。
+
+要求：
+1) 输出一个“规则拆分方案”，包括：
+   - 每条规则覆盖的“主题/模块”（如：基础类型与空指针、队列选型、内存池选型、锁选型、网络/套接字、AIO与缓存模式、错误处理与错误码、命名与代码风格等）。
+   - 每条规则的“触发方式”建议：
+     - 适合 alwaysApply 的全局规范（如：必须使用 lb_common、命名风格）；
+     - 适合用 globs 的（如只对 *.h/*.cpp 生效）；
+     - 适合用 regex 的（如拦截原生 API：std::mutex、socket()、fread 等）。
+   - 明确：哪些规则适合“自动替换（安全 1:1）”，哪些只适合“提示（不自动替换）”。
+
+2) 同时输出一个“Prompt（系统提示）大纲”，包含：
+   - 必须强调的“底线规则”（比如：类型/NULL/TRUE/FALSE、命名风格、错误码）；
+   - 关键选型决策树（队列/内存池/哈希/AIO/锁）；
+   - 常见坑与副作用（原地修改、对齐要求等）；
+   - 什么时候应该“去查完整架构文档”。
+
+请直接输出“规则拆分方案”和“Prompt 大纲”，先不写具体规则文件，我再根据这个方案决定每条规则的细节。
+
+
+
+第三步，生成 rules  markdown 文件
+# 背景
+我们正在为 lb_common 公共库建立 Continue 规则。我已经根据架构文档，和你一起规划出各个模块的规则需求，并修改保存在docs/lbcommon_plan.md
+
+# 目标
+请你根据架构文档（@docs/lbcommon_arch.md）和规划文档（@docs/lbcommon_plan.md），为规划中列出的所有模块逐个生成具体的规则文件。
+
+# 核心原则
+1. **严格遵从规划**：规则的数量、模块划分、触发方式（是自动替换还是仅提示），必须严格以 @docs/lb_common_plan.md 中的要求为准，不要自行发挥增删模块。
+2. **精准拦截**：对于规划中明确要求“拦截原生 API”的规则，必须写出高质量的正则表达式（如拦截 std::mutex、socket(、fread 等）。
+3. **安全第一**：对于有前置条件、多场景选型的 API（如锁的选择、内存池的选择），规则中只能使用 action 进行提示，**绝对不能使用 replace 进行自动替换**。
+
+# 格式要求
+请为规划中的每一个模块生成一个独立的规则文件，使用 Continue 推荐的 .mdc 格式（或带 YAML 头的 Markdown），格式模板如下：
+1) 在文件开头注释说明这是一个规则文件和针对哪个模块的
+2) 每条规则生成一个独立的 Markdown 文件，使用 Continue 推荐的规则格式：
+   - YAML 前置字段：name、description、globs（如适用）、regex（如适用）、alwaysApply（明确写 true/false）；
+   - 正文部分用 Markdown 写清楚：
+     - 本规则要达成的目标；
+     - 需要拦截/匹配的 API/模式；
+     - 替换/改写建议（如果适合自动替换，给出明确“替换为”示例；如果不适合，写明“仅提示”）；
+     - 注意事项/坑（对齐、副作用等）。
+3) 文件名按模块命名，比如：线程安全的锁机制 lbcommon-lock.md
+4) 对“拦截原生 API”的规则，优先使用 regex（比如 std::mutex、pthread_mutex_t、socket(、bind(、send(、recv( 等），并在 description 中写清楚拦截意图。
+5) 对“纯风格/选型提示”的规则，用 alwaysApply: true。
+
+
+
+第四步，生成全局的 prompt 文件，供以后对话使用
+# 背景
+我们正在为 lb_common 公共库建立 Continue 规则。我们已经根据架构文档（@docs/lbcommon_arch.md）和规划文档（@docs/lbcommon_plan.md），
+生成了各个模块的规则文件。
+
+# 目标
+请根据 lb_common 公共库架构文档（@docs/lbcommon_arch.md）和规划文档（@docs/lbcommon_plan.md），为我生成一个“全局系统提示（System Prompt）”。
+
+# ⚠️ 核心认知前提（极其重要）
+在我们的配置体系中，**微观 API 拦截已经由各个模块的 Rules 文件全面接管了**（比如把原生 socket 换成 sock_utils，把原生 mutex 换成 cmutex 等）。
+因此，你现在要写的这个 Prompt，**绝对不能再去罗列具体的 API 替换规则、基础类型命名细节或微观的组件选型 if-else**，那些是 Rules 干的事。
+
+# 你的任务：塑造“基于 lb_common 编程的心智模型”
+这个 Prompt 的受众是“即将开始设计业务代码的 AI”。你需要让它像一个熟练掌握 lb_common 的资深架构师一样思考。请严格按以下四个维度来写：
+
+## 1. 领域边界与优先级声明（确立 lb_common 的统治领域）
+开篇必须明确 lb_common 与 C++ 标准库的“领地边界”，要求 AI 严格遵守以下分层原则：
+- **底层/性能敏感领域（lb_common 绝对优先）**：当业务需求涉及网络通信、多线程并发与同步、底层内存分配与管理、高性能数据管道（队列/环形缓冲区）、时间与休眠控制时，lb_common 是**唯一合法的底层实现**。在这些领域，严禁 AI 直接调用 POSIX 原生 API（如 socket/pthread）或重新造轮子，必须基于 lb_common 提供的模型（如 aio_tcp/udp_ch/que_mth_buf/fix_pool 等）进行拼装设计。
+- **通用业务逻辑领域（标准库合法）**：当业务需求处于普通的数据处理、配置管理、字符串常规拼接、非热路径的键值存储等场景时，允许且鼓励使用现代 C++ 标准库（如 std::string, std::vector, std::map, std::shared_ptr 等），以保持业务代码的简洁性与可读性。
+
+## 2. 生态协同声明（告知 AI 它的战友是谁）
+明确告诉 AI，它不是孤军奋战，它必须依赖以下生态，并说明如何配合：
+- **依赖 Rules**：告诉 AI，“当你试图在性能敏感领域使用原生底层 API 时，当前的规则系统会自动纠错或提示你，请听从 Rules 的指示进行微观修改。”（解决类似“内存池不能硬拦，需要 Prompt 赋予性能意识去配合 Rules 提示”的问题）。
+- **依赖架构文档**：告诉 AI，“遇到复杂的模板参数配置、不熟悉的组件内部机制时，不要凭空猜测，必须主动查阅 @docs/lb_common_arch.md 获取真相。”
+
+## 3. 宏观架构范式（最核心的部分！）
+这是 Prompt 的灵魂。不要写“有什么组件”，要写“遇到典型业务，应该怎么组装组件”。
+请从架构文档中提取 2-3 种典型的业务架构范式，作为 AI 设计代码的“模板”。例如：
+- **网络服务器范式**：当需求是处理网络请求时，标准架构应是 `mthread(线程池) -> tcp_ch/udp_ch(通道管理) -> aio_tcp/aio_udp(异步收发) -> que_mth_buf(分发队列) -> 业务逻辑`。
+- **多线程流水线范式**：当需求是生产者-消费者模型时，标准架构应是 `simple_thread -> que_mth_buf(解耦) -> fix_pool/dync_pool(节点池)`。
+- **跨进程共享范式**：当需求涉及进程间通信时，强调生命周期的管理（shmem_pool + que_proc_buf）。
+
+## 4. 隐式设计哲学（补充 Rules 无法触及的软实力）
+提炼文档中的设计哲学，指导 AI 写出“好看、好维护”的代码：
+- 比如文档提到的“三阶段接收模型（recv_msg -> deal_msg -> cmt_deal）”，告诉 AI 在继承或重写网络回调时，必须遵守这个生命周期。
+- 比如文档提到的“RAII 锁守卫”，告诉 AI 在业务代码中体现这种资源管理意识。
+
+---
+# 输出要求
+语言精炼，指令化。直接输出 Markdown 内容，不需要解释你的生成逻辑。
+
+
+
+
+第五步 ， 人工的审核优化
+
+rules:
+  # 1. 拦截批量/缓冲区分配，给出温和的内存池建议（不自动替换）
+  - description: "提示：检测到缓冲区或数组的堆分配，评估是否属于关键业务路径"
+    match: "\b(new\s+(char|uint8|int8)\s*\[|malloc\s*\()"
+    action: |
+      提示：检测到底层数据缓冲区的堆分配。
+      【请评估当前场景】：
+      - 如果只是普通的业务逻辑、偶尔执行的代码，**请忽略此提示，保留原生 new/malloc**。
+      - 如果处于【关键业务路径】（如：网络收发回调、高频队列处理、每秒调用上千次的定时器、核心计算循环），请考虑使用 lb_common 的内存池：
+        1. 对象数量固定 -> fix_pool
+        2. 对象数量动态增减 -> dync_pool
+        3. 跨进程共享 -> shmem_pool
+      注意：不要为了使用内存池而使用，普通对象创建请直接使用 new。
+
+  # 2. 拦截原生对齐内存分配（这个必须强制，因为你们的库封装得更好）
+  - description: "拦截原生对齐分配，强制使用 comm_utils"
+    match: "\b(posix_memalign|aligned_alloc|_mm_malloc)\s*\("
+    replace: "comm_utils::aligned_malloc" 
+    # 注意：这个因为参数结构一致，可以做强制替换，后续需要人工检查对齐参数
+
+  本项目提供 fix_pool / dync_pool / shmem_pool 等高性能内存池，但严禁滥用。
+
+    默认行为：创建普通业务对象、配置结构体、低频调用的逻辑，直接使用原生 new/delete 或智能指针，保持代码简洁。
+    关键路径判定：只有当代码处于以下“关键业务路径”时，才必须考虑引入内存池以消除 new/delete 的系统调用开销：
+        网络底层：收发缓冲区的分配与释放（如 AIO 回调）。
+        高频队列：入队和出队时需要拷贝或包装数据的节点。
+        核心循环：每秒执行次数 > 1000 次的底层计算或分发逻辑。
