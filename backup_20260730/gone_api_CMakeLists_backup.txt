@@ -1,0 +1,43 @@
+# gone/api CMakeLists.txt - 备份原文件
+cmake_minimum_required(VERSION 3.10)
+project(api LANGUAGES CXX)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
+
+set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
+
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib)
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/../common/include
+    ${CMAKE_SOURCE_DIR}/../solarflare
+    ${CMAKE_SOURCE_DIR}/../../include
+)
+
+file(GLOB API_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+
+add_library(lbapi SHARED ${API_SRC})
+
+if(EXISTS ${CMAKE_SOURCE_DIR}/../common/lib/liblbcommon.a)
+    target_link_libraries(lbapi PRIVATE ${CMAKE_SOURCE_DIR}/../common/lib/liblbcommon.a)
+elseif(EXISTS ${CMAKE_SOURCE_DIR}/../common/build/liblbcommon.a)
+    target_link_libraries(lbapi PRIVATE ${CMAKE_SOURCE_DIR}/../common/build/liblbcommon.a)
+endif()
+
+target_link_libraries(lbapi PRIVATE pthread dl)

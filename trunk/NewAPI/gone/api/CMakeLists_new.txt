@@ -39,7 +39,6 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src                    # API 内部头文件
     ${CMAKE_SOURCE_DIR}/common/include                 # lbcommon 基础库
     ${CMAKE_CURRENT_SOURCE_DIR}/../../gone             # gone 公共消息定义 (g1msghead.h 等)
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone/include
 )
 
 # Solarflare 支持（如果有）

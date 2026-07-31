@@ -8,7 +8,7 @@
 #
 # 优势:
 #   - 统一的构建入口，自动按顺序构建依赖
-#   - 解决第三方库依赖问题 (FGW 需要 optional third_odbc)
+#   - 解决第三方库依赖问题（FGW 需要 optional third_odbc）
 #   - 支持 Solarflare 可选编译
 #
 
@@ -45,7 +45,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ================= SolarFlare 检查与可选编译 =================
 option(ENABLE_SOLARFLARE "启用 Solarflare TCPDirect 支持" ON)
-set(SOLARFLARE_ROOT "" CACHE PATH "Solarflare SDK 路径 (默认从环境推导)")
+set(SOLARFLARE_ROOT "" CACHE PATH "Solarflare SDK 路径（默认从环境推导）")
 
 # 查找 Solarflare 头文件和库
 if(ENABLE_SOLARFLARE AND NOT SOLARFLARE_ROOT)
@@ -80,13 +80,12 @@ else()
 endif()
 
 # ================= 添加子模块 =================
-# 注意:add_subdirectory 会按顺序执行每个子模块的 CMakeLists
+# 注意：add_subdirectory 会按顺序执行每个子模块的 CMakeLists
 add_subdirectory(common)
 add_subdirectory(solarflare OPTIONAL)
-add_subdirectory(gone/api)
-# add_subdirectory(gone/fgw)
+add_subdirectory(api)
 
-# fgw 模块可选 (如果没有 third_odbc，可以跳过)
+# fgw 模块可选（如果没有 third_odbc，可以跳过）
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/fgw/src OR EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../third_odbc)
     add_subdirectory(fgw OPTIONAL)
 else()

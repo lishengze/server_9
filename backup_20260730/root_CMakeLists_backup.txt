@@ -1,0 +1,10 @@
+# gone 仓库根 CMakeLists（备份原文件）
+# 仅 add_subdirectory 加载子模块；子目录可独立编译
+# third_odbc 由 fgw/CMakeLists.txt 独立加载（避免根 + 子目录重复 add_subdirectory）
+
+cmake_minimum_required(VERSION 3.10)
+project(gone LANGUAGES CXX)
+
+# ================= 子模块 =================
+add_subdirectory(api)
+add_subdirectory(fgw)

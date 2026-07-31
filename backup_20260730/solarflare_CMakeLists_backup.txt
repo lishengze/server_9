@@ -1,0 +1,31 @@
+# solarflare/CMakeLists.txt - 备份原文件
+cmake_minimum_required(VERSION 2.8.12)
+
+set(LIB_SLFCH_NAME zyslfch)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++11 -Wall -Wno-nonnull -Wno-reorder -D_LINUX -DLINUX -lpthread -lrt -ldl -liconv")
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g ${CMAKE_CXX_FLAGS} -D_DEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
+
+set(COMMON_ROOT ../common)
+set(ZF_ROOT /usr/include/zf)
+
+set(LIBRARY_OUTPUT_PATH ./lib/)
+
+include_directories(${COMMON_ROOT}/include 
+                    ${ZF_ROOT} 
+                    ./include
+)
+
+aux_source_directory(${COMMON_ROOT}/src COMMON_SRC)
+aux_source_directory(./src SLFCH_SRC)
+
+set(EFVI_LIB_PATH /usr/lib64/)
+set(ZF_LIB_PATH /usr/lib64/zf/debug)
+
+add_library(${LIB_SLFCH_NAME} STATIC ${COMMON_SRC} ${SLFCH_SRC})
+
+target_link_libraries(${LIB_SLFCH_NAME}  
+                      ${ZF_LIB_PATH}/libonload_zf_static.a 
+					  ${EFVI_LIB_PATH}/libciul1.a
+)

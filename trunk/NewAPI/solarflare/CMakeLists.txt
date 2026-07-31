@@ -1,59 +1,84 @@
-# CMake minimum version >= 2.8.12
-#cmake  -DCMAKE_BUILD_TYPE=Debug
-#cmake  -DCMAKE_BUILD_TYPE=Release
-cmake_minimum_required(VERSION 2.8.12)
+# solarflare/CMakeLists.txt（修复版）
+# 
+# 编译 Solarflare TCPDirect 支持库（可选模块）
+# 如果系统没有安装 Solarflare SDK，将跳过此模块
+#
+# 编译步骤:
+#   1. cd ../.. && mkdir build && cd build
+#   2. cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SOLARFLARE=ON ..
+#   3. make -j4
+#   4. lib/zyslfch.a 被生成
+#
 
-#project(zyslfch)
+cmake_minimum_required(VERSION 3.10)
 
-#solarflare 通道
-set(LIB_SLFCH_NAME zyslfch)
-# 设置编译选项
-#add_definitions("--std=c++11 -Wall -Wno-nonnull -Wno-reorder -D_LINUX -DLINUX")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++11 -Wall -Wno-nonnull -Wno-reorder -D_LINUX -DLINUX -lpthread -lrt -ldl -liconv")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
+
+# Solarflare 特定标志
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++17 -Wall -Wno-nonnull -Wno-reorder -D_LINUX -DLINUX -lpthread -lrt -ldl -liconv")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g ${CMAKE_CXX_FLAGS} -D_DEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
 
+# ================= 输出目录 =================
+set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 
-# common目录
+# ================= Solarflare 路径 =================
 set(COMMON_ROOT ../common)
-# open onload目录
-set(ZF_ROOT /usr/include/zf)
+set(ZF_ROOT "" CACHE PATH "Solarflare include 路径")
 
-# 设置库输出目录
-set(LIBRARY_OUTPUT_PATH ./lib/)
+# 自动检测
+if(NOT ZF_ROOT)
+    if(EXISTS /usr/include/zf)
+        set(ZF_ROOT /usr/include)
+    elseif(EXISTS /opt/solarflare/include)
+        set(ZF_ROOT /opt/solarflare/include)
+    endif()
+endif()
 
+if(NOT ZF_ROOT OR NOT EXISTS ${ZF_ROOT})
+    message(WARNING "未找到 Solarflare include 目录：${ZF_ROOT}, 将跳过 solarflare 模块编译")
+    return()
+endif()
 
-
-# 头文件目录
-include_directories(${COMMON_ROOT}/include 
-                    ${ZF_ROOT} 
-                    ./include
+include_directories(
+    ${COMMON_ROOT}/include 
+    ${ZF_ROOT} 
+    ./include
 )
 
-# 编译依赖的子目录文件
-# add_subdirectory(${COMMON_ROOT}/)
+# ================= 源文件 =================
 aux_source_directory(${COMMON_ROOT}/src COMMON_SRC)
-#add_library(zycommon STATIC ${COMMON_SRC})
 aux_source_directory(./src SLFCH_SRC)
 
+if(NOT COMMON_SRC OR NOT SLFCH_SRC)
+    message(WARNING "Solarflare 模块缺少源文件")
+    return()
+endif()
 
-# 设置链接库--绝对路径
-set(EFVI_LIB_PATH /usr/lib64/)
-set(ZF_LIB_PATH /usr/lib64/zf/debug)
+# ================= 库配置 =================
+set(LIB_SLFCH_NAME zyslfch)
 
-#/usr/lib64/libciul1.a
-#/usr/lib64/zf/debug/libonload_zf_static.a
-#/usr/lib64/zf/debug/libonload_zf.so
-
-
-# 源编译目录下的所有源文件
 add_library(${LIB_SLFCH_NAME} STATIC ${COMMON_SRC} ${SLFCH_SRC})
+set_target_properties(${LIB_SLFCH_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# 查找并链接 Solarflare 库
+find_library(ZF_LIB NAMES onload_zf_static onload_zf PATHS /usr/lib64/zf/debug /usr/lib64/zf /opt/solarflare/lib64/zf NO_DEFAULT_PATH)
+find_library(CIUL_LIB NAMES ciul1 PATHS /usr/lib64 NO_DEFAULT_PATH)
 
-# ld 生成目标--绝对路径，依赖顺序，依赖层次由浅到深，最基础的放最后
-target_link_libraries(${LIB_SLFCH_NAME}  
-                      ${ZF_LIB_PATH}/libonload_zf_static.a 
-					  ${EFVI_LIB_PATH}/libciul1.a
+if(NOT ZF_LIB OR NOT CIUL_LIB)
+    message(FATAL_ERROR "未找到 Solarflare 静态库:\n  ZF_LIB: ${ZF_LIB}\n  CIUL_LIB: ${CIUL_LIB}\n请确认已安装 Solarflare SDK 并设置正确路径")
+endif()
+
+target_link_libraries(${LIB_SLFCH_NAME} 
+                      ${ZF_LIB} 
+                      ${CIUL_LIB}
 )
-#					  ${ZF_LIB_PATH}/libonload_zf.so
-#)
+
+message(STATUS "Solarflare 库构建完成：${LIBRARY_OUTPUT_PATH}/lib${LIB_SLFCH_NAME}.a")

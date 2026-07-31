@@ -569,7 +569,7 @@ int32 counter98::deal_agw_login() {
   }
 
   int32 evt_len = sizeof(link_send_event);
-  char *data = nullptr;
+  char *data = nullptr; // TODO -- 赋值登陆信息;
   int64 pos = gw_send_queue_->write_get_mth(data, evt_len);
   if (pos <= 0) {
     lb_common::atomic_store16(&agw_login_state, 0);
