@@ -1,7 +1,9 @@
+#pragma once
 #include <array>
 #include <string>
 #include <vector>   
 #include <map>
+#include <cstdint>
 
 // 链接登陆;
 class AgwMsgLogin {

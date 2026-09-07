@@ -1,8 +1,9 @@
-
+#pragma once
 #include <array>
 #include <string>
 #include <vector>   
 #include <map>
+#include <cstdint>
 
 /*
 <Value name="Pledge" description="质押式回购交易">2</Value>
