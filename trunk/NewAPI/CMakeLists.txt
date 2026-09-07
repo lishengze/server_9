@@ -34,7 +34,7 @@ if (NOT DEFINED BUILD_SUM_COUNT)
     message(STATUS "  Gcc Version: " ${CMAKE_CXX_COMPILER_VERSION})
 
     # C++ 标准与通用设置
-    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD 11)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -42,7 +42,7 @@ if (NOT DEFINED BUILD_SUM_COUNT)
     set(CMAKE_VERBOSE_MAKEFILE ON)
 
     # 编译优化 FLAGS（低延迟交易场景）
-    set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+    set(CMAKE_CXX_FLAGS "--std=c++11 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
     set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
 
@@ -85,6 +85,8 @@ else()
 endif()
 
 add_subdirectory(gone/api)
+
+add_dependencies(lbapi lbcommon) # 确保 lbcommon 先编译
 
 message(STATUS "NewAPI 项目构建完成!")
 message(STATUS "  - 静态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblbcommon.a")

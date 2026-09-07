@@ -13,10 +13,11 @@
 #   独立编译时，BUILD_SUM_COUNT 未定义，设置完整全局配置并构建依赖库。
 
 cmake_minimum_required(VERSION 3.10)
+project(lbapi)
 
 # ================= 独立编译时的全局配置 =================
 if (NOT DEFINED BUILD_SUM_COUNT)
-    project(lbapi)
+
     set(BUILD_SUM_COUNT 0)
     set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "Suppress dev warnings")
 
@@ -29,7 +30,7 @@ if (NOT DEFINED BUILD_SUM_COUNT)
     message(STATUS "  Gcc Version: " ${CMAKE_CXX_COMPILER_VERSION})
 
     # C++ 标准与通用设置
-    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD 11)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -37,7 +38,7 @@ if (NOT DEFINED BUILD_SUM_COUNT)
     set(CMAKE_VERBOSE_MAKEFILE ON)
 
     # 编译优化 FLAGS（低延迟交易场景）
-    set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+    set(CMAKE_CXX_FLAGS "--std=c++11 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
     set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
 
@@ -97,17 +98,17 @@ if(NOT HAS_SOLARFLARE)
 endif()
 
 # ================= 构建目标：动态库 =================
-add_library(lbapi SHARED ${API_SRC})
+add_library(${PROJECT_NAME} SHARED ${API_SRC})
 
 # 链接 lbcommon 静态库（通过 CMake 目标引用，不硬编码路径）
-target_link_libraries(lbapi PRIVATE lbcommon)
+target_link_libraries(${PROJECT_NAME} PRIVATE lbcommon)
 
 # 标准库 / 系统库
-target_link_libraries(lbapi PRIVATE pthread dl)
+target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
 
 # Solarflare 支持宏（如果启用了 TCPDirect）
 if(HAS_SOLARFLARE)
-    target_compile_definitions(lbapi PRIVATE HAS_TCPDIRECT)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAS_TCPDIRECT)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../solarflare)
 endif()
 

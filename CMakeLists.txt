@@ -22,14 +22,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # C++ 标准统一为 17（当前框架基于 lb_common + C++17）
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 通用编译选项（作用于所有子模块）
 add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
 
 # 全局基础 FLAGS（低延迟交易场景的编译优化）
-set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+set(CMAKE_CXX_FLAGS "--std=c++11 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
 
 # Debug/Release 配置
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")

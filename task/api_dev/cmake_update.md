@@ -83,10 +83,24 @@ api_trunk/
 ## 五、编译结果
 - 编译命令：`mkdir -p build && cd build && cmake .. && make -j4`
 - 注意：需 `env -u LD_LIBRARY_PATH` 运行（LD_LIBRARY_PATH 指向 VSCode 扩展旧 libstdc++，会导致 cmake/make 库冲突）。
+- **编译标准**：**C++11**（`CMAKE_CXX_STANDARD 11`，FLAGS 中 `--std=c++11`）。
 - **构建产物**：
   - `build/lib/liblbcommon.a`（lb_common 基础库，静态库）
   - `build/lib/liblbapi.so`（交易 API 动态库）
 - **状态**：✅ 编译通过（lbcommon + lbapi 均 Built target）。
+
+### C++11 标准切换（第三轮调整）
+应需求将整个项目编译标准从 C++17 统一降为 **C++11**：
+- 修改所有 CMakeLists.txt（根、trunk/NewAPI、common、gone/api、solarflare）的 `CMAKE_CXX_STANDARD 17 → 11` 及 `--std=c++17 → --std=c++11`。
+- 配套修复唯一一处 C++17 特性：`mutils.h` 的 `std::is_integral_v<T>` → `std::is_integral<T>::value`。
+- 验证结果（均以 C++11 编译通过）：
+
+| 编译方式 | 结果 |
+|---------|------|
+| 根目录整体编译 | ✅ lbcommon + lbapi |
+| trunk/NewAPI 独立编译 | ✅ lbcommon + lbapi |
+| common 独立编译 | ✅ lbcommon |
+| gone/api 独立编译 | ✅ 自动构建 common + lbapi |
 
 ### 独立编译验证（第二轮优化）
 本轮将各子模块改造成可独立编译（参考 grc_trunk 的 `BUILD_SUM_COUNT` 机制），验证结果：
@@ -100,15 +114,31 @@ api_trunk/
 | solarflare 独立编译 | `cd solarflare && cmake -B build` | ✅ 无 SDK 时正确跳过 |
 
 ## 六、使用方式
+
+### 方式一：一键编译脚本 build.sh（推荐）
+项目根目录提供 `build.sh` 脚本，在 `build_cmake` 文件夹下完成所有编译：
 ```bash
-# 方式一：根目录整体编译
+cd /home/lsz/code/work/api_trunk
+./build.sh              # Debug 模式编译（产物在 build_cmake/lib/）
+./build.sh Release      # Release 模式编译
+./build.sh clean        # 清理 build_cmake 目录
+./build.sh rebuild      # 清理后重新编译（Debug）
+./build.sh -j8          # 指定 8 线程并行编译
+./build.sh Release -j8  # Release + 8 线程
+```
+脚本自动处理 LD_LIBRARY_PATH 冲突，产物位于 `build_cmake/lib/`。
+
+### 方式二：手动编译（根目录）
+```bash
 cd /home/lsz/code/work/api_trunk
 mkdir -p build && cd build
 cmake ..          # 如需 Release：cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j4
 # 产物：build/lib/liblbapi.so、build/lib/liblbcommon.a
+```
 
-# 方式二：子模块独立编译（以 gone/api 为例，自动构建依赖的 common）
+### 方式三：子模块独立编译（以 gone/api 为例，自动构建依赖的 common）
+```bash
 cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api
 mkdir -p build && cd build
 cmake ..
