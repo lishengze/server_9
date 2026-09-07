@@ -1,50 +1,21 @@
-# gone 仓库根 CMakeLists（修复版）
-# 
-# 编译步骤:
-#   1. cd trunk/NewAPI/build (若不存在则创建)
-#   2. cmake -DCMAKE_BUILD_TYPE=Release ..
-#   3. make -j4
-#   4. 输出：gone/api/lib/liblbapi.so + gone/fgw/bin/fgw
+# NewAPI 工程 CMakeLists（编排层）
 #
-# 优势:
-#   - 统一的构建入口，自动按顺序构建依赖
-#   - 解决第三方库依赖问题 (FGW 需要 optional third_odbc)
-#   - 支持 Solarflare 可选编译
+# 由根目录 CMakeLists.txt 作为统一构建入口 add_subdirectory 引入。
+# 全局编译选项 / 输出目录 / C++ 标准已在根 CMakeLists.txt 统一设置，此处不再重复。
 #
+# 构建产物：
+#   - common    → lib/liblbcommon.a（lb_common 基础库）
+#   - gone/api  → lib/liblbapi.so（交易 API 动态库）
+#   - solarflare→ lib/libzyslfch.a（可选，需 Solarflare SDK）
+#
+# 说明：
+#   - fgw（FGW 网关程序）依赖外部 odbc / third_odbc，本工程不依赖外部库，默认不启用。
+#   - solarflare（TCPDirect 内核旁路）依赖外部 Solarflare SDK，默认探测，未找到即禁用。
 
 cmake_minimum_required(VERSION 3.10)
-project(gone LANGUAGES CXX)
-
-# ================= 全局配置 =================
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Release")
-endif()
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# 通用编译选项
-add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
-
-# 全局基础 FLAGS
-set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
-
-# Debug/Release 配置
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
-
-# 链接器优化
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Wl,--gc-sections -Wl,-z,relro,-z,now")
-set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "-Wl,--gc-sections -Wl,-z,relro,-z,now")
-
-# ================= 输出目录 =================
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # ================= SolarFlare 检查与可选编译 =================
-option(ENABLE_SOLARFLARE "启用 Solarflare TCPDirect 支持" ON)
+option(ENABLE_SOLARFLARE "启用 Solarflare TCPDirect 支持" OFF)
 set(SOLARFLARE_ROOT "" CACHE PATH "Solarflare SDK 路径 (默认从环境推导)")
 
 # 查找 Solarflare 头文件和库
@@ -60,42 +31,25 @@ endif()
 if(ENABLE_SOLARFLARE AND SOLARFLARE_ROOT)
     message(STATUS "Solarflare 模式已启用，路径：${SOLARFLARE_ROOT}")
     add_definitions(-DHAS_TCPDIRECT)
-    
-    include_directories(${SOLARFLARE_ROOT}/include)
-    
-    find_library(ZF_LIB NAMES onload_zf_static onload_zf PATHS ${SOLARFLARE_ROOT}/lib64/zf/debug NO_DEFAULT_PATH)
-    find_library(CIUL_LIB NAMES ciul1 PATHS /usr/lib64 NO_DEFAULT_PATH)
-    
-    if(ZF_LIB AND CIUL_LIB)
-        set(HAS_SOLARFLARE TRUE)
-        set(SOLARFLARE_LIBRARIES ${ZF_LIB} ${CIUL_LIB})
-        message(STATUS "找到 Solarflare 库：${ZF_LIB}, ${CIUL_LIB}")
-    else()
-        message(WARNING "未找到 Solarflare 库，将禁用 tcpdirect 相关功能")
-        set(HAS_SOLARFLARE FALSE)
-    endif()
+    set(HAS_SOLARFLARE TRUE)
 else()
-    message(STATUS "Solarflare 模式已禁用")
+    message(STATUS "Solarflare 模式已禁用（未检测到 SDK 或未开启）")
     set(HAS_SOLARFLARE FALSE)
 endif()
 
 # ================= 添加子模块 =================
-# 注意:add_subdirectory 会按顺序执行每个子模块的 CMakeLists
+# 注意：add_subdirectory 会按顺序执行每个子模块的 CMakeLists
 add_subdirectory(common)
-add_subdirectory(solarflare OPTIONAL)
-add_subdirectory(gone/api)
-# add_subdirectory(gone/fgw)
 
-# fgw 模块可选 (如果没有 third_odbc，可以跳过)
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/fgw/src OR EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../third_odbc)
-    add_subdirectory(fgw OPTIONAL)
+# solarflare 仅在检测到 Solarflare SDK 时才编译
+if(HAS_SOLARFLARE)
+    add_subdirectory(solarflare)
 else()
-    message(STATUS "fgw 模块跳过的原因：既没有源代码也没有 third_odbc 依赖")
+    message(STATUS "solarflare 模块跳过（未检测到 Solarflare SDK）")
 endif()
 
-message(STATUS "Gone 项目构建完成!")
+add_subdirectory(gone/api)
+
+message(STATUS "NewAPI 项目构建完成!")
 message(STATUS "  - 静态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblbcommon.a")
 message(STATUS "  - 动态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblbapi.so")
-if(EXISTS ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fgw)
-    message(STATUS "  - 可执行文件：${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fgw")
-endif()

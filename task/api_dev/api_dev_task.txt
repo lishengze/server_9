@@ -5,12 +5,18 @@ API 开发任务
     仔细学习，理解代码，深入掌握整个代码的逻辑，以及设计思路。
 
 任务 - 优化CMakeLists.txt：    
-    以 /home/lsz/code/work/grc_trunk/CMakeLists.txt 为模板，优化整个系统的CMakeLists.txt
-    不过与 grc_trunk 不同，当前的代码，不怎么依赖外部的库。所以需要减少这部分的内容。
-    将当前的 CMakeLists.txt 备份为 CMakeLists.txt.bak
-    在当前系统的CMakeLists.txt 开发完成后，进行编译，若是有错误进行相关的修改，直到编译通过。
-    若是碰到代码的编译错误，则停止编译，修改代码，直到编译通过。
-    将整个修改调整过程遇到的问题，实现的解决方案，和解决的结果，记录到 task/api_dev/cmake_update.md 中。
+    1. 初始化任务:
+        以 /home/lsz/code/work/grc_trunk/CMakeLists.txt 为模板，优化整个系统的CMakeLists.txt
+        不过与 grc_trunk 不同，当前的代码，不怎么依赖外部的库。所以需要减少这部分的内容。
+        将当前的 CMakeLists.txt 备份为 CMakeLists.txt.bak
+        在当前系统的CMakeLists.txt 开发完成后，进行编译，若是有错误进行相关的修改，直到编译通过。
+        若是碰到代码的编译错误，则停止编译，修改代码，直到编译通过。
+        将整个修改调整过程遇到的问题，实现的解决方案，和解决的结果，记录到 task/api_dev/cmake_update.md 中。
+
+    2. 调整任务:
+        当前 common, gone/api, solarflare ，经过修改后， 现在不支持独立的编译，很多参数要依赖父模块。
+        这样不行，参考 /home/lsz/code/work/grc_trunk/DYS-FRAMEWORK/usg/CMakeLists.txt 以及其 父模块的写法，
+        使其即能够独立编译，也能够通过父模块编译。
 
 
 任务背景:

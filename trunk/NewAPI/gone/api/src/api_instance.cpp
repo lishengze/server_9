@@ -22,11 +22,12 @@
 #include "multi_socket_engine.h"
 #include "mutils.h"
 #include "single_socket_engine.h"
+#ifdef HAS_TCPDIRECT
 #include "tcpdir_link.h"
 #include "tcpdirect_engine.h"
+#endif
 
 #include <cstring>
-#include <stdatomic.h>
 
 namespace lb_api {
 
@@ -66,6 +67,7 @@ int32 api_interface::create_instance(api_interface *&o_api, api_config &config, 
         delete impl;
       }
     } else if (slt == speed_link_type::tcpdirect) {
+#ifdef HAS_TCPDIRECT
       auto *impl = new api_impl<gw_counter_direct, tcpdirect_engine<gw_counter_direct>>();
       ret = impl->init(*cfg, cb);
       if (ret == LBAPI_OK) {
@@ -73,6 +75,9 @@ int32 api_interface::create_instance(api_interface *&o_api, api_config &config, 
       } else {
         delete impl;
       }
+#else
+      return LBAPI_ERR_UNSUPPORT_LINK;
+#endif
     } else {
       return LBAPI_ERR_UNSUPPORT_LINK;
     }
@@ -86,6 +91,7 @@ int32 api_interface::create_instance(api_interface *&o_api, api_config &config, 
         delete impl;
       }
     } else if (slt == speed_link_type::tcpdirect) {
+#ifdef HAS_TCPDIRECT
       auto *impl = new api_impl<fpga_counter_direct, tcpdirect_engine<fpga_counter_direct>>();
       ret = impl->init(*cfg, cb);
       if (ret == LBAPI_OK) {
@@ -93,6 +99,9 @@ int32 api_interface::create_instance(api_interface *&o_api, api_config &config, 
       } else {
         delete impl;
       }
+#else
+      return LBAPI_ERR_UNSUPPORT_LINK;
+#endif
     } else {
       return LBAPI_ERR_UNSUPPORT_LINK;
     }
@@ -323,9 +332,13 @@ template <class TF, class TE> api_impl<TF, TE>::api_impl() = default;
 
 // 显式实例化 5 种配置
 template class api_impl<gw_counter_direct, single_socket_engine<gw_counter_direct>>;
+#ifdef HAS_TCPDIRECT
 template class api_impl<gw_counter_direct, tcpdirect_engine<gw_counter_direct>>;
+#endif
 template class api_impl<fpga_counter_direct, single_socket_engine<fpga_counter_direct>>;
+#ifdef HAS_TCPDIRECT
 template class api_impl<fpga_counter_direct, tcpdirect_engine<fpga_counter_direct>>;
+#endif
 template class api_impl<fpga_counter_gateway, idle_engine<fpga_counter_gateway>>;
 
 } // namespace lb_api

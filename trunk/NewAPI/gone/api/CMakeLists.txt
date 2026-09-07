@@ -1,63 +1,50 @@
-# gone/api CMakeLists.txt（修复版）
-# 
-# 输出：lib/liblbapi.so（动态库）
-# 依赖：common/lib/liblbcommon.a（静态库）
+# gone/api CMakeLists.txt
+#
+# 交易 API 动态库：lib/liblbapi.so
+# 依赖：common 的 liblbcommon.a（静态库）
+# 全局编译选项 / 输出目录已在根 CMakeLists.txt 统一设置。
 #
 # 编译步骤:
-#   1. cd ../.. && mkdir build && cd build
-#   2. cmake -DCMAKE_BUILD_TYPE=Release ..
-#   3. make -j4
-#   4. lib/liblbapi.so 被生成
-#
+#   1. cd build && cmake ..
+#   2. make -j4
+#   3. lib/liblbapi.so 被生成
 
 cmake_minimum_required(VERSION 3.10)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Release")
-endif()
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
-
-set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
-
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
-
-# ================= 输出目录 =================
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
 # ================= 头文件路径 =================
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include                # 公开 API 头文件
-    ${CMAKE_CURRENT_SOURCE_DIR}/src                    # API 内部头文件
-    ${CMAKE_SOURCE_DIR}/common/include                 # lbcommon 基础库
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone             # gone 公共消息定义 (g1msghead.h 等)
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include                 # 公开 API 头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/src                     # API 内部头文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include    # lbcommon 基础库
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone              # gone 公共消息定义
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone/include      # g1msghead.h / g1trademsg.h / c98msg_tmp.h
 )
-
-# Solarflare 支持（如果有）
-if(HAS_SOLARFLARE OR EXISTS /usr/include/zf)
-    include_directories(${CMAKE_SOURCE_DIR}/solarflare)
-    add_compile_options(-DHAS_TCPDIRECT)
-endif()
 
 # ================= 源文件 =================
 file(GLOB API_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 
+# TCPDirect（Solarflare）相关源文件仅在启用 Solarflare SDK 时编译。
+# 未启用时排除，否则会因缺少 tcpdir_stack.h 等 SDK 头文件而编译失败。
+if(NOT HAS_SOLARFLARE)
+    list(REMOVE_ITEM API_SRC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tcpdir_link.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tcpdirect_engine.cpp
+    )
+endif()
+
 # ================= 构建目标：动态库 =================
 add_library(lbapi SHARED ${API_SRC})
 
-# 链接 lbcommon 静态库（通过 CMake 自动查找，不硬编码路径）
+# 链接 lbcommon 静态库（通过 CMake 目标引用，不硬编码路径）
 target_link_libraries(lbapi PRIVATE lbcommon)
 
 # 标准库 / 系统库
 target_link_libraries(lbapi PRIVATE pthread dl)
+
+# Solarflare 支持宏（如果启用了 TCPDirect）
+if(HAS_SOLARFLARE)
+    target_compile_definitions(lbapi PRIVATE HAS_TCPDIRECT)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../solarflare)
+endif()
 
 message(STATUS "API 库构建完成：liblbapi.so")

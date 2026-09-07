@@ -21,8 +21,10 @@
 #include "mlog.h"
 #include "multi_socket_engine.h"
 #include "single_socket_engine.h"
+#ifdef HAS_TCPDIRECT
 #include "tcpdir_link.h"
 #include "tcpdirect_engine.h"
+#endif
 
 namespace lb_api {
 

@@ -28,7 +28,6 @@
 #include "wait_poll.h"
 #include <pthread.h>
 #include <sched.h>
-#include <stdatomic.h>
 
 namespace lb_common {
 
