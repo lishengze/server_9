@@ -1,7 +1,12 @@
 # NewAPI 工程 CMakeLists（编排层）
 #
-# 由根目录 CMakeLists.txt 作为统一构建入口 add_subdirectory 引入。
-# 全局编译选项 / 输出目录 / C++ 标准已在根 CMakeLists.txt 统一设置，此处不再重复。
+# 支持两种编译方式：
+#   1. 独立编译：cd trunk/NewAPI && cmake . && make
+#   2. 通过根 CMakeLists 编译：由 api_trunk/CMakeLists.txt add_subdirectory 引入
+#
+# 判定机制（与 grc_trunk 相同）：
+#   通过根 CMakeLists 编译时，BUILD_SUM_COUNT 已定义，跳过全局配置；
+#   独立编译时，BUILD_SUM_COUNT 未定义，设置完整全局配置。
 #
 # 构建产物：
 #   - common    → lib/liblbcommon.a（lb_common 基础库）
@@ -14,13 +19,45 @@
 
 cmake_minimum_required(VERSION 3.10)
 
+# ================= 独立编译时的全局配置 =================
+if (NOT DEFINED BUILD_SUM_COUNT)
+    project(NewAPI)
+    set(BUILD_SUM_COUNT 0)
+    set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "Suppress dev warnings")
+
+    # 默认构建类型
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Debug CACHE STRING "Debug" FORCE)
+    endif()
+    message(STATUS "  Compile Type:  ${CMAKE_BUILD_TYPE}")
+    message(STATUS "  Platform: "    ${CMAKE_CXX_COMPILER_ID})
+    message(STATUS "  Gcc Version: " ${CMAKE_CXX_COMPILER_VERSION})
+
+    # C++ 标准与通用设置
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    set(CMAKE_VERBOSE_MAKEFILE ON)
+
+    # 编译优化 FLAGS（低延迟交易场景）
+    set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+    set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
+
+    # 输出目录
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
 # ================= SolarFlare 检查与可选编译 =================
 option(ENABLE_SOLARFLARE "启用 Solarflare TCPDirect 支持" OFF)
 set(SOLARFLARE_ROOT "" CACHE PATH "Solarflare SDK 路径 (默认从环境推导)")
 
 # 查找 Solarflare 头文件和库
 if(ENABLE_SOLARFLARE AND NOT SOLARFLARE_ROOT)
-    # 尝试常见路径
     if(EXISTS /usr/include/zf)
         set(SOLARFLARE_ROOT /usr)
     elseif(EXISTS /opt/solarflare)
@@ -38,7 +75,6 @@ else()
 endif()
 
 # ================= 添加子模块 =================
-# 注意：add_subdirectory 会按顺序执行每个子模块的 CMakeLists
 add_subdirectory(common)
 
 # solarflare 仅在检测到 Solarflare SDK 时才编译

@@ -13,11 +13,24 @@ api_trunk/
 └── trunk/NewAPI/
     ├── CMakeLists.txt              # 编排层（common + solarflare(可选) + gone/api）
     ├── common/CMakeLists.txt       # liblbcommon.a 静态库
-    ├── gone/api/CMakeLists.txt     # liblbapi.so 动态库
-    └── solarflare/CMakeLists.txt   # 可选，需 Solarflare SDK
+    ├── solarflare/CMakeLists.txt   # libzyslfch.a（可选，需 Solarflare SDK）
+    └── gone/api/CMakeLists.txt     # liblbapi.so 动态库
 ```
 
-## 三、各文件改动说明
+## 三、独立编译机制（与 grc_trunk 一致）
+
+**核心模式**：用 `if (NOT DEFINED BUILD_SUM_COUNT)` 判断编译方式。
+
+- **通过父模块编译**：父模块（根 CMakeLists 或 trunk/NewAPI）已定义 `BUILD_SUM_COUNT`，子模块跳过全局配置，沿用父模块的编译选项/输出目录。
+- **独立编译**：`BUILD_SUM_COUNT` 未定义，子模块自行设置完整全局配置（构建类型、C++ 标准、编译优化 FLAGS、输出目录）。
+
+各级模块（common / gone/api / solarflare / trunk/NewAPI）均采用此模式，因此**既能独立编译，也能通过父模块编译**。
+
+- 根 CMakeLists 通过 `set(BUILD_SUM_COUNT 0)` 标记"通过父模块编译"。
+- gone/api 独立编译时，会自动 `add_subdirectory` 构建依赖的 common 库（须显式指定 binary 目录 `common_build`，因为 common 不在其子目录下）。
+- 各模块在统计文件数时通过 `set(BUILD_SUM_COUNT ... PARENT_SCOPE)` 向父层累加；独立编译时用 `set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1)` 抑制"无父作用域"警告。
+
+## 四、各文件改动说明
 
 ### 1. 根 CMakeLists.txt（重写）
 - 统一设置：默认 Debug 构建类型、全局编译优化 FLAGS（`-march=native` 等低延迟参数）、Debug/Release 配置、PIC、输出目录（`build/lib`、`build/bin`）、RPATH、`CMAKE_EXPORT_COMPILE_COMMANDS`。
@@ -34,9 +47,14 @@ api_trunk/
 - 输出目录改为 `build/lib`（原为源代码目录下的 `lib`，会污染源码树）。
 - 移除冗余全局标志，仅保留 lbcommon 静态库目标定义。
 
-### 4. gone/api/CMakeLists.txt（精简 + 条件编译）
+### 4. gone/api/CMakeLists.txt（精简 + 条件编译 + 独立编译 Solarflare 检测）
 - include 路径改为相对路径（`../../common/include` 等），适配根目录作为顶层入口。
 - **TCPDirect 源文件条件编译**：未启用 Solarflare 时排除 `tcpdir_link.cpp`、`tcpdirect_engine.cpp`（它们依赖 SDK 头文件 `tcpdir_stack.h`）。
+- **独立编译时 Solarflare 检测**：`HAS_SOLARFLARE` 未定义时（独立编译），自行执行完整的 Solarflare SDK 检测（`ENABLE_SOLARFLARE` 选项 + SDK 路径探测），而非简单地默认禁用。通过父模块编译时，`HAS_SOLARFLARE` 已由父模块定义，直接沿用，不重复检测。
+
+### 5. solarflare/CMakeLists.txt（独立编译支持）
+- 加 `BUILD_SUM_COUNT` 守卫，独立编译时自行设置全局配置。
+- 无 Solarflare SDK 时通过 `return()` 跳过，不阻塞编译。
 
 ## 四、编译过程中遇到的问题与解决
 
@@ -55,6 +73,13 @@ api_trunk/
   3. `api_instance.cpp`：工厂函数中两个 tcpdirect 分支、以及两处 `tcpdirect_engine` 模板实例化，均用 `#ifdef HAS_TCPDIRECT` 保护。
 - **结果**：未启用 Solarflare 时，tcpdirect 配置返回 `LBAPI_ERR_UNSUPPORT_LINK`，其余配置正常编译。
 
+### 问题 3：C++11 标准兼容性（`std::is_integral_v`）
+- **现象**：用 C++11 标准编译时，`mutils.h:220` 报错 `'is_integral_v' is not a member of 'std'`。
+- **原因**：`mutils.h` 的 `is_power_2` 模板函数中使用了 `std::is_integral_v<T>`，这是 C++17 的变量模板特性（`_v` 后缀），C++11/14 不支持。
+- **解决**：改为 C++11 兼容的 `std::is_integral<T>::value`。
+- **结果**：修复后 C++11 编译通过（lbcommon + lbapi 均构建成功），C++17 编译同样通过（该写法两个标准均兼容）。
+- **结论**：当前代码整体基于 C++11 特性编写，仅此一处 C++17 特性，修复后即可用 C++11 正常编译。
+
 ## 五、编译结果
 - 编译命令：`mkdir -p build && cd build && cmake .. && make -j4`
 - 注意：需 `env -u LD_LIBRARY_PATH` 运行（LD_LIBRARY_PATH 指向 VSCode 扩展旧 libstdc++，会导致 cmake/make 库冲突）。
@@ -63,11 +88,30 @@ api_trunk/
   - `build/lib/liblbapi.so`（交易 API 动态库）
 - **状态**：✅ 编译通过（lbcommon + lbapi 均 Built target）。
 
+### 独立编译验证（第二轮优化）
+本轮将各子模块改造成可独立编译（参考 grc_trunk 的 `BUILD_SUM_COUNT` 机制），验证结果：
+
+| 编译方式 | 命令 | 结果 |
+|---------|------|------|
+| 根目录整体编译 | `cd api_trunk && cmake -B build && make` | ✅ lbcommon + lbapi |
+| trunk/NewAPI 独立编译 | `cd trunk/NewAPI && cmake -B build && make` | ✅ lbcommon + lbapi |
+| common 独立编译 | `cd common && cmake -B build && make` | ✅ lbcommon（无警告） |
+| gone/api 独立编译 | `cd gone/api && cmake -B build && make` | ✅ 自动构建 common + lbapi |
+| solarflare 独立编译 | `cd solarflare && cmake -B build` | ✅ 无 SDK 时正确跳过 |
+
 ## 六、使用方式
 ```bash
+# 方式一：根目录整体编译
 cd /home/lsz/code/work/api_trunk
 mkdir -p build && cd build
 cmake ..          # 如需 Release：cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j4
 # 产物：build/lib/liblbapi.so、build/lib/liblbcommon.a
+
+# 方式二：子模块独立编译（以 gone/api 为例，自动构建依赖的 common）
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api
+mkdir -p build && cd build
+cmake ..
+make -j4
+# 产物：lib/liblbapi.so、lib/liblbcommon.a
 ```

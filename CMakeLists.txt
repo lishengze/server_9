@@ -53,6 +53,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# 设置 BUILD_SUM_COUNT 标记，子模块据此判断是通过父模块编译（跳过全局配置）
+set(BUILD_SUM_COUNT 0)
+
 ###################### 子工程源码目录 ######################
 set(NEWAPI_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/trunk/NewAPI)
 if(NOT EXISTS ${NEWAPI_ROOT})

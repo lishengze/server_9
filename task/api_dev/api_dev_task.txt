@@ -18,6 +18,10 @@ API 开发任务
         这样不行，参考 /home/lsz/code/work/grc_trunk/DYS-FRAMEWORK/usg/CMakeLists.txt 以及其 父模块的写法，
         使其即能够独立编译，也能够通过父模块编译。
 
+    3. 还有一个需要调整的地方
+        在 gone/api 的CMakeLists.txt 中，需要增加 独立编译时，对 SolarFlare 检查与可选编译 的判断和支持。
+        这样在独立编译 gone/api 时，也能正确的处理 SolarFlare 相关内容。
+
 
 任务背景:
     当前需要开发一个新版的金融系统的 API，对接三个柜台， GONE-硬件急速柜台， GW-软急速柜台， Counter98-普通柜台.
