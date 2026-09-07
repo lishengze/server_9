@@ -1,4 +1,9 @@
 API 开发任务
+
+[NGTP-T202612257]-优化低延时API
+
+svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
+
 学习阶段:
     当前 trunk/NewAPI 是一套新的API 框架代码，面向客户，对接三个柜台。 
     study 文件夹下，有几份文档，是对当前代码的分析学习文档，以及简单的设计方案文档。
@@ -23,6 +28,11 @@ API 开发任务
         这样在独立编译 gone/api 时，也能正确的处理 SolarFlare 相关内容。
 
 
+问题:
+    1. api_impl 中的 TFastCounter fast_，是 如何初始化，与柜台链接，登陆的？
+    2. 不同的柜台处理器，在收到 回报后，是如何一步步回调给客户的？
+    详细的分析这两个问题，然后将分析的结果输出到 study/question.md 中。
+    
 任务背景:
     当前需要开发一个新版的金融系统的 API，对接三个柜台， GONE-硬件急速柜台， GW-软急速柜台， Counter98-普通柜台.
 设计文档:
