@@ -27,11 +27,22 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
         在 gone/api 的CMakeLists.txt 中，需要增加 独立编译时，对 SolarFlare 检查与可选编译 的判断和支持。
         这样在独立编译 gone/api 时，也能正确的处理 SolarFlare 相关内容。
 
+任务 - 接口完善;
+    任务背景:
+        1.当前api框架中，在消息请求 和 消息回报中，只实现了 加速消息相关的接口。这些消息的类型和结构体定义在了 order_trade_type.h 中。
+        2.现在将非加速业务的请求和回报的消息结构体存储在了 trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中。
+        3. 
+    1. trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中，
 
 问题:
     1. api_impl 中的 TFastCounter fast_，是 如何初始化，与柜台链接，登陆的？
     2. 不同的柜台处理器，在收到 回报后，是如何一步步回调给客户的？
     详细的分析这两个问题，然后将分析的结果输出到 study/question.md 中。
+
+    1. callback_manager::on_login() 中， 最后执行了   
+        write_cmt(pos, total_len);
+        trigger();
+        问题是：谁把队列的数据取出来，然后再发送给客户？
     
 任务背景:
     当前需要开发一个新版的金融系统的 API，对接三个柜台， GONE-硬件急速柜台， GW-软急速柜台， Counter98-普通柜台.
