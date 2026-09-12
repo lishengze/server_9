@@ -1,4 +1,3 @@
-
 # FTE API 数据结构补齐分析
 
 > 本文档分析 FTE 旧接口数据结构（`gw_external_message.h` / `gw_ex_msg_flat.h`）与新 API 数据结构（`trade_order_type.h`）之间的字段映射关系，识别双方缺失字段，并结合 FTE 业务流程说明各字段的作用和必要性。
@@ -27,26 +26,25 @@
 
 #### 字段映射表
 
-| 新 API (LoginReq)       | FTE (LogOnReq)                       | 类型/长度            | 映射说明                                                                              |
-| ----------------------- | ------------------------------------ | -------------------- | ------------------------------------------------------------------------------------- |
-| `client_req_no`       | ❌ 无直接对应字段                    | int64                | **缺失**。新 API 的请求号，用于请求-应答配对。FTE 使用 `client_seq_id` 做配对 |
-| `cust_id`             | `trade_order_user.cust_id`         | char[16]             | 客户号。api 缓存                                                                      |
-| `fund_account_id`     | `trade_order_user.fund_account_id` | char[16]             | ✅ 直接映射                                                                           |
-| `account_id`          | `trade_order_user.account_id`      | char[12]             | ✅ 直接映射 api 缓存                                                                  |
-| `branch_id`           | `trade_order_user.branch_id`       | char[10]             | ✅ 直接映射                                                                           |
-| `order_way_ext`       | ❌ 无对应字段                        | char[2]              | **缺失**。客户委托方式，API缓存                                                 |
-| `password`            | `password`                         | char[256]→char[100] | ⚠️ FTE 的`UTEPassword_def` 仅 100 字节，截断风险                                  |
-| `user_info`           | ❌ 无对应字段                        | char[64]             | **缺失**。API 缓存                                                              |
-| `client_feature_code` | `client_feature_code`              | char[1024]           | ✅ 直接映射                                                                           |
+| 新 API (LoginReq)       | FTE (LogOnReq)                       | 类型/长度            | 映射说明                                                                            |
+| ----------------------- | ------------------------------------ | -------------------- | ----------------------------------------------------------------------------------- |
+| `client_req_no`       | `client_seq_id`                    | int64                | `选择映射, `新 API 的请求号，用于请求-应答配对。FTE 使用`client_seq_id` 做配对 |
+| `cust_id`             | `trade_order_user.cust_id`         | char[16]             | 客户号。需要api 缓存，供其接口使用;                                                 |
+| `fund_account_id`     | `trade_order_user.fund_account_id` | char[16]             | ✅ 直接映射                                                                         |
+| `account_id`          | `trade_order_user.account_id`      | char[12]             | ✅ 直接映射， 需要api 缓存，供其接口使用;                                           |
+| `branch_id`           | `trade_order_user.branch_id`       | char[10]             | ✅ 直接映射                                                                         |
+| `order_way_ext`       | ❌ 无对应字段                        | char[2]              | **缺失**。客户委托方式，需要api 缓存，供其接口使用;                           |
+| `password`            | `password`                         | char[256]→char[100] | ⚠️ FTE 的`UTEPassword_def` 仅 100 字节，截断风险                                |
+| `user_info`           | ❌ 无对应字段                        | char[64]             | **缺失**。需要api 缓存，供其接口使用;                                         |
+| `client_feature_code` | `client_feature_code`              | char[1024]           | ✅ 直接映射                                                                         |
 
 #### FTE 有但新 API 没有的字段
 
-| FTE 字段          | 类型     | 业务作用                                     | 使用位置                                                | 是否必须                                  |
-| ----------------- | -------- | -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------- |
-| `heart_bt_int`  | uint32_t | 心跳间隔（秒），控制客户端与服务端的心跳频率 | `tcpserver_handler::on_message` 中心跳超时检测        | **否**，可由系统配置默认值          |
-| `agw_user`      | char[32] | 统一接入网关用户信息，标识网关登录身份       | `DealGatewayLogon()` 网关登录校验                     | **否**，仅统一接入场景需要          |
-| `client_seq_id` | int64    | 客户端消息序号，用于请求-应答配对            | 贯穿整个订单处理流程，`FTE_SAVE_CLIENT_SEQ_ID` 宏保存 | **是**，可用 `client_req_no` 替代 |
-| `agw_seq_id`    | int64    | 网关消息序号，统一接入网关分配               | 网关消息去重和排序                                      | **否**，仅统一接入场景              |
+| FTE 字段         | 类型     | 业务作用                                     | 使用位置                                         | 是否必须                         |
+| ---------------- | -------- | -------------------------------------------- | ------------------------------------------------ | -------------------------------- |
+| `heart_bt_int` | uint32_t | 心跳间隔（秒），控制客户端与服务端的心跳频率 | `tcpserver_handler::on_message` 中心跳超时检测 | **否**，可由系统配置默认值 |
+| `agw_user`     | char[32] | 统一接入网关用户信息，标识网关登录身份       | `DealGatewayLogon()` 网关登录校验              | **否**，仅统一接入场景需要 |
+| `agw_seq_id`   | int64    | 网关消息序号，统一接入网关分配               | 网关消息去重和排序                               | **否**,  仅统一接入场景  |
 
 #### 补齐建议
 
@@ -71,19 +69,20 @@ logon_req.agw_user                        = ""                      // 非统一
 
 #### 字段映射表
 
-| 新 API (OrderReq)   | FTE (TradeOrderReq)                  | 类型/长度 | 映射说明                                                                   |
-| ------------------- | ------------------------------------ | --------- | -------------------------------------------------------------------------- |
-| `fund_account_id` | `trade_order_user.fund_account_id` | char[16]  | ✅ 直接映射                                                                |
-| `branch_id`       | `trade_order_user.branch_id`       | char[10]  | ✅ 直接映射                                                                |
-| `side`            | `trade_order_info.side`            | char      | ✅ 直接映射。FTE: '1'=买, '2'=卖, 'D'=申购, 'E'=赎回                       |
-| `order_type`      | `trade_order_info.order_type`      | char      | ✅ 直接映射。FTE: '1'=市价, '2'=限价, 'U'=本方最优                         |
-| `policy_id`       | ❌ 无对应字段                        | uint16_t  | **缺失**。策略佣金ID，FTE 在 `FeeInfo` 中根据证券+客户自动匹配佣金 |
-| `tgw_id`          | ❌ 无对应字段                        | uint16_t  | **缺失**。TGW 编号，FTE 内部通过 `offer_way` 路由到不同网关        |
-| `security_id`     | `trade_order_info.security_id`     | char[8]   | ✅ 直接映射                                                                |
-| `order_price`     | `trade_order_info.order_price`     | int64     | ✅ 直接映射。FTE 价格精度 N13(4)，新 API 放大10000，需确认精度匹配         |
-| `order_qty`       | `trade_order_info.order_qty`       | int64     | ✅ 直接映射。FTE 数量精度 N15(2)，新API 不放大100                          |
-| `stop_price`      | `trade_order_info.stop_px`         | int64     | ✅ 直接映射                                                                |
-| `client_seq_id`   | `trade_order_user.client_seq_id`   | int64     | ✅ 直接映射                                                                |
+| 新 API (OrderReq)   | FTE (TradeOrderReq)                  | 类型/长度 | 映射说明                                                           |
+| ------------------- | ------------------------------------ | --------- | ------------------------------------------------------------------ |
+| `fund_account_id` | `trade_order_user.fund_account_id` | char[16]  | ✅ 直接映射                                                        |
+| `branch_id`       | `trade_order_user.branch_id`       | char[10]  | ✅ 直接映射                                                        |
+| `side`            | `trade_order_info.side`            | char      | ✅ 直接映射。FTE: '1'=买, '2'=卖, 'D'=申购, 'E'=赎回               |
+| `order_type`      | `trade_order_info.order_type`      | char      | ✅ 直接映射。FTE: '1'=市价, '2'=限价, 'U'=本方最优                 |
+| `policy_id`       | `policy_id`                        | uint16_t  | ✅ 直接映射                                                        |
+| `tgw_id`          | `tgw_id`                           | uint16_t  | ✅ 直接映射                                                        |
+| `security_id`     | `trade_order_info.security_id`     | char[8]   | ✅ 直接映射                                                        |
+| `order_price`     | `trade_order_info.order_price`     | int64     | ✅ 直接映射。FTE 价格精度 N13(4)，新 API 放大10000，需确认精度匹配 |
+| `order_qty`       | `trade_order_info.order_qty`       | int64     | ✅ 直接映射。FTE 数量精度 N15(2)，新API 不放大100                  |
+| `stop_price`      | `trade_order_info.stop_px`         | int64     | ✅ 直接映射                                                        |
+| `client_seq_id`   | `trade_order_user.client_seq_id`   | int64     | ✅ 直接映射                                                        |
+| `market_id`       | `market_id`                        | uint16    | ✅ 直接映射                                                        |
 
 #### FTE 有但新 API 没有的字段
 
@@ -92,7 +91,6 @@ logon_req.agw_user                        = ""                      // 非统一
 | `account_id` | char[12] | **股东账户**，交易所报盘必需字段              | `SendOrderToExch()` 中填充到交易所协议结构体                                         | **是**，API 缓存补齐  |
 | `cust_id`    | char[16] | **客户号**，登录时由 FTE 根据资金账户信息回填 | DSE 同步时使用，`external_order_ptr->trade_order_user.cust_id = fund_data->cust_id_` | **是**，API 缓存补齐  |
 | `agw_seq_id` | int64    | 网关消息序号                                        | 统一接入场景的消息排序和去重                                                           | **否**，非统一接入填0 |
-| `market_id`  | uint16   | **市场代码**，区分上海(101)/深圳(102)         | 贯穿订单处理全流程：校验、路由、报盘                                                   | **是**，客户端补齐    |
 
 #### 补齐建议
 
@@ -128,23 +126,21 @@ trade_order_req.trade_order_info.stop_px        = order_req.stop_price
 
 #### 字段映射表
 
-| 新 API (CancelReq)  | FTE (CancelOrderReq)                 | 类型/长度 | 映射说明                                                                      |
-| ------------------- | ------------------------------------ | --------- | ----------------------------------------------------------------------------- |
-| `client_req_no`   | ❌ 无直接对应字段                    | int64     | **缺失**。请求号，FTE 使用 `orig_client_seq_id` 配对                  |
-| `fund_account_id` | `trade_order_user.fund_account_id` | char[16]  | ✅ 直接映射                                                                   |
-| `branch_id`       | `trade_order_user.branch_id`       | char[10]  | ✅ 直接映射                                                                   |
-| `order_sys_no`    | ❌ 无直接对应字段                    | int64     | **缺失**。柜台原始报单编号，FTE 使用 `orig_clordno`（合同号）定位原单 |
-| `client_seq_id`   | `trade_order_user.client_seq_id`   | int64     | ✅ 直接映射                                                                   |
+| 新 API (CancelReq)  | FTE (CancelOrderReq)                 | 类型/长度 | 映射说明                                                                    |
+| ------------------- | ------------------------------------ | --------- | --------------------------------------------------------------------------- |
+| `client_req_no`   | `orig_client_seq_id`               | int64     | 选择映射, FTE 使用`orig_client_seq_id` 配对                              |
+| `fund_account_id` | `trade_order_user.fund_account_id` | char[16]  | ✅ 直接映射                                                                 |
+| `branch_id`       | `trade_order_user.branch_id`       | char[10]  | ✅ 直接映射                                                                 |
+| `order_sys_no`    | `orig_clordno`                     | int64     | `选择映射, `柜台原始报单编号，FTE 使用`orig_clordno`（合同号）定位原单 |
+| `client_seq_id`   | `trade_order_user.client_seq_id`   | int64     | ✅ 直接映射                                                                 |
 
 #### FTE 有但新 API 没有的字段
 
-| FTE 字段               | 类型     | 业务作用                               | 使用位置                                                    | 是否必须                       |
-| ---------------------- | -------- | -------------------------------------- | ----------------------------------------------------------- | ------------------------------ |
-| `account_id`         | char[12] | 股东账户，用于校验                     | `DealCancelOrderReq()` 中权限校验                         | **是**，api缓存获取      |
-| `cust_id`            | char[16] | 客户号                                 | 权限校验和 DSE 同步                                         | **是**，api 缓存获取     |
-| `agw_seq_id`         | int64    | 网关序号                               | 统一接入场景                                                | **否**                   |
-| `orig_client_seq_id` | int64    | **原单客户端序号**，用于定位原单 | `DealCancelOrderReq()` 中通过 `GetOrderByNO()` 查找原单 | **是**，撤单必须指定原单 |
-| `orig_clordno`       | int64    | **原单合同号**，FTE 内部订单编号 | `OrderManager::GetOrderByNO()` 查找原单                   | **是**，撤单必须指定原单 |
+| FTE 字段       | 类型     | 业务作用           | 使用位置                            | 是否必须                   |
+| -------------- | -------- | ------------------ | ----------------------------------- | -------------------------- |
+| `account_id` | char[12] | 股东账户，用于校验 | `DealCancelOrderReq()` 中权限校验 | **是**，api缓存获取  |
+| `cust_id`    | char[16] | 客户号             | 权限校验和 DSE 同步                 | **是**，api 缓存获取 |
+| `agw_seq_id` | int64    | 网关序号           | 统一接入场景                        | **否**               |
 
 #### 补齐建议
 
@@ -176,18 +172,18 @@ cancel_req.cancel_order_info.orig_client_seq_id = ? // 需要从原单的 client
 
 #### 字段映射表
 
-| FTE (LogOnAns)                       | 新 API (LoginAns)   | 类型/长度         | 映射说明                                                |
-| ------------------------------------ | ------------------- | ----------------- | ------------------------------------------------------- |
-| `trade_order_user.cust_id`         | `cust_id`         | char[16]          | ✅ 直接映射                                             |
-| `trade_order_user.fund_account_id` | `fund_account_id` | char[16]          | ✅ 直接映射                                             |
-| `trade_order_user.account_id`      | `account_id`      | char[12]          | ✅ 直接映射                                             |
-| `trade_order_user.branch_id`       | `branch_id`       | char[10]          | ✅ 直接映射                                             |
-| `trade_order_user.client_seq_id`   | `client_req_no`   | int64             | ⚠️ FTE 的 client_seq_id 映射为新 API 的 client_req_no |
-| `error_code`                       | `err_code`        | uint32_t→int32_t | ⚠️ 类型不同，需注意符号扩展                           |
-| ❌ 无对应字段                        | `market_type`     | int16             | **缺失**，新 API 需要市场信息 -- 待确认           |
-| ❌ 无对应字段                        | `err_msg`         | char[124]         | **缺失**，新 API 需要错误描述文本                 |
-| ❌ 无对应字段                        | `login_time`      | int64             | **缺失**，新 API 需要登录时间                     |
-| `session_status`                   | ❌ 无对应           | int32_t           | FTE 会话状态，新 API 不需要                             |
+| FTE (LogOnAns)                       | 新 API (LoginAns)   | 类型/长度         | 映射说明                                                          |
+| ------------------------------------ | ------------------- | ----------------- | ----------------------------------------------------------------- |
+| `trade_order_user.cust_id`         | `cust_id`         | char[16]          | ✅ 直接映射                                                       |
+| `trade_order_user.fund_account_id` | `fund_account_id` | char[16]          | ✅ 直接映射                                                       |
+| `trade_order_user.account_id`      | `account_id`      | char[12]          | ✅ 直接映射                                                       |
+| `trade_order_user.branch_id`       | `branch_id`       | char[10]          | ✅ 直接映射                                                       |
+| `trade_order_user.client_seq_id`   | `client_req_no`   | int64             | 选择映射，⚠️ FTE 的 client_seq_id 映射为新 API 的 client_req_no |
+| `error_code`                       | `err_code`        | uint32_t→int32_t | 选择映射，⚠️ 类型不同，需注意符号扩展                           |
+| ❌ 无对应字段                        | `market_type`     | int16             | **缺失**，新 API 需要市场信息 -- 设置为0                    |
+| ❌ 无对应字段                        | `err_msg`         | char[124]         | **缺失**，新 API 需要错误描述文本-- 设置为空                |
+| ❌ 无对应字段                        | `login_time`      | int64             | **缺失**，新 API 需要登录时间-- 设置为0                     |
+| `session_status`                   | ❌ 无对应           | int32_t           | FTE 会话状态，新 API 不需要                                       |
 
 #### 补齐建议
 
@@ -219,41 +215,41 @@ login_ans.login_time        = current_timestamp()                // 取当前时
 
 #### 字段映射表
 
-| FTE (TradeOrderER.OrdERInfo)  | 新 API (OrderRtn) | 类型/长度         | 映射说明                                                                      |
-| ----------------------------- | ----------------- | ----------------- | ----------------------------------------------------------------------------- |
-| `side`                      | `side`          | char              | ✅ 直接映射                                                                   |
-| `ord_type`                  | `order_type`    | char              | ✅ 直接映射                                                                   |
-| `ord_status`                | `order_status`  | uint8_t→uint16_t | ⚠️ FTE 内部状态码需映射为新 API 的`ORDER_STATE_*` 常量                    |
-| ❌ 无对应字段                 | `policy_id`     | uint16_t          | **缺失**，策略佣金ID，FTE 内部使用 `FeeInfo` 管理 -- 根据请求是否补充 |
-| `market_id`                 | `market_type`   | uint16_t→int16_t | ⚠️ FTE: 101=上海,102=深圳；新 API 需映射                                    |
-| ❌ 无对应字段                 | `reserved`      | int16_t           | 保留字段，填0                                                                 |
-| `security_id`               | `security_id`   | char[8]           | ✅ 直接映射                                                                   |
-| `price`                     | `order_price`   | int64             | ✅ 直接映射                                                                   |
-| `order_qty`                 | `order_qty`     | int64             | ✅ 直接映射                                                                   |
-| `client_seq_id`             | `client_seq_id` | int64             | ✅ 直接映射                                                                   |
-| `exec_type`                 | `rtn_type`      | char→int32_t     | ⚠️ FTE exec_type 需映射为新 API 的`RSP_TYPE_*` 常量                       |
-| `ord_rej_reason` / `code` | `err_code`      | uint16_t→int32_t | ⚠️ FTE 有交易所错误码和内部错误码两个字段                                   |
-| `order_id`                  | `order_sys_no`  | char[16]→int64   | ⚠️ FTE 的 order_id 是字符串，新 API 是 int64                                |
-| `frozen_trade_value`        | `frozen_amount` | int64             | ✅ 直接映射                                                                   |
-| `frozen_fee`                | `fee`           | int64             | ⚠️ FTE 的 frozen_fee 是冻结费用，新 API 的 fee 是累计费用                   |
-| `cum_qty`                   | `trade_qty`     | int64             | ✅ 直接映射                                                                   |
-| ❌ 无对应字段                 | `cancel_qty`    | int64             | **缺失**，撤单成交数量                                                  |
-| `transact_time`             | `order_time`    | int64             | ✅ 直接映射                                                                   |
-| ❌ 无对应字段                 | `update_time`   | int64             | **缺失**，更新时间                                                      |
-| ❌ 无对应字段                 | `trade_amount`  | int64             | **缺失**（注释掉了），累计成交金额 -- 不需要                            |
-| `total_value_traded`        | ❌ 无对应         | int64             | FTE 成交金额，新 API 无此字段                                                 |
-| `leaves_qty`                | ❌ 无对应         | int64             | FTE 剩余数量                                                                  |
-| `user_info`                 | ❌ 无对应         | char[64]          | FTE 用户私有信息                                                              |
-| `clordid`                   | ❌ 无对应         | char[10]          | FTE 申报合同号                                                                |
-| `orig_clordid`              | ❌ 无对应         | char[10]          | FTE 原申报合同号                                                              |
-| `cash_margin`               | ❌ 无对应         | char              | FTE 信用标识                                                                  |
-| `cancel_flag`               | ❌ 无对应         | char              | FTE 撤单标志                                                                  |
-| `clordno`                   | ❌ 无对应         | int64             | FTE 内部订单编号                                                              |
-| `orig_clordno`              | ❌ 无对应         | int64             | FTE 原单编号                                                                  |
-| `business_type`             | ❌ 无对应         | uint8_t           | FTE 业务类型（现货/ETF/两融）                                                 |
-| `fee`                       | ❌ 无对应         | int64             | FTE 单笔成交费用（在委托响应中为0）                                           |
-| `last_px`                   | ❌ 无对应         | int64             | FTE 最新成交价（在委托响应中为0）                                             |
-| `last_qty`                  | ❌ 无对应         | int64             | FTE 最新成交量（在委托响应中为0）                                             |
+| FTE (TradeOrderER.OrdERInfo)  | 新 API (OrderRtn) | 类型/长度         | 映射说明                                                              |
+| ----------------------------- | ----------------- | ----------------- | --------------------------------------------------------------------- |
+| `side`                      | `side`          | char              | ✅ 直接映射                                                           |
+| `ord_type`                  | `order_type`    | char              | ✅ 直接映射                                                           |
+| `ord_status`                | `order_status`  | uint8_t→uint16_t | 选择映射，⚠️ FTE 内部状态码需映射为新 API 的`ORDER_STATE_*` 常量  |
+| ❌ 无对应字段                 | `policy_id`     | uint16_t          | **缺失**，策略佣金ID，设置为0                                   |
+| `market_id`                 | `market_type`   | uint16_t→int16_t | 选择映射，⚠️ FTE: 101=上海,102=深圳；新 API 需映射                  |
+| ❌ 无对应字段                 | `reserved`      | int16_t           | 保留字段，填0                                                         |
+| `security_id`               | `security_id`   | char[8]           | ✅ 直接映射                                                           |
+| `price`                     | `order_price`   | int64             | ✅ 直接映射                                                           |
+| `order_qty`                 | `order_qty`     | int64             | ✅ 直接映射                                                           |
+| `client_seq_id`             | `client_seq_id` | int64             | ✅ 直接映射                                                           |
+| `exec_type`                 | `rtn_type`      | char→int32_t     | 选择映射,⚠️ FTE exec_type 需映射为新 API 的`RSP_TYPE_*` 常量      |
+| `ord_rej_reason` / `code` | `err_code`      | uint16_t→int32_t | ⚠️ FTE 有交易所错误码和内部错误码两个字段                           |
+| `order_id`                  | `order_sys_no`  | char[16]→int64   | 选择映射, ⚠️ FTE 的 order_id 是字符串，新 API 是 int64             |
+| `frozen_trade_value`        | `frozen_amount` | int64             | ✅ 直接映射                                                           |
+| `frozen_fee`                | `fee`           | int64             | ⚠️ FTE 的 frozen_fee 是冻结费用，新 API 的 fee 是累计费用,设置为0； |
+| `cum_qty`                   | `trade_qty`     | int64             | ✅ 直接映射                                                           |
+| ❌ 无对应字段                 | `cancel_qty`    | int64             | **缺失**，撤单成交数量，设置为0;                                |
+| `transact_time`             | `order_time`    | int64             | ✅ 直接映射                                                           |
+| ❌ 无对应字段                 | `update_time`   | int64             | **缺失**，更新时间,设置为0;                                     |
+| ❌ 无对应字段                 | `trade_amount`  | int64             | **缺失**（注释掉了），累计成交金额 --设置为0;                   |
+| `total_value_traded`        | ❌ 无对应         | int64             | FTE 成交金额，新 API 无此字段                                         |
+| `leaves_qty`                | ❌ 无对应         | int64             | FTE 剩余数量                                                          |
+| `user_info`                 | ❌ 无对应         | char[64]          | FTE 用户私有信息                                                      |
+| `clordid`                   | ❌ 无对应         | char[10]          | FTE 申报合同号                                                        |
+| `orig_clordid`              | ❌ 无对应         | char[10]          | FTE 原申报合同号                                                      |
+| `cash_margin`               | ❌ 无对应         | char              | FTE 信用标识                                                          |
+| `cancel_flag`               | ❌ 无对应         | char              | FTE 撤单标志                                                          |
+| `clordno`                   | ❌ 无对应         | int64             | FTE 内部订单编号                                                      |
+| `orig_clordno`              | ❌ 无对应         | int64             | FTE 原单编号                                                          |
+| `business_type`             | ❌ 无对应         | uint8_t           | FTE 业务类型（现货/ETF/两融）                                         |
+| `fee`                       | ❌ 无对应         | int64             | FTE 单笔成交费用（在委托响应中为0）                                   |
+| `last_px`                   | ❌ 无对应         | int64             | FTE 最新成交价（在委托响应中为0）                                     |
+| `last_qty`                  | ❌ 无对应         | int64             | FTE 最新成交量（在委托响应中为0）                                     |
 
 #### 状态码映射
 

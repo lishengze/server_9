@@ -46,6 +46,7 @@ public:
   int64_t order_qty;                    ///< 委托数量，不放大100
   int64_t stop_price;                   ///< 止损价
   int64_t client_seq_id;                ///< 用户私有报单号
+  uint16_t market_id;                    ///< 市场ID
 };
 
 /// 撤单请求

@@ -4,10 +4,19 @@ API 开发任务
 
 svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
 
-学习阶段:
+学习任务:
     当前 trunk/NewAPI 是一套新的API 框架代码，面向客户，对接三个柜台。 
     study 文件夹下，有几份文档，是对当前代码的分析学习文档，以及简单的设计方案文档。
-    仔细学习，理解代码，深入掌握整个代码的逻辑，以及设计思路。
+    特别是 counter.md 和 question.md ，对api 当前框架的进行了深入分析，并且对待完成的任务也进行了相关的分析。
+    仔细学习，理解代码，深入掌握整个代码的逻辑，以及设计思路，以及当前需要完成的任务。
+
+知识库任务:
+    创建知识库:
+        1. 为当前学习的内容 创建专门的知识库文档，整理所学的所有内容。
+        2. 创建对应的 Prompt.md 用于引导大模型对于整个知识库的分析和理解。
+
+    更新知识库:
+        1. 总结当前所学的， 所总结的所有文档内容，然后更新到知识库中，并且更新 Prompt.md 的内容。
 
 任务 - 优化CMakeLists.txt：    
     1. 初始化任务:
@@ -33,27 +42,3 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
         2.现在将非加速业务的请求和回报的消息结构体存储在了 trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中。
         3. 
     1. trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中，
-
-问题:
-    1. api_impl 中的 TFastCounter fast_，是 如何初始化，与柜台链接，登陆的？
-    2. 不同的柜台处理器，在收到 回报后，是如何一步步回调给客户的？
-    详细的分析这两个问题，然后将分析的结果输出到 study/question.md 中。
-
-    1. callback_manager::on_login() 中， 最后执行了   
-        write_cmt(pos, total_len);
-        trigger();
-        问题是：谁把队列的数据取出来，然后再发送给客户？
-    
-任务背景:
-    当前需要开发一个新版的金融系统的 API，对接三个柜台， GONE-硬件急速柜台， GW-软急速柜台， Counter98-普通柜台.
-设计文档:
-    study/API 设计方案_1_1.docx
-
-任务分析:
-    基础任务:
-    1. API 要接受所有加速接口和非加速接口。
-        加速接口，即通用的
-    1. 配置化的支持 选择登陆哪些柜台；
-    2. 验密优化待定:是否登陆后，先登陆到 AGW 进行验密;
-    3. 通过API登陆GONE或UTE，登陆后，校验版本号，版本号不一致，报错。
-    4. 登陆异常， 登陆任何一个柜台失败，反复登陆直到成功，登陆成功后，返回登陆成功信息。
