@@ -18,12 +18,14 @@
 3. **核心设计思想**：职责正交、模板多态、无锁队列、业务降级
 4. **数据流**：发送路径、接收路径、登录链路
 5. **五种配置模板**：C1~C5 的柜台+引擎组合
-6. **完成度评估**：fpga ⭐⭐⭐ / gw ⭐ / counter98 ⭐
-7. **待完成任务**：P0~P3 优先级划分
+6. **完成度评估**：fpga ⭐⭐⭐ / gw ⭐⭐⭐（FTE 协议已全部实现）/ counter98 ⭐
+7. **待完成任务**：gw_counter ✅ 已完成；counter98 和框架待办按 P0~P3 划分
 8. **实现方案建议**：复用 fpga 模式、消息构建三步、回报解析三步
 9. **FTE 协议详解**：报文格式（头+体+校验和）、消息类型（1xxx/2xxx/3/9）、gw_head.h 结构体、字段级核对结论
-10. **gw_counter 模块设计**：GwSessionCache、两阶段会话、撤单定位、状态字典映射、消息链路
+10. **gw_counter 模块实现** ✅：FTE TCP Binary 协议全部实现（登录/委托/撤单/回报/心跳/ETF），GwSessionCache、两阶段会话、撤单定位、状态字典映射、拆包校验和、编译验证通过
 11. **FTE 编译部署测试**：docker 容器 otc、test_all/ 脚本、模拟交易所 3 实例、完整流程
+12. **API 编译系统**：build.sh 自动转发到 docker otc 编译，CMakeLists 兼容 gcc 4.8.5（check_cxx_compiler_flag 跳过 -mprefer-vector-width）
+13. **代码复查**：发现并修复 sizeof(.data()) 缺陷和 stream_seq=0 问题，12 项关键点核对无误
 
 ## 三、分析框架
 
@@ -94,6 +96,7 @@
 | FPGA 直连 | `trunk/NewAPI/gone/api/src/fpga_counter_direct.h/.cpp` |
 | FPGA 网关 | `trunk/NewAPI/gone/api/src/fpga_counter_gateway.h/.cpp` |
 | 个微柜台 | `trunk/NewAPI/gone/api/src/gw_counter_direct.h/.cpp` |
+| 个微会话缓存 | `trunk/NewAPI/gone/api/src/gw_session_cache.h` |
 | 控制引擎 | `trunk/NewAPI/gone/api/src/multi_socket_engine.h/.cpp` |
 | 业务引擎 | `trunk/NewAPI/gone/api/src/single_socket_engine.h/.cpp` |
 | TCPDirect 引擎 | `trunk/NewAPI/gone/api/src/tcpdirect_engine.h/.cpp` |
@@ -147,9 +150,11 @@
 
 ### Q4: 当前哪些是 todo？
 ```
-gw 柜台：build_order_msg/build_cancel_msg 全部留空，回报分发全部 default 跳过
+gw 柜台：✅ 已完成（FTE TCP Binary 协议全部实现，编译通过）
 counter98：所有 build_*_msg 留空，查询应答未接入分发，deal_send_error 留空
 框架：断线重登/login_state 重置被注释、登录异常重试未实现、缓存结构未定义
+非加速消息接口：struct_req.h/struct_ans.h 待完善
+CMakeLists 优化：支持独立编译+父模块编译（参考 grc_trunk）
 ```
 
 ### Q5: gw_counter 如何向 FTE 发送委托？
@@ -203,10 +208,10 @@ docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEW
 ## 七、边界与限制
 
 1. **知识边界**：本知识库基于 `study/` 下的分析文档（counter.md / question.md / 技术实现.md / 数据流转.md / 产品使用.md）、`task/api_dev/` 设计文档、FTE 知识库及代码分析整理。
-2. **协议细节**：gw_counter 已掌握 FTE 协议（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
+2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-13。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-14。
 
 ---
 

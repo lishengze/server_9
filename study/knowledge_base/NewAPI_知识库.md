@@ -95,7 +95,7 @@
 | `counter98` | 98 协议 | 非模板固定类，恒存在，负责查询/降级业务/登录驱动 |
 | `fpga_counter_direct` | g1 协议 | FPGA 直连模式，单客户，继承 `fpga_counter_base` |
 | `fpga_counter_gateway` | g1 协议 | FPGA 网关模式，多客户（双 hash 索引） |
-| `gw_counter_direct` | 个微协议 | 个微直连（协议未实现，当前留空） |
+| `gw_counter_direct` | FTE TCP Binary 协议 | 个微直连（FTE 协议已完成实现），继承 fpga_counter_base 范式 |
 
 ### 3.2 核心职责
 
@@ -439,7 +439,7 @@ api_impl::position_query → c98_.deal_position_query
 | 模块 | 完成度 | 说明 |
 |------|--------|------|
 | **fpga 柜台** | ⭐⭐⭐ 最高 | 委托/撤单/回报基本完成，仅需微调 |
-| **gw 柜台** | ⭐ 低 | 协议骨架已搭好，业务消息体全部留空 |
+| **gw 柜台** | ⭐⭐⭐ 最高 | FTE TCP Binary 协议全部实现：登录/委托/撤单/回报/心跳/ETF |
 | **counter98** | ⭐ 低 | 请求入口骨架已搭好，消息构建和应答处理全部留空 |
 | **查询应答** | ⭐ 低 | 请求已能发出，但应答未接入分发 |
 | **登录/重连** | ⭐⭐ 中 | 断线自动重登、登录异常重试未实现 |
@@ -449,17 +449,25 @@ api_impl::position_query → c98_.deal_position_query
 
 ## 15. 待完成任务清单
 
-### 15.1 gw_counter_direct（个微柜台）
+### 15.1 gw_counter_direct（个微柜台）✅ 已完成
 
-| 函数/位置 | 当前实现 | 需要完成 |
-|-----------|---------|---------|
-| `build_order_msg`（:154） | `(void)req; (void)o_buf;` | 依据正式个微协议构造消息 |
-| `build_etf_order_msg`（:161） | 同上 | ETF 申购赎回 |
-| `build_cancel_msg`（:168） | 同上 | 撤单 |
-| `deal_order_req`（:53） | `take_len=sizeof(g1_msg_head)` 占位 | 计算消息体长度、填充 build |
-| `deal_recv_msg`（:305） | 只实现 LOGIN_ANS/HEART_ANS | ORDER_RTN/TRADE_RTN/CANCEL_RSP 全 default 跳过 |
-| `build_api_order_rej`（:369） | 只填部分字段 | 依据正式协议 |
-| 链接状态管理（:449/:460） | 空 / login_state 重置被注释 | 建链后重新登录、断线重置登录态 |
+FTE TCP Binary 协议全部实现（gw_counter_direct.h/.cpp + gw_session_cache.h）：
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 登录（build_login_msg / deal_log_ans） | ✅ 完成 | PktNewHeader + LogOnReq/LogOnAns，密码截断100字节 |
+| 委托（build_order_msg / deal_order_rtn） | ✅ 完成 | PktNewHeader + TradeOrderReq/TradeOrderER，session缓存补充 account_id/cust_id |
+| 撤单（build_cancel_msg / deal_cancel_rsp） | ✅ 完成 | 从 GwSessionCache 反查 orig_clordno/orig_client_seq_id |
+| 委托成交回报（deal_trade_rtn） | ✅ 完成 | TradeOrderER 解析，exec_id(16→32)/状态字典映射 |
+| ETF 申购赎回（build_etf_order_msg / deal_etf_trade_rtn） | ✅ 完成 | msg_id=1010，映射为 OrderRtn（成分券暂不展开） |
+| 拒绝消息（deal_reject_msg） | ✅ 完成 | RejectMsg 解析，统一回调 ORDER_DISCARD |
+| 心跳（build_heart_msg / deal_recv_msg 心跳） | ✅ 完成 | msg_id=3, msg_len=0 |
+| 链接管理（deal_link_connect/close） | ✅ 完成 | 建链/断链状态管理，断链重置 login_state |
+| 发送失败处理（deal_send_error） | ✅ 完成 | 构造 API 拒绝回报 |
+| 会话缓存（GwSessionCache） | ✅ 完成 | 全局单例，fund_account_id 主键，order_sys_no→{clordno,client_seq_id} 映射 |
+| 拆包/校验和 | ✅ 完成 | decode header → 校验 msg_len≤65536 → 校验和验证 → switch 分发 |
+| 状态字典映射 | ✅ 完成 | ord_status(0-8)→ORDER_STATE_*(0-9)；exec_type('0'/'4'/'8'/'F')→RSP_TYPE_* |
+| 链接断开自动重登 | ✅ 完成 | deal_link_close 中 login_state=0，multi_engine 驱动重登 |
 
 ### 15.2 counter98（98 柜台）
 
@@ -665,39 +673,43 @@ TCP 字节流 → counter.deal_recv_msg(buf, len, link_type)
 
 ---
 
-## 19. gw_counter 模块设计（gw_counter_api.md）
+## 19. gw_counter 模块实现（gw_counter_api.md）✅ 已完成
 
-> 完整设计文档：`task/api_dev/gw_counter_api.md`（14 章），经两轮复盘修正 9 处问题。
+> 设计文档：`task/api_dev/gw_counter_api.md`（14 章），经两轮复盘修正 9 处问题。
+> 实现文件：`trunk/NewAPI/gone/api/src/gw_counter_direct.h/.cpp` + `gw_session_cache.h`
 
-### 19.1 设计核心
+### 19.1 实现核心
 
-| 设计点 | 说明 |
-|--------|------|
-| **GwSessionCache** | 全局单例，fund_account_id 主键，缓存 cust_id/account_id/order_way_ext/user_info + order_sys_no→{clordno, client_seq_id} 映射 |
-| **两阶段会话** | `create_session(acc_login_event_info)`（登录请求时）+ `fill_session_from_ans(LogOnAns)`（登录应答时回填 cust_id/account_id） |
-| **撤单定位** | CancelReq.order_sys_no → 映射表反查 orig_clordno + orig_client_seq_id |
-| **状态字典** | FTE ord_status(0-8) ↔ NewAPI ORDER_STATE_*；exec_type('0'/'4'/'8'/'F') ↔ RSP_TYPE_* |
-| **心跳确认** | 收到 FTE 心跳必须调 `trade_eng_op_->deal_heart_msg_ans(link_type)`，否则 aio_tcp 心跳超时误判 |
+| 设计点 | 实现状态 | 实现位置 |
+|--------|---------|---------|
+| **GwSessionCache** | ✅ 全局单例，fund_account_id 主键 | `gw_session_cache.h` 全部内联实现 |
+| **两阶段会话** | ✅ create_session + fill_session_from_ans | `gw_counter_direct.cpp` build_login_msg / deal_log_ans |
+| **撤单定位** | ✅ order_sys_no → {clordno, client_seq_id} 反查 | `gw_counter_direct.cpp` build_cancel_msg |
+| **状态字典** | ✅ ord_status(0-8) ↔ ORDER_STATE_*；exec_type('0'/'4'/'8'/'F') ↔ RSP_TYPE_* | `gw_counter_direct.cpp` map_ord_status / map_exec_type |
+| **心跳确认** | ✅ deal_heart_msg_ans 已调用 | `gw_counter_direct.cpp` deal_recv_msg kPktNewHeartBeat 分支 |
+| **校验和** | ✅ GenerateSzCheckSum 逐字节求和 %256，大端 4 字节 | `gw_counter_direct.h` 静态方法 |
+| **市场映射** | ✅ 101→1(上海)/102→2(深圳) | `gw_counter_direct.cpp` map_market_id |
 
-### 19.2 消息链路
+### 19.2 消息链路（已实现）
 
-| 链路 | 请求结构 | 回报结构 | 回调 |
-|------|---------|---------|------|
-| 登录 | LoginReq → LogOnReq(1001) | LogOnAns(2001) → LoginAns | `on_login` |
-| 委托 | OrderReq → TradeOrderReq(1003) | TradeOrderER(2003) → OrderRtn | `on_order_rtn` |
-| 撤单 | CancelReq → CancelOrderReq(1004) | TradeOrderER(2004) → CancelRsp | `on_cancel_rsp` |
-| 成交 | — | TradeOrderER(2005) → TradeRtn | `on_trade_rtn` |
-| ETF | OrderReq → TradeOrderReq(1010) | TradeOrderER(2010) → OrderRtn | `on_order_rtn` |
-| 心跳 | — | kPktNewHeartBeat(3) | `deal_heart_msg_ans` |
-| 拒绝 | — | RejectMsg(9) | `on_order_rtn`(reject) |
+| 链路 | 请求结构 | 回报结构 | 回调 | 函数 |
+|------|---------|---------|------|------|
+| 登录 | LogOnReq(1001) | LogOnAns(2001) → LoginAns | `on_login` | build_login_msg / deal_log_ans |
+| 委托 | TradeOrderReq(1003) | TradeOrderER(2003) → OrderRtn | `on_order_rtn` | build_order_msg / deal_order_rtn |
+| 撤单 | CancelOrderReq(1004) | TradeOrderER(2004) → CancelRsp | `on_cancel_rsp` | build_cancel_msg / deal_cancel_rsp |
+| 成交 | — | TradeOrderER(2005) → TradeRtn | `on_trade_rtn` | deal_trade_rtn |
+| ETF | TradeOrderReq(1010) | TradeOrderER(2010) → OrderRtn | `on_order_rtn` | build_etf_order_msg / deal_etf_trade_rtn |
+| 心跳 | — | kPktNewHeartBeat(3) | `deal_heart_msg_ans` | build_heart_msg / deal_recv_msg |
+| 拒绝 | — | RejectMsg(9) | `on_order_rtn`(reject) | deal_reject_msg |
 
-### 19.3 实现优先级
+### 19.3 关键实现细节
 
-| 优先级 | 任务 |
-|--------|------|
-| **P0** | build_order_msg/build_cancel_msg、deal_recv_msg 改 FTE 分发、deal_order_rtn/deal_cancel_rsp/deal_trade_rtn |
-| **P1** | build_login_msg/deal_log_ans 改 FTE、GwSessionCache、build_heart_msg、链接断开重置 login_state |
-| **P2** | deal_reject_msg、deal_send_error 改 FTE、ETF 处理、订单映射表维护、登录重试 |
+1. **build_login_msg**：PktNewHeader(msg_id=1001) + LogOnReq + 校验和。password 截断到 100 字节，client_feature_code/agw_user 从 acc_login_event_info 复制，heart_bt_int=10。
+2. **deal_log_ans**：解析 LogOnAns，error_code=0 时 login_state=2，否则 login_state=0。从应答回填 fund_account_id/cust_id/account_id/branch_id 到 GwSessionCache。
+3. **deal_order_rtn**：解析 TradeOrderER，用 `strtoll(er.order_id, NULL, 10)` 得 order_sys_no，记录 order_sys_no→{clordno, client_seq_id} 映射。状态字典映射 ord_status/exec_type。
+4. **deal_trade_rtn**：解析 TradeOrderER，exec_id 从 16 字节复制到 TradeRtn 32 字节字段。成交价/量/金额/费用映射。
+5. **build_cancel_msg**：从 GwSessionCache 反查 orig_clordno/orig_client_seq_id（找不到设 0）。
+6. **deal_recv_msg 拆包**：循环解码 PktNewHeader → 校验 msg_len≤65536 → 等待完整报文 → 校验和验证 → switch(msg_id) 分发。msg_len=0 时按心跳处理。
 
 ---
 
@@ -766,3 +778,122 @@ TCP 字节流 → counter.deal_recv_msg(buf, len, link_type)
 ### 20.7 联调准备
 
 api client 开发完成后，`docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEWORK/fte/test_all/start_all.sh"` 一键启动全套环境，api client 连接 `127.0.0.1:33001`（上海）或 `127.0.0.1:33002`（深圳）与 FTE + 模拟交易所通信。
+
+---
+
+## 21. 编译系统与 docker 环境
+
+### 21.1 编译架构
+
+| 层级 | CMakeLists.txt | 角色 |
+|------|---------------|------|
+| 根工程 | `/mnt/work/api_trunk/CMakeLists.txt` | project(API_MAIN)，C++11，设置全局编译标志，add_subdirectory(trunk/NewAPI newapi) |
+| 子模块 | `trunk/NewAPI/CMakeLists.txt` | add_subdirectory(common + gone/api + solarflare 可选)，add_dependencies(lbapi lbcommon) |
+| common | `trunk/NewAPI/common/CMakeLists.txt` | 静态库 liblbcommon.a |
+| gone/api | `trunk/NewAPI/gone/api/CMakeLists.txt` | 动态库 liblbapi.so，file(GLOB src/*.cpp) 自动收集源文件 |
+
+### 21.2 docker 编译环境
+
+| 项目 | 说明 |
+|------|------|
+| 容器名 | `otc`（宿主机 `/home/lsz/code` → 容器 `/mnt`） |
+| 项目路径 | 宿主机 `/home/lsz/code/work/api_trunk` → 容器 `/mnt/work/api_trunk` |
+| 编译器 | gcc 4.8.5（C++11），cmake /usr/local/bin/cmake |
+| 构建目录 | `build_cmake/`（容器内 `/mnt/work/api_trunk/build_cmake`） |
+| 产物 | `build_cmake/lib/liblbapi.so`（共享库）+ `liblbcommon.a`（静态库） |
+
+### 21.3 build.sh 编译脚本
+
+`build.sh` 支持宿主机自动转发到 docker 容器：
+
+```bash
+./build.sh              # Debug 模式编译（转发到 docker otc）
+./build.sh Release      # Release 模式编译
+./build.sh clean        # 清理 build_cmake 目录
+./build.sh rebuild      # 清理后重新编译（Debug）
+./build.sh -j8          # Debug 模式，8 线程并行编译
+```
+
+- **宿主机执行**：检测到项目路径非 `/mnt/*` 开头，自动执行 `docker exec otc bash -lc "cd /mnt/work/api_trunk && ./build.sh $*"`
+- **容器内执行**：直接执行 cmake + make
+- **环境变量**：`env -u LD_LIBRARY_PATH` 避免 VSCode 扩展旧 libstdc++ 冲突
+
+### 21.4 CMakeLists 兼容性修复
+
+docker 内 gcc 4.8.5 不支持 `-mprefer-vector-width=256`（需要 GCC >= 8）。根 `CMakeLists.txt` 用 `check_cxx_compiler_flag` 检测：
+
+```cmake
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mprefer-vector-width=256" HAS_PREFER_VECTOR_WIDTH)
+if(HAS_PREFER_VECTOR_WIDTH)
+    set(PREFER_VECTOR_FLAG "-mprefer-vector-width=256")
+else()
+    set(PREFER_VECTOR_FLAG "")
+endif()
+set(CMAKE_CXX_FLAGS "... ${PREFER_VECTOR_FLAG} ...")
+```
+
+同样修复了 `trunk/NewAPI/CMakeLists.txt` 和 `trunk/NewAPI/gone/api/CMakeLists.txt`（独立编译模式）。
+
+### 21.5 编译验证
+
+编译产物 `liblbapi.so` 成功链接 `gw_counter_direct.cpp.o`，通过 `nm -D` 验证关键符号：
+
+| 符号 | 说明 |
+|------|------|
+| `gw_counter_direct::deal_log_ans` | 登录应答处理 |
+| `gw_counter_direct::deal_recv_msg` | 消息拆包分发 |
+| `gw_counter_direct::deal_order_req/rtn` | 委托请求/回报 |
+| `gw_counter_direct::deal_trade_rtn` | 成交回报 |
+| `gw_counter_direct::deal_cancel_req/rsp` | 撤单请求/应答 |
+| `gw_counter_direct::build_login_msg/order_msg/heart_msg` | 消息构建 |
+| `gw_counter_direct::map_ord_status/map_exec_type/map_market_id` | 状态字典映射 |
+| `gw_counter_direct::init_trade/init_gateway` | 初始化 |
+| `gw_counter_direct::deal_cust_login/ans_cust_login` | 登录事件处理 |
+| `gw_counter_direct::deal_link_close` | 链接关闭处理 |
+
+
+---
+
+## 22. 代码复查与缺陷修复记录
+
+### 22.1 复查范围
+
+对 `gw_counter_direct.h/.cpp` + `gw_session_cache.h` 逐行复查，对照：
+- 设计文档 `gw_counter_api.md`（14 章）
+- FTE 协议结构体 `gw_head.h`（字段名/类型/尺寸）
+- API 数据结构 `order_trade_type.h`（TradeRtn/OrderRtn/CancelRsp/LoginAns 字段定义）
+- 成熟实现 `fpga_counter_direct.h/.cpp`（范式参考）
+
+### 22.2 发现并修复的缺陷
+
+| # | 缺陷 | 文件 | 影响 | 修复 |
+|---|------|------|------|------|
+| 1 | `sizeof(ans.fund_account_id.data())` = 8（指针大小），应为 16（数组大小） | `gw_counter_direct.cpp` build_login_rtn | fund_account_id/account_id/branch_id 只复制 8 字节而非完整长度 | 改为 `sizeof(ans.fund_account_id)` 等数组真实大小 |
+| 2 | `build_api_order_rej`/`build_api_cancel_rej` 中 `stream_seq = 0` | `gw_counter_direct.cpp` | 与设计文档第 11.2 节不一致，发送失败路径序列号可能冲突 | 改为 `++session_seq_` 单调递增 |
+
+### 22.3 核对无误的关键点
+
+| 检查项 | 结果 |
+|--------|------|
+| TradeOrderER 全部字段引用（order_id/clordno/exec_type/ord_status/last_px/frozen_fee/total_value_traded 等） | ✅ 与 gw_head.h 一致 |
+| TradeOrderReq 无 policy_id/tgw_id（fte_api.md 有，gw_head.h 无，已丢弃） | ✅ 一致 |
+| CancelOrderReq 撤单字段 orig_clordno/orig_client_seq_id 为 int64 | ✅ 一致 |
+| LogOnReq password[100]/client_feature_code[1024]/agw_user[32] | ✅ 一致 |
+| LogOnAns.error_code (uint32) / session_status (int32) | ✅ 一致 |
+| RejectMsg.reject_reason_code (uint16) | ✅ 一致 |
+| TradeRtn.exec_id 为 array<char,32>，TradeOrderER.exec_id 为 array<char,16>，复制时 min(32,16)=16 | ✅ 正确处理 |
+| 状态字典 map_ord_status/map_exec_type/map_market_id 逐值 | ✅ 与设计文档一致 |
+| 校验和字节序（发送 HostToNetwork，接收 HostToNetwork 反转） | ✅ 两端一致 |
+| 拆包半包处理、msg_len>65536 跳过、校验和失败跳过 | ✅ 正确 |
+| 撤单映射 order_sys_no→{clordno, client_seq_id} 写入与读取键一致 | ✅ 正确 |
+| GwSessionCache 生命周期（login 时 create，log_ans 时 fill，cancel 时 lookup） | ✅ 正确 |
+
+### 22.4 设计文档列但保持现状的项
+
+| 项 | 设计文档 | 当前实现 | 理由 |
+|---|---------|---------|------|
+| deal_reject_msg 按 business_type 分发 | 第 11 节 switch 分支 | 统一回调 on_order_rtn(DISCARD) | switch 各分支实际等价 |
+| deal_etf_trade_rtn 成分券展开 | 第 8.2 节 | 只解析固定部分，映射为 OrderRtn | 符合"成分券暂不展开" |
+| deal_link_connect 触发重新登录 | 第 12.2 节 | 由 multi_engine 驱动 | 框架级职责 |
+| deal_send_error 重置 login_state | 第 12.2 节 | 不重置 | 链接断开已由 deal_link_close 重置，单条发送失败不应误杀会话 |
