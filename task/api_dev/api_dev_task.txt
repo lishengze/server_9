@@ -37,8 +37,25 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
         这样在独立编译 gone/api 时，也能正确的处理 SolarFlare 相关内容。
 
 任务 - 接口完善;
-    任务背景:
-        1.当前api框架中，在消息请求 和 消息回报中，只实现了 加速消息相关的接口。这些消息的类型和结构体定义在了 order_trade_type.h 中。
-        2.现在将非加速业务的请求和回报的消息结构体存储在了 trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中。
-        3. 
-    1. trunk/NewAPI/gone/api/include/struct_req.h 和 trunk/NewAPI/gone/api/include/struct_ans.h 中，
+    任务描述:
+        1.当前api框架中，gw_counter 模块里面， 还有一些功能没有实现，需要完善，详情可以参考 question.md 中对应部分
+
+        2.gw_counter 模块 需要对接的柜台工程在是 /home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte  
+          对 fte 的整个学习可以从对应的知识库文件夹 DYS-FRAMEWORK/fte/fte/knowledge_base 开始进行学习，
+          沿着知识库整理的Prompt.md和README.md 逐个展开学习所有的文档和代码。
+          随后着重学习 DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md 和 DYS-FRAMEWORK/fte/api_demo
+          详细深入地学习了解和 FTE 进行TCP 通信的相关的通信协议和数据格式, 以及相关的代码。和 对应的示例。
+        
+        3. task/api_dev/fte_api.md 二三两章节中，存储了 请求是 新api 数据结构到 FTE 的 数据结构 的转换关系。
+            和回报时 FTE 的 数据结构 到 新api 的数据结构 的转换关系。
+            基本的规则:
+                1. 直接映射的字段，直接映射转化。
+                2. 选择映射的字段，根据指定的转化字段转化。
+                3. 请求时 FTE数据结构中有，但新api 数据结构中没有的字段，直接丢弃。
+                4. 回报时 新api 数据结构中有，但 FTE数据结构中没有的字段，FTE将对应字段设置为空。
+                5. 在登陆时，需要新建一个全局单例的对象， 以 fund_account_id 为主键， 缓存一些客户相关的信息，为以后的请求提供信息。
+                    缓存哪些信息在 文档中说明，哪些请求会用到缓存信息文档中也进行了说明。
+                6. 请求时 FTE数据结构中没有，但新api 数据结构中有的字段，文档中针对不同情况，进行了不同的处理，都有说明。
+
+        4. 结合 1,2,3 部分的深入学习，以一个资深金融C++开发工程师的角度，设计一份完成 gw_counter 模块的接口设计文档，完善当前
+           api 框架中和 fte 柜台进行通讯所需要的所有功能。文档名称为 gw_counter_api.md , 存储到 task/api_dev 目录下。

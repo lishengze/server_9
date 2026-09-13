@@ -228,7 +228,7 @@ login_ans.login_time        = current_timestamp()                // 取当前时
 | `order_qty`                 | `order_qty`     | int64             | ✅ 直接映射                                                           |
 | `client_seq_id`             | `client_seq_id` | int64             | ✅ 直接映射                                                           |
 | `exec_type`                 | `rtn_type`      | char→int32_t     | 选择映射,⚠️ FTE exec_type 需映射为新 API 的`RSP_TYPE_*` 常量      |
-| `ord_rej_reason` / `code` | `err_code`      | uint16_t→int32_t | ⚠️ FTE 有交易所错误码和内部错误码两个字段                           |
+| `ord_rej_reason` / `code` | `err_code`      | uint16_t→int32_t | 选择映射，`ord_rej_reason`进行映射。                                |
 | `order_id`                  | `order_sys_no`  | char[16]→int64   | 选择映射, ⚠️ FTE 的 order_id 是字符串，新 API 是 int64             |
 | `frozen_trade_value`        | `frozen_amount` | int64             | ✅ 直接映射                                                           |
 | `frozen_fee`                | `fee`           | int64             | ⚠️ FTE 的 frozen_fee 是冻结费用，新 API 的 fee 是累计费用,设置为0； |
@@ -282,19 +282,19 @@ FTE `exec_type` 到新 API `rtn_type` 映射：
 
 #### 字段映射表
 
-| FTE (TradeOrderER)                          | 新 API (CancelRsp)  | 映射说明           |
-| ------------------------------------------- | ------------------- | ------------------ |
-| `trade_order_user.cust_id`                | `cust_id`         | ✅ 直接映射        |
-| `trade_order_user.fund_account_id`        | `fund_account_id` | ✅ 直接映射        |
-| `trade_order_user.account_id`             | `account_id`      | ✅ 直接映射        |
-| `trade_order_user.branch_id`              | `branch_id`       | ✅ 直接映射        |
-| `trade_order_user.client_seq_id`          | `client_req_no`   | ⚠️ 映射为请求号  |
-| `order_er_info.market_id`                 | `market_type`     | ⚠️ 市场代码映射  |
-| `order_er_info.order_id`                  | `order_sys_no`    | ⚠️ 字符串→int64 |
-| `order_er_info.client_seq_id`             | `client_seq_id`   | ✅ 直接映射        |
-| `order_er_info.code` / `ord_rej_reason` | `err_code`        | ⚠️ 错误码映射    |
-| ❌ 无对应字段                               | `rej_api`         | int32_t            |
-| ❌ 无对应字段                               | `order_sys_no`    | int64              |
+| FTE (TradeOrderER)                          | 新 API (CancelRsp)  | 映射说明                                        |
+| ------------------------------------------- | ------------------- | ----------------------------------------------- |
+| `trade_order_user.cust_id`                | `cust_id`         | ✅ 直接映射                                     |
+| `trade_order_user.fund_account_id`        | `fund_account_id` | ✅ 直接映射                                     |
+| `trade_order_user.account_id`             | `account_id`      | ✅ 直接映射                                     |
+| `trade_order_user.branch_id`              | `branch_id`       | ✅ 直接映射                                     |
+| `trade_order_user.client_seq_id`          | `client_req_no`   | 选择映射，映射为请求号                          |
+| `order_er_info.market_id`                 | `market_type`     | 选择映射，市场代码映射                          |
+| `order_er_info.order_id`                  | `order_sys_no`    | 选择映射，⚠️ 字符串→int64                    |
+| `order_er_info.client_seq_id`             | `client_seq_id`   | ✅ 直接映射                                     |
+| `order_er_info.code` / `ord_rej_reason` | `err_code`        | `ord_rej_reason`， 选择映射， ⚠️ 错误码映射 |
+| ❌ 无对应字段                               | `rej_api`         | int32_t， 设置为0,                              |
+| `orig_clordno`                            | `order_sys_no`    | 选择映射，int64,请求时设置的 柜台原始报单编号  |
 
 ---
 
@@ -304,36 +304,36 @@ FTE `exec_type` 到新 API `rtn_type` 映射：
 
 #### 字段映射表
 
-| FTE (TradeOrderER)                   | 新 API (TradeRtn)   | 映射说明                                               |
-| ------------------------------------ | ------------------- | ------------------------------------------------------ |
-| `trade_order_user.cust_id`         | `cust_id`         | ✅                                                     |
-| `trade_order_user.fund_account_id` | `fund_account_id` | ✅                                                     |
-| `trade_order_user.account_id`      | `account_id`      | ✅                                                     |
-| `trade_order_user.branch_id`       | `branch_id`       | ✅                                                     |
-| `side`                             | `side`            | ✅                                                     |
-| `ord_type`                         | `order_type`      | ✅                                                     |
-| `ord_status`                       | `order_status`    | ⚠️ 状态码映射                                        |
-| `market_id`                        | `market_type`     | ⚠️ 市场代码映射                                      |
-| `security_id`                      | `security_id`     | ✅                                                     |
-| `price`                            | `order_price`     | ✅                                                     |
-| `order_qty`                        | `order_qty`       | ✅                                                     |
-| `client_seq_id`                    | `client_seq_id`   | ✅                                                     |
-| `order_id`                         | `order_sys_no`    | ⚠️ 字符串→int64                                     |
-| `frozen_trade_value`               | `frozen_amount`   | ✅                                                     |
-| `frozen_fee` + `fee`             | `fee`             | ⚠️ FTE 分开冻结费用和成交费用，新 API 合并为累计费用 |
-| `cum_qty`                          | `trade_qty`       | ✅                                                     |
-| ❌ 无对应字段                        | `cancel_qty`      | **缺失 -- **                                          |
-| `transact_time`                    | `order_time`      | ✅                                                     |
-| ❌ 无对应字段                        | `exec_time`       | **缺失**，成交时间                               |
-| `exec_id`                          | `exec_id`         | ⚠️ FTE: char[16], 新API: char[32]                    |
-| `last_px`                          | `exec_price`      | ✅ 最新成交价                                          |
-| `last_qty`                         | `exec_qty`        | ✅ 最新成交量                                          |
-| ❌ 无对应字段                        | `exec_amount`     | **缺失**，成交金额                               |
-| `fee`                              | `exec_fee`        | ✅ 单笔成交费用                                        |
-| ❌ 无对应字段                        | `policy_id`       | **缺失**                                         |
-| ❌ 无对应字段                        | `reserved`        | **缺失**                                         |
-| ❌ 无对应字段                        | `update_time`     | **缺失**                                         |
-| `total_value_traded`               | ❌ 无对应           | FTE 累计成交金额，可映射到`exec_amount`              |
+| FTE (TradeOrderER)                   | 新 API (TradeRtn)   | 映射说明                                                         |
+| ------------------------------------ | ------------------- | ---------------------------------------------------------------- |
+| `trade_order_user.cust_id`         | `cust_id`         | ✅                                                               |
+| `trade_order_user.fund_account_id` | `fund_account_id` | ✅                                                               |
+| `trade_order_user.account_id`      | `account_id`      | ✅                                                               |
+| `trade_order_user.branch_id`       | `branch_id`       | ✅                                                               |
+| `side`                             | `side`            | ✅                                                               |
+| `ord_type`                         | `order_type`      | ✅                                                               |
+| `ord_status`                       | `order_status`    | 选择映射，⚠️ 状态码映射，进行字典转化                          |
+| `market_id`                        | `market_type`     | 选择映射，⚠️ 市场代码映射                                      |
+| `security_id`                      | `security_id`     | ✅                                                               |
+| `price`                            | `order_price`     | ✅                                                               |
+| `order_qty`                        | `order_qty`       | ✅                                                               |
+| `client_seq_id`                    | `client_seq_id`   | ✅                                                               |
+| `order_id`                         | `order_sys_no`    | 选择映射，⚠️ 字符串→int64                                     |
+| `frozen_trade_value`               | `frozen_amount`   | ✅                                                               |
+| `frozen_fee` + `fee`             | `fee`             | 选择映射，⚠️ FTE 分开冻结费用和成交费用，新 API 合并为累计费用 |
+| `cum_qty`                          | `trade_qty`       | ✅                                                               |
+| ❌ 无对应字段                        | `cancel_qty`      | **缺失 -- ** 设置为 0                                           |
+| `transact_time`                    | `order_time`      | ✅                                                               |
+| ❌ 无对应字段                        | `exec_time`       | **缺失**，成交时间，设置为 0                               |
+| `exec_id`                          | `exec_id`         | 选择映射，⚠️ FTE: char[16], 新API: char[32]                    |
+| `last_px`                          | `exec_price`      | ✅ 最新成交价                                                    |
+| `last_qty`                         | `exec_qty`        | ✅ 最新成交量                                                    |
+| ❌ 无对应字段                        | `exec_amount`     | **缺失**，成交金额，设置0                                  |
+| `fee`                              | `exec_fee`        | ✅ 单笔成交费用                                                  |
+| ❌ 无对应字段                        | `policy_id`       | **缺失，设置为0**                                          |
+| ❌ 无对应字段                        | `reserved`        | **缺失，设置为0**                                          |
+| ❌ 无对应字段                        | `update_time`     | **缺失，设置为0**                                          |
+| `total_value_traded`               | ❌ 无对应           | FTE 累计成交金额，可映射到`exec_amount`                        |
 
 ---
 
