@@ -41,8 +41,18 @@ if (NOT DEFINED BUILD_SUM_COUNT)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
     set(CMAKE_VERBOSE_MAKEFILE ON)
 
+    # 检测编译器是否支持 -mprefer-vector-width（需要 GCC >= 8）
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-mprefer-vector-width=256" HAS_PREFER_VECTOR_WIDTH)
+    if(HAS_PREFER_VECTOR_WIDTH)
+        set(PREFER_VECTOR_FLAG "-mprefer-vector-width=256")
+    else()
+        set(PREFER_VECTOR_FLAG "")
+        message(STATUS "编译器不支持 -mprefer-vector-width=256，已跳过")
+    endif()
+
     # 编译优化 FLAGS（低延迟交易场景）
-    set(CMAKE_CXX_FLAGS "--std=c++11 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+    set(CMAKE_CXX_FLAGS "--std=c++11 -march=native -mtune=native ${PREFER_VECTOR_FLAG} -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
     set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fomit-frame-pointer -funroll-loops -ffunction-sections -fdata-sections -fno-unwind-tables ${CMAKE_CXX_FLAGS} -DNDEBUG")
 

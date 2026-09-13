@@ -1,44 +1,44 @@
 // gw_counter_direct - 个微软件极速柜台 (直连模式) 实现
 //
 // 个微柜台无查询接口, 仅直连模式 (C1/C2 配置)
-// 业务消息: 委托 / 撤单 / ETF申购赎回 / BSE
-// 推送: 委托 / 成交回报
+// 业务消息: 委托 / 撤单 / ETF申购赎回
+// 推送: 委托 / 成交 / 撤单回报
 //
-// 协议状态:
-//   - 个微真实协议是外部定义, 当前未提供.
-//   - 临时替代: 消息头用 g1_msg_head, 登录消息体用 g1 login_req/login_ans.
-//   - 委托/撤单等业务消息体暂留空 + // todo.
+// 协议: FTE TCP Binary（gw_message::* 结构体，大端字节序）
+//   报文格式: [PktNewHeader 8B | 消息体 | 校验和 4B]
+//   校验和: GenerateSzCheckSum 对 [头+体] 逐字节求和 %256，转大端追加
 
 #include "gw_counter_direct.h"
 #include "api_errno.h"
 #include "api_event_msg.h"
 #include "callback_manager.h"
-#include "g1msghead.h"
-#include "g1trademsg.h"
 #include "matomic.h"
 #include "mlog.h"
 #include "mutils.h"
 #include "que_mth_buf.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace lb_api {
 
-// 构造 / 析构
+// ============================================================
+// 构造 / 析构 / init
+// ============================================================
+
 gw_counter_direct::gw_counter_direct()
     : market_type(0), heart_interval(5), login_state(0), trade_send_queue_(nullptr), cb_mgr_(nullptr), session_seq_(0),
       log_(nullptr) {}
 
 gw_counter_direct::~gw_counter_direct() = default;
 
-// init
 int32 gw_counter_direct::init(const api_config_impl &cfg, callback_manager *cb, lb_common::lb_log *log) {
   cb_mgr_ = cb;
   log_ = log;
-  market_type = static_cast<int16>(cfg.get_market_type());           ///< 市场
-  heart_interval = static_cast<int16>(cfg.get_heartbeat_interval()); ///< 心跳间隔
-  login_state = 0;                                                   ///< 0-未登陆
-  trade_link_connect_ = 0;                                           ///< 0-未链接/断开
+  market_type = static_cast<int16>(cfg.get_market_type());
+  heart_interval = static_cast<int16>(cfg.get_heartbeat_interval());
+  login_state = 0;
+  trade_link_connect_ = 0;
   session_seq_ = 0;
 
   lb_common::lb_log_hand tlh(log_);
@@ -47,9 +47,23 @@ int32 gw_counter_direct::init(const api_config_impl &cfg, callback_manager *cb, 
   return 0;
 }
 
-// ---- 业务发送函数 (与 counter98 同样模式: 状态检查 -> take_req_que_mem -> build -> cmt_req_que_mem) ----
+// ============================================================
+// FTE 校验和计算
+// ============================================================
 
-// deal_order_req: 买卖委托 (个微真实协议未知, build_order_msg 留空)
+uint32_t gw_counter_direct::GenerateSzCheckSum(const char *buf, uint32_t len) {
+  uint32_t sum = 0;
+  for (uint32_t i = 0; i < len; ++i) {
+    sum += static_cast<uint8_t>(buf[i]);
+  }
+  return sum % 256;
+}
+
+// ============================================================
+// 业务发送函数
+// ============================================================
+
+// deal_order_req: 买卖委托
 int32 gw_counter_direct::deal_order_req(const OrderReq &req) {
   if (unlikely(trade_link_connect_ == 0)) {
     lb_common::lb_log_hand tlh(log_);
@@ -65,8 +79,8 @@ int32 gw_counter_direct::deal_order_req(const OrderReq &req) {
     return LBAPI_ERR_NOT_LOG_CUST;
   }
 
-  // todo : 需要依据正式个微协议，重新实现消息构造和入队
-  int32 take_len = sizeof(g1_msg_head);
+  // FTE 报文长度 = PktNewHeader(8) + TradeOrderReq(106) + 校验和(4) = 118
+  int32 take_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::TradeOrderReq) + sizeof(uint32_t));
   char *data = nullptr;
   int64 pos = take_req_que_mem(data, take_len);
   if (unlikely(pos <= 0)) {
@@ -82,7 +96,7 @@ int32 gw_counter_direct::deal_order_req(const OrderReq &req) {
   return LBAPI_OK;
 }
 
-// deal_etf_order_req: ETF 申购赎回 (个微真实协议未知, build_etf_order_msg 留空)
+// deal_etf_order_req: ETF 申购赎回
 int32 gw_counter_direct::deal_etf_order_req(const OrderReq &req) {
   if (unlikely(trade_link_connect_ == 0)) {
     lb_common::lb_log_hand tlh(log_);
@@ -98,8 +112,7 @@ int32 gw_counter_direct::deal_etf_order_req(const OrderReq &req) {
     return LBAPI_ERR_NOT_LOG_CUST;
   }
 
-  // todo : 需要依据正式个微协议，重新实现消息构造和入队
-  int32 take_len = sizeof(g1_msg_head);
+  int32 take_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::TradeOrderReq) + sizeof(uint32_t));
   char *data = nullptr;
   int64 pos = take_req_que_mem(data, take_len);
   if (unlikely(pos <= 0)) {
@@ -115,7 +128,7 @@ int32 gw_counter_direct::deal_etf_order_req(const OrderReq &req) {
   return LBAPI_OK;
 }
 
-// deal_cancel_req: 委托撤单 (个微真实协议未知, build_cancel_msg 留空)
+// deal_cancel_req: 委托撤单
 int32_t gw_counter_direct::deal_cancel_req(const CancelReq &req) {
   if (unlikely(trade_link_connect_ == 0)) {
     lb_common::lb_log_hand tlh(log_);
@@ -131,8 +144,7 @@ int32_t gw_counter_direct::deal_cancel_req(const CancelReq &req) {
     return LBAPI_ERR_NOT_LOG_CUST;
   }
 
-  // todo : 需要依据正式个微协议，重新实现消息构造和入队
-  int32 take_len = sizeof(g1_msg_head);
+  int32 take_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::CancelOrderReq) + sizeof(uint32_t));
   char *data = nullptr;
   int64 pos = take_req_que_mem(data, take_len);
   if (unlikely(pos <= 0)) {
@@ -148,109 +160,210 @@ int32_t gw_counter_direct::deal_cancel_req(const CancelReq &req) {
   return LBAPI_OK;
 }
 
-// ---- 业务消息构建: 真实协议未知, 全部留空 ----
+// ============================================================
+// 消息构建 (FTE 协议)
+// ============================================================
 
-// build_order_msg: 构造个微委托消息 (头 + 个微协议体)
+// build_order_msg: 构造 FTE 委托消息 (PktNewHeader + TradeOrderReq + 校验和)
 void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
-  // todo : 依据正式个微协议重写
-  (void)req;
-  (void)o_buf;
+  // 获取会话缓存（补充 account_id / cust_id）
+  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+
+  gw_message::PktNewHeader header;
+  header.msg_id = gw_message::kPktOrderReq;
+  header.msg_len = sizeof(gw_message::TradeOrderReq);
+
+  gw_message::TradeOrderReq body;
+  body.reset();
+
+  // TradeOrderUser 字段
+  memcpy(body.fund_account_id.data(), req.fund_account_id.data(), sizeof(body.fund_account_id));
+  memcpy(body.branch_id.data(), req.branch_id.data(), sizeof(body.branch_id));
+  if (session) {
+    memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
+    memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
+  }
+  body.client_seq_id = req.client_seq_id;
+  body.agw_seq_id = 0;
+
+  // TradeOrderInfo 字段
+  memcpy(body.security_id.data(), req.security_id.data(), sizeof(body.security_id));
+  body.market_id = req.market_id;  // 直接映射
+  body.side = req.side;
+  body.order_type = req.order_type;
+  body.order_qty = req.order_qty;
+  body.order_price = req.order_price;
+  body.stop_px = req.stop_price;
+
+  // 序列化
+  size_t off = header.encode(o_buf, sizeof(gw_message::PktNewHeader) + sizeof(gw_message::TradeOrderReq) + 4);
+  body.encode(o_buf + off, sizeof(gw_message::TradeOrderReq));
+  off += sizeof(gw_message::TradeOrderReq);
+  // 校验和
+  uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
+  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  memcpy(o_buf + off, &be_cks, 4);
 }
 
-// build_etf_order_msg: 构造个微 ETF 申购赎回消息 (头 + 个微协议体)
+// build_etf_order_msg: 构造 FTE ETF 委托消息 (PktNewHeader + TradeOrderReq + 校验和, msg_id=1010)
 void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
-  // todo : 依据正式个微协议重写
-  (void)req;
-  (void)o_buf;
+  // 与 build_order_msg 几乎一致，仅 msg_id 不同
+  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+
+  gw_message::PktNewHeader header;
+  header.msg_id = gw_message::kPktETFReq;
+  header.msg_len = sizeof(gw_message::TradeOrderReq);
+
+  gw_message::TradeOrderReq body;
+  body.reset();
+
+  memcpy(body.fund_account_id.data(), req.fund_account_id.data(), sizeof(body.fund_account_id));
+  memcpy(body.branch_id.data(), req.branch_id.data(), sizeof(body.branch_id));
+  if (session) {
+    memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
+    memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
+  }
+  body.client_seq_id = req.client_seq_id;
+  body.agw_seq_id = 0;
+
+  memcpy(body.security_id.data(), req.security_id.data(), sizeof(body.security_id));
+  body.market_id = req.market_id;
+  body.side = req.side;
+  body.order_type = req.order_type;
+  body.order_qty = req.order_qty;
+  body.order_price = req.order_price;
+  body.stop_px = req.stop_price;
+
+  size_t off = header.encode(o_buf, sizeof(gw_message::PktNewHeader) + sizeof(gw_message::TradeOrderReq) + 4);
+  body.encode(o_buf + off, sizeof(gw_message::TradeOrderReq));
+  off += sizeof(gw_message::TradeOrderReq);
+  uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
+  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  memcpy(o_buf + off, &be_cks, 4);
 }
 
-// build_cancel_msg: 构造个微撤单消息 (头 + 个微协议体)
+// build_cancel_msg: 构造 FTE 撤单消息 (PktNewHeader + CancelOrderReq + 校验和)
 void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
-  // todo : 依据正式个微协议重写
-  (void)req;
-  (void)o_buf;
+  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+
+  gw_message::PktNewHeader header;
+  header.msg_id = gw_message::kPktCancelOrderReq;
+  header.msg_len = sizeof(gw_message::CancelOrderReq);
+
+  gw_message::CancelOrderReq body;
+  body.reset();
+
+  memcpy(body.fund_account_id.data(), req.fund_account_id.data(), sizeof(body.fund_account_id));
+  memcpy(body.branch_id.data(), req.branch_id.data(), sizeof(body.branch_id));
+  if (session) {
+    memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
+    memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
+  }
+  body.client_seq_id = req.client_req_no;
+  body.agw_seq_id = 0;
+
+  // 撤单定位原单：从 GwSessionCache 映射表反查
+  body.orig_clordno = GwSessionCache::instance().get_clordno(fa_key, req.order_sys_no);
+  body.orig_client_seq_id = GwSessionCache::instance().get_orig_client_seq_id(fa_key, req.order_sys_no);
+
+  size_t off = header.encode(o_buf, sizeof(gw_message::PktNewHeader) + sizeof(gw_message::CancelOrderReq) + 4);
+  body.encode(o_buf + off, sizeof(gw_message::CancelOrderReq));
+  off += sizeof(gw_message::CancelOrderReq);
+  uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
+  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  memcpy(o_buf + off, &be_cks, 4);
 }
 
-// ---- 登录消息构建: 临时使用 g1 login_req 替代 ----
+// build_login_msg: 构造 FTE 登录消息 (PktNewHeader + LogOnReq + 校验和)
+void gw_counter_direct::build_login_msg(const acc_login_event_info &info, char *o_buf, int32 buf_len) {
+  int32 msg_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::LogOnReq) + sizeof(uint32_t));
+  if (buf_len < msg_len) return;
 
-// build_login_msg: 构造个微账户登录消息 (g1_msg_head + login_req)
-// (个微真实协议未知, 临时使用 g1 login_req 替代, 待真实协议补充后改回)
-void gw_counter_direct::build_login_msg(const acc_login_event_info &info, int16_t log_type, g1_msg_head *o_req) {
-  o_req->msg_id = G1_MSG_LOGIN_REQ;
-  o_req->msg_len = sizeof(login_req);
-  o_req->user_id = 0;
-  o_req->board_no = 0;
-  o_req->session_id = 0;
+  gw_message::PktNewHeader header;
+  header.msg_id = gw_message::kPktLoginReq;
+  header.msg_len = sizeof(gw_message::LogOnReq);
 
-  login_req *body = reinterpret_cast<login_req *>(o_req + 1);
-  std::memset(body, 0, sizeof(*body));
-  body->cust_req_no = info.cust_req_no;
-  std::memcpy(body->cust_id, info.cust_id, std::min<int32>(sizeof(body->cust_id), sizeof(info.cust_id)));
-  std::memcpy(body->fund_account_id, info.fund_account_id,
-              std::min<int32>(sizeof(body->fund_account_id), sizeof(info.fund_account_id)));
-  std::memcpy(body->branch_id, info.branch_id, std::min<int32>(sizeof(body->branch_id), sizeof(info.branch_id)));
-  std::memcpy(body->holder_acc, info.account_id, std::min<int32>(sizeof(body->holder_acc), sizeof(info.account_id)));
-  std::memcpy(body->session, info.session, std::min<int32>(sizeof(body->session), sizeof(info.session)));
-  std::memcpy(body->end_code, info.client_feature_code,
-              std::min<int32>(sizeof(body->end_code), sizeof(info.client_feature_code)));
-  body->market_type = market_type;
-  body->order_way[0] = info.order_way_ext[0];
-  body->order_way[1] = info.order_way_ext[1];
-  body->log_type = log_type;
-  body->heart_bt_int = static_cast<int32_t>(heart_interval);
-  body->req_connect_id = 0; // API 侧设为 0, 网关填写
-  std::memset(body->version, 0, sizeof(body->version));
-  std::strncpy(body->version, g1_msg_ver, std::strlen(g1_msg_ver));
+  gw_message::LogOnReq body;
+  body.reset();
+
+  // TradeOrderUser 字段
+  memcpy(body.fund_account_id.data(), info.fund_account_id, sizeof(body.fund_account_id));
+  memcpy(body.branch_id.data(), info.branch_id, sizeof(body.branch_id));
+  memcpy(body.account_id.data(), info.account_id, sizeof(body.account_id));
+  memcpy(body.cust_id.data(), info.cust_id, sizeof(body.cust_id));  // 可留空，由 FTE 回填
+  body.client_seq_id = info.cust_req_no;
+  body.agw_seq_id = 0;
+
+  // LogOnReq 特有字段
+  body.heart_bt_int = static_cast<uint32_t>(heart_interval);
+
+  // password: 截断到 100 字节（acc_login_event_info.password 为 256）
+  size_t pwd_len = strnlen(info.password, sizeof(info.password));
+  if (pwd_len > sizeof(body.password) - 1) pwd_len = sizeof(body.password) - 1;
+  memcpy(body.password.data(), info.password, pwd_len);
+
+  // client_feature_code
+  memcpy(body.client_feature_code.data(), info.client_feature_code, sizeof(body.client_feature_code));
+
+  // agw_user 填空（非统一接入）
+  body.agw_user.fill(' ');
+
+  // 序列化
+  size_t off = header.encode(o_buf, static_cast<size_t>(buf_len));
+  body.encode(o_buf + off, static_cast<size_t>(buf_len - static_cast<int32>(off)));
+  off += sizeof(gw_message::LogOnReq);
+  // 校验和
+  uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
+  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  memcpy(o_buf + off, &be_cks, 4);
 }
 
-// ---- 登录应答构造 (复用 fpga 逻辑, 临时使用 g1 login_ans 替代) ----
+// ============================================================
+// 登录应答构造
+// ============================================================
 
 // build_login_rtn: 从 acc_login_event_info 构建 API 层 LoginAns (供 ans_cust_login 失败路径使用)
 void gw_counter_direct::build_login_rtn(const acc_login_event_info &info, int32 err_ret, const char *err_msg,
                                         LoginAns &ans) {
   ans.client_req_no = info.cust_req_no;
-  std::memcpy(ans.cust_id.data(), info.cust_id, std::min<int32>(sizeof(ans.cust_id), sizeof(info.cust_id)));
-  std::memcpy(ans.fund_account_id.data(), info.fund_account_id,
-              std::min<int32>(sizeof(ans.fund_account_id.data()), sizeof(info.fund_account_id)));
-  std::memcpy(ans.account_id.data(), info.account_id,
-              std::min<int32>(sizeof(ans.account_id.data()), sizeof(info.account_id)));
-  std::memcpy(ans.branch_id.data(), info.branch_id,
-              std::min<int32>(sizeof(ans.branch_id.data()), sizeof(info.branch_id)));
+  memcpy(ans.cust_id.data(), info.cust_id, std::min<int32>(sizeof(ans.cust_id), sizeof(info.cust_id)));
+  memcpy(ans.fund_account_id.data(), info.fund_account_id,
+         std::min<int32>(sizeof(ans.fund_account_id), sizeof(info.fund_account_id)));
+  memcpy(ans.account_id.data(), info.account_id,
+         std::min<int32>(sizeof(ans.account_id), sizeof(info.account_id)));
+  memcpy(ans.branch_id.data(), info.branch_id,
+         std::min<int32>(sizeof(ans.branch_id), sizeof(info.branch_id)));
   ans.market_type = market_type;
   ans.err_code = err_ret;
   if (err_msg != nullptr) {
     lb_common::comm_utils::str_copy_format(ans.err_msg.data(), err_msg, sizeof(ans.err_msg));
   } else {
-    std::memset(ans.err_msg.data(), 0, sizeof(ans.err_msg));
+    memset(ans.err_msg.data(), 0, sizeof(ans.err_msg));
   }
-  ans.login_time = 0; // 个微协议未知, 暂时置 0, 待真实协议补充
+  ans.login_time = 0;
 }
 
-// build_login_rtn: 从 g1 login_ans 构建 API 层 LoginAns
-void gw_counter_direct::build_login_rtn(const login_ans &msg, LoginAns &o_ans) {
-  std::memset(&o_ans, 0, sizeof(o_ans));
-  o_ans.client_req_no = msg.cust_req_no;
-  lb_common::comm_utils::str_copy_format(o_ans.cust_id.data(), msg.cust_id, sizeof(o_ans.cust_id));
-  lb_common::comm_utils::str_copy_format(o_ans.fund_account_id.data(), msg.fund_account_id,
-                                         sizeof(o_ans.fund_account_id));
-  lb_common::comm_utils::str_copy_format(o_ans.account_id.data(), msg.holder_acc,
-                                         std::min<int32>(sizeof(o_ans.account_id.data()), sizeof(msg.holder_acc)));
-  lb_common::comm_utils::str_copy_format(o_ans.branch_id.data(), msg.branch_id,
-                                         std::min<int32>(sizeof(o_ans.branch_id.data()), sizeof(msg.branch_id)));
+// build_login_rtn: 从 gw_message::LogOnAns 构建 API 层 LoginAns
+void gw_counter_direct::build_login_rtn(const gw_message::LogOnAns &msg, LoginAns &o_ans) {
+  memset(&o_ans, 0, sizeof(o_ans));
+  o_ans.client_req_no = msg.client_seq_id;
+  memcpy(o_ans.cust_id.data(), msg.cust_id.data(), sizeof(o_ans.cust_id));
+  memcpy(o_ans.fund_account_id.data(), msg.fund_account_id.data(), sizeof(o_ans.fund_account_id));
+  memcpy(o_ans.account_id.data(), msg.account_id.data(), sizeof(o_ans.account_id));
+  memcpy(o_ans.branch_id.data(), msg.branch_id.data(), sizeof(o_ans.branch_id));
   o_ans.market_type = market_type;
-  o_ans.err_code = msg.err_code;
-  if (msg.err_msg[0] != '\0') {
-    int32 tlen = static_cast<int32>(strnlen(msg.err_msg, sizeof(msg.err_msg)));
-    tlen = tlen < static_cast<int32>(sizeof(o_ans.err_msg)) ? tlen : static_cast<int32>(sizeof(o_ans.err_msg)) - 1;
-    std::memcpy(o_ans.err_msg.data(), msg.err_msg, tlen);
-  }
-  o_ans.login_time = msg.login_time;
+  o_ans.err_code = static_cast<int32>(msg.error_code);
+  o_ans.login_time = 0;
 }
 
-// ---- deal_cust_login / ans_cust_login: 构造登录消息并切换状态 ----
+// ============================================================
+// deal_cust_login / ans_cust_login
+// ============================================================
 
-// deal_cust_login: 处理账户登录事件, 构造个微登录消息 (o_buf 由调用方分配, 至少 sizeof(g1_msg_head)+sizeof(login_req))
-// 成功返回消息长度 (含消息头), 0-不需重复登陆, <0 出错
+// deal_cust_login: 处理账户登录事件, 构造 FTE 登录报文
 int32 gw_counter_direct::deal_cust_login(const acc_login_event_info &req, char *o_buf, int32 buf_len) {
   if (login_state == 2) {
     LoginAns ans;
@@ -259,162 +372,465 @@ int32 gw_counter_direct::deal_cust_login(const acc_login_event_info &req, char *
     return 0;
   }
 
-  int32 msg_len = static_cast<int32>(sizeof(g1_msg_head) + sizeof(login_req));
+  int32 msg_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::LogOnReq) + sizeof(uint32_t));
   if (buf_len < msg_len) {
     return LBAPI_ERR_MSG_LEN;
   }
-  g1_msg_head *head = reinterpret_cast<g1_msg_head *>(o_buf);
-  // log_type=1 表示用户登录 (个微直连单客户, 使用用户登录)
-  build_login_msg(req, 1, head);
-  login_state = 1; ///< 进入登陆中状态
+
+  // 先创建会话缓存（存 order_way_ext/user_info 等，供后续业务使用）
+  GwSessionCache::instance().create_session(req);
+
+  build_login_msg(req, o_buf, buf_len);
+  login_state = 1;
   return msg_len;
 }
 
-// ans_cust_login: 登录结果回调 (失败路径: 在引擎同步阶段失败时调用)
+// ans_cust_login: 登录结果回调（失败路径）
 void gw_counter_direct::ans_cust_login(const acc_login_event_info &req, int32 err_ret, const char *err_msg) {
-  login_state = 0; ///< 失败重置状态
+  login_state = 0;
 
   LoginAns ans;
   build_login_rtn(req, err_ret, err_msg, ans);
   cb_mgr_->on_login(ans);
 }
 
-// deal_log_ans: 处理个微账户登录应答 (临时用 g1 login_ans 替代, 待真实协议补充后改回)
-// 个微直连无核心链接, 成功则直接 cb_mgr_->on_login
-void gw_counter_direct::deal_log_ans(login_ans &msg) {
-  lb_common::lb_log_hand tlh(log_);
-  info_log(tlh) << "recv gw cust login answer msg, user_seq_no=" << msg.cust_req_no << ", branch_id=" << msg.branch_id
-                << ", fund_account=" << msg.fund_account_id << ", session=" << msg.session
-                << ", err_code=" << msg.err_code << end_log;
+// deal_log_ans: 处理 FTE 账户登录应答 (LogOnAns)
+void gw_counter_direct::deal_log_ans(const char *body, int32 body_len) {
+  gw_message::LogOnAns ans;
+  ans.reset();
+  if (!ans.decode(body, static_cast<size_t>(body_len))) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_log_ans: decode LogOnAns failed, body_len=" << body_len << end_log;
+    return;
+  }
 
-  LoginAns ans;
-  build_login_rtn(msg, ans);
-  if (msg.err_code == 0) {
-    login_state = 2; ///< 登陆成功
-    cb_mgr_->on_login(ans);
+  lb_common::lb_log_hand tlh(log_);
+  info_log(tlh) << "recv gw cust login answer msg, client_seq_id=" << ans.client_seq_id
+                << ", fund_account=" << std::string(ans.fund_account_id.data(), strnlen(ans.fund_account_id.data(), 16)).c_str()
+                << ", error_code=" << ans.error_code << end_log;
+
+  // 回填会话缓存（cust_id / account_id 由 FTE 在应答中回填）
+  GwSessionCache::instance().fill_session_from_ans(ans);
+
+  LoginAns login_ans;
+  build_login_rtn(ans, login_ans);
+
+  if (ans.error_code == 0) {
+    login_state = 2;
+    cb_mgr_->on_login(login_ans);
   } else {
     login_state = 0;
-    cb_mgr_->on_login(ans); ///< 失败也回调, 让上层感知
+    cb_mgr_->on_login(login_ans);
   }
 }
 
-// ---- deal_recv_msg: 解析个微返回消息 (临时按 g1 msg_id 分发) ----
+// ============================================================
+// deal_recv_msg: FTE 拆包分发
+// ============================================================
 
-// deal_recv_msg: 处理个微返回消息
-// (个微真实协议未知, 临时按 g1 msg_id 分发, 待真实协议补充后改回)
 int32 gw_counter_direct::deal_recv_msg(const char *buf, int32 len, int16 link_type) {
   (void)link_type;
-  if (buf == nullptr || len < (int32)sizeof(g1_msg_head)) {
+  if (buf == nullptr || len < (int32)sizeof(gw_message::PktNewHeader)) {
     return 0;
   }
 
   int32 deal_len = 0;
-  int32 mlen = 0;
-  const g1_msg_head *head;
 
-  while (static_cast<int32>(len) - deal_len >= static_cast<int32>(sizeof(g1_msg_head))) {
-    head = reinterpret_cast<const g1_msg_head *>(buf + deal_len);
-    mlen = static_cast<int32>(head->msg_len) + static_cast<int32>(sizeof(g1_msg_head));
-    if (unlikely(mlen > len - deal_len)) {
-      if (mlen < G1_MSG_MAX_LEN) {
-        return deal_len;
-      } else {
-        lb_common::lb_log_hand tlh(log_);
-        error_log(tlh) << "gw counter recv msg len error, mlen=" << mlen << ", link_type=" << link_type << end_log;
-        // 返回错误, 让底层关闭链接
-        return LBAPI_ERR_MSG_LEN;
-      }
+  while (len - deal_len >= (int32)sizeof(gw_message::PktNewHeader)) {
+    // 1. 解析消息头
+    gw_message::PktNewHeader header;
+    if (!header.decode(buf + deal_len, static_cast<size_t>(len - deal_len))) break;
+
+    // 2. 消息长度上限校验（参考 FTE 服务端：msg_len > 65536 拒绝）
+    if (header.msg_len > 65536) {
+      lb_common::lb_log_hand tlh(log_);
+      error_log(tlh) << "gw deal_recv_msg: msg_len too large, msg_id=" << header.msg_id
+                     << ", msg_len=" << header.msg_len << end_log;
+      deal_len += static_cast<int32>(sizeof(gw_message::PktNewHeader));
+      continue;
     }
 
-    switch (head->msg_id) {
-    case G1_MSG_LOGIN_ANS: {
-      if (head->msg_len >= sizeof(login_ans)) {
-        const login_ans *ans = reinterpret_cast<const login_ans *>(head + 1);
-        deal_log_ans(*const_cast<login_ans *>(ans));
-      } else {
-        lb_common::lb_log_hand tlh(log_);
-        error_log(tlh) << "gw counter recv login_ans msg len too short, msg_len=" << head->msg_len << end_log;
-        return LBAPI_ERR_MSG_LEN;
-      }
+    int32 whole_msg_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + header.msg_len + sizeof(uint32_t));
+    if (whole_msg_len > len - deal_len) {
+      // 半包，等待更多数据
+      return deal_len;
+    }
+
+    // 3. 校验校验和
+    uint32_t recv_cks = 0;
+    memcpy(&recv_cks, buf + deal_len + sizeof(gw_message::PktNewHeader) + header.msg_len, 4);
+    uint32_t calc_cks = GenerateSzCheckSum(buf + deal_len,
+        static_cast<uint32_t>(sizeof(gw_message::PktNewHeader) + header.msg_len));
+    recv_cks = gw_message::detail::HostToNetwork(recv_cks);
+    if (recv_cks != calc_cks) {
+      lb_common::lb_log_hand tlh(log_);
+      error_log(tlh) << "gw deal_recv_msg: checksum mismatch, msg_id=" << header.msg_id
+                     << ", recv_cks=" << recv_cks << ", calc_cks=" << calc_cks << end_log;
+      deal_len += whole_msg_len;
+      continue;
+    }
+
+    // 4. 按 msg_id 分发
+    const char *body = buf + deal_len + sizeof(gw_message::PktNewHeader);
+    switch (header.msg_id) {
+    case gw_message::kPktLoginAns:
+      deal_log_ans(body, static_cast<int32>(header.msg_len));
       break;
-    }
-    case G1_MSG_HEART_ANS: {
+
+    case gw_message::kPktOrderAns:
+      deal_order_rtn(body, static_cast<int32>(header.msg_len));
+      break;
+
+    case gw_message::kPktCancelOrderAns:
+      deal_cancel_rsp(body, static_cast<int32>(header.msg_len));
+      break;
+
+    case gw_message::kPktOrderMatch:
+      deal_trade_rtn(body, static_cast<int32>(header.msg_len));
+      break;
+
+    case gw_message::kPktEtfOrderMatch:
+      deal_etf_trade_rtn(body, static_cast<int32>(header.msg_len));
+      break;
+
+    case gw_message::kPktRejectMsg:
+      deal_reject_msg(body, static_cast<int32>(header.msg_len));
+      break;
+
+    case gw_message::kPktNewHeartBeat:
+      // FTE 心跳无消息体，确认心跳（避免 aio_tcp 心跳超时误判）
       if (trade_eng_op_ != nullptr) {
         trade_eng_op_->deal_heart_msg_ans(LINK_TYPE_SPEED_TRADE);
       }
       break;
-    }
-    // 个微真实协议未知, 委托/成交/撤单回报等 msg_id 分发暂留空 + // todo
-    case G1_MSG_ORDER_RTN:
-    case G1_MSG_TRADE_RTN:
-    case G1_MSG_CANCEL_RSP:
-    default: {
-      // 未知/未实现消息, 跳过, 不返回错误, 以避免链接关闭
+
+    default:
+      // 未知消息，跳过，不返回错误，以避免链接关闭
       lb_common::lb_log_hand tlh(log_);
-      info_log(tlh) << "gw counter recv unimplemented msg, msg_id=" << head->msg_id << ", msg_len=" << head->msg_len
-                    << end_log;
-      // todo : 依据正式个微协议重写
+      info_log(tlh) << "gw deal_recv_msg: unknown msg_id=" << header.msg_id
+                    << ", msg_len=" << header.msg_len << end_log;
       break;
     }
-    }
 
-    deal_len += mlen;
+    deal_len += whole_msg_len;
   }
 
   return deal_len;
 }
 
-// ---- deal_send_error / build_api_*_rej: 复用 fpga 模式 (临时按 g1 头构造 API 层回报) ----
+// ============================================================
+// 回报处理 (TradeOrderER 解析)
+// ============================================================
 
-void gw_counter_direct::build_api_order_rej(const g1_msg_head *msg, int32 err_code, OrderRtn &o_rtn,
-                                            StreamInfo &o_stream) {
-  // todo : 依据正式个微协议重写
-  std::memset(&o_rtn, 0, sizeof(o_rtn));
+// deal_order_rtn: 委托回报 (exec_type='0' New / '8' Reject)
+void gw_counter_direct::deal_order_rtn(const char *body, int32 body_len) {
+  if (body_len < (int32)sizeof(gw_message::TradeOrderER)) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_order_rtn: body too short, body_len=" << body_len << end_log;
+    return;
+  }
+
+  gw_message::TradeOrderER er;
+  er.reset();
+  if (!er.decode(body, static_cast<size_t>(body_len))) return;
+
+  // 记录 order_id → {clordno, client_seq_id} 映射（用于撤单）
+  std::string fa_id(er.fund_account_id.data(), strnlen(er.fund_account_id.data(), 16));
+  int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
+  GwSessionCache::instance().record_order_locator(fa_id, order_sys_no, er.clordno, er.client_seq_id);
+
+  // 构造 OrderRtn
+  OrderRtn rtn;
+  memset(&rtn, 0, sizeof(rtn));
+  memcpy(rtn.cust_id.data(), er.cust_id.data(), sizeof(rtn.cust_id));
+  memcpy(rtn.fund_account_id.data(), er.fund_account_id.data(), sizeof(rtn.fund_account_id));
+  memcpy(rtn.account_id.data(), er.account_id.data(), sizeof(rtn.account_id));
+  memcpy(rtn.branch_id.data(), er.branch_id.data(), sizeof(rtn.branch_id));
+  rtn.side = er.side;
+  rtn.order_type = er.ord_type;
+  rtn.order_status = map_ord_status(er.ord_status);
+  rtn.market_type = map_market_id(er.market_id);
+  memcpy(rtn.security_id.data(), er.security_id.data(), sizeof(rtn.security_id));
+  rtn.order_price = er.price;
+  rtn.order_qty = er.order_qty;
+  rtn.client_seq_id = er.client_seq_id;
+  rtn.rtn_type = map_exec_type(er.exec_type);
+  rtn.err_code = (er.ord_rej_reason != 0) ? static_cast<int32>(er.ord_rej_reason) : static_cast<int32>(er.code);
+  rtn.order_sys_no = order_sys_no;
+  rtn.frozen_amount = er.frozen_trade_value;
+  rtn.fee = 0;
+  rtn.trade_qty = er.cum_qty;
+  rtn.cancel_qty = 0;
+  rtn.order_time = er.transact_time;
+  rtn.update_time = er.transact_time;
+
+  StreamInfo stream;
+  stream.counter_type = get_counter_type();
+  stream.stream_seq = ++session_seq_;
+
+  cb_mgr_->on_order_rtn(stream, rtn);
+}
+
+// deal_trade_rtn: 成交回报 (exec_type='F')
+void gw_counter_direct::deal_trade_rtn(const char *body, int32 body_len) {
+  if (body_len < (int32)sizeof(gw_message::TradeOrderER)) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_trade_rtn: body too short, body_len=" << body_len << end_log;
+    return;
+  }
+
+  gw_message::TradeOrderER er;
+  er.reset();
+  if (!er.decode(body, static_cast<size_t>(body_len))) return;
+
+  // 记录 order_id → {clordno, client_seq_id} 映射
+  std::string fa_id(er.fund_account_id.data(), strnlen(er.fund_account_id.data(), 16));
+  int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
+  GwSessionCache::instance().record_order_locator(fa_id, order_sys_no, er.clordno, er.client_seq_id);
+
+  // 构造 TradeRtn（复用 OrderRtn 字段 + 成交特有字段）
+  TradeRtn rtn;
+  memset(&rtn, 0, sizeof(rtn));
+  memcpy(rtn.cust_id.data(), er.cust_id.data(), sizeof(rtn.cust_id));
+  memcpy(rtn.fund_account_id.data(), er.fund_account_id.data(), sizeof(rtn.fund_account_id));
+  memcpy(rtn.account_id.data(), er.account_id.data(), sizeof(rtn.account_id));
+  memcpy(rtn.branch_id.data(), er.branch_id.data(), sizeof(rtn.branch_id));
+  rtn.side = er.side;
+  rtn.order_type = er.ord_type;
+  rtn.order_status = map_ord_status(er.ord_status);
+  rtn.market_type = map_market_id(er.market_id);
+  memcpy(rtn.security_id.data(), er.security_id.data(), sizeof(rtn.security_id));
+  rtn.order_price = er.price;
+  rtn.order_qty = er.order_qty;
+  rtn.client_seq_id = er.client_seq_id;
+  rtn.order_sys_no = order_sys_no;
+  rtn.frozen_amount = er.frozen_trade_value;
+  rtn.fee = er.frozen_fee + er.fee;
+  rtn.trade_qty = er.cum_qty;
+  rtn.cancel_qty = 0;
+  rtn.order_time = er.transact_time;
+  // 成交特有字段
+  rtn.exec_time = er.transact_time;
+  memcpy(rtn.exec_id.data(), er.exec_id.data(), std::min<size_t>(sizeof(rtn.exec_id), sizeof(er.exec_id)));
+  rtn.exec_price = er.last_px;
+  rtn.exec_qty = er.last_qty;
+  rtn.exec_amount = er.total_value_traded;
+  rtn.exec_fee = er.fee;
+
+  StreamInfo stream;
+  stream.counter_type = get_counter_type();
+  stream.stream_seq = ++session_seq_;
+
+  cb_mgr_->on_trade_rtn(stream, rtn);
+}
+
+// deal_cancel_rsp: 撤单回报 (exec_type='4')
+void gw_counter_direct::deal_cancel_rsp(const char *body, int32 body_len) {
+  if (body_len < (int32)sizeof(gw_message::TradeOrderER)) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_cancel_rsp: body too short, body_len=" << body_len << end_log;
+    return;
+  }
+
+  gw_message::TradeOrderER er;
+  er.reset();
+  if (!er.decode(body, static_cast<size_t>(body_len))) return;
+
+  CancelRsp rsp;
+  memset(&rsp, 0, sizeof(rsp));
+  memcpy(rsp.cust_id.data(), er.cust_id.data(), sizeof(rsp.cust_id));
+  memcpy(rsp.fund_account_id.data(), er.fund_account_id.data(), sizeof(rsp.fund_account_id));
+  memcpy(rsp.account_id.data(), er.account_id.data(), sizeof(rsp.account_id));
+  memcpy(rsp.branch_id.data(), er.branch_id.data(), sizeof(rsp.branch_id));
+  rsp.client_req_no = er.client_seq_id;
+  rsp.market_type = map_market_id(er.market_id);
+  rsp.order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
+  rsp.client_seq_id = er.client_seq_id;
+  rsp.err_code = (er.ord_rej_reason != 0) ? static_cast<int32>(er.ord_rej_reason) : static_cast<int32>(er.code);
+  rsp.rej_api = 0;
+
+  StreamInfo stream;
+  stream.counter_type = get_counter_type();
+  stream.stream_seq = ++session_seq_;
+
+  cb_mgr_->on_cancel_rsp(stream, rsp);
+}
+
+// deal_etf_trade_rtn: ETF 成交回报 (TradeOrderER + ConstituentStock[])
+void gw_counter_direct::deal_etf_trade_rtn(const char *body, int32 body_len) {
+  // 先解析固定部分得到 no_security
+  gw_message::TradeOrderER er;
+  er.reset();
+  if (!er.decode(body, static_cast<size_t>(body_len))) return;
+
+  // ETF 成交回报映射为 OrderRtn（与普通委托回报相同）
+  std::string fa_id(er.fund_account_id.data(), strnlen(er.fund_account_id.data(), 16));
+  int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
+  GwSessionCache::instance().record_order_locator(fa_id, order_sys_no, er.clordno, er.client_seq_id);
+
+  OrderRtn rtn;
+  memset(&rtn, 0, sizeof(rtn));
+  memcpy(rtn.cust_id.data(), er.cust_id.data(), sizeof(rtn.cust_id));
+  memcpy(rtn.fund_account_id.data(), er.fund_account_id.data(), sizeof(rtn.fund_account_id));
+  memcpy(rtn.account_id.data(), er.account_id.data(), sizeof(rtn.account_id));
+  memcpy(rtn.branch_id.data(), er.branch_id.data(), sizeof(rtn.branch_id));
+  rtn.side = er.side;
+  rtn.order_type = er.ord_type;
+  rtn.order_status = map_ord_status(er.ord_status);
+  rtn.market_type = map_market_id(er.market_id);
+  memcpy(rtn.security_id.data(), er.security_id.data(), sizeof(rtn.security_id));
+  rtn.order_price = er.price;
+  rtn.order_qty = er.order_qty;
+  rtn.client_seq_id = er.client_seq_id;
+  rtn.rtn_type = map_exec_type(er.exec_type);
+  rtn.order_sys_no = order_sys_no;
+  rtn.frozen_amount = er.frozen_trade_value;
+  rtn.fee = 0;
+  rtn.trade_qty = er.cum_qty;
+  rtn.cancel_qty = 0;
+  rtn.order_time = er.transact_time;
+  rtn.update_time = er.transact_time;
+
+  StreamInfo stream;
+  stream.counter_type = get_counter_type();
+  stream.stream_seq = ++session_seq_;
+
+  cb_mgr_->on_order_rtn(stream, rtn);
+}
+
+// deal_reject_msg: 处理拒绝消息 (RejectMsg)
+void gw_counter_direct::deal_reject_msg(const char *body, int32 body_len) {
+  if (body_len < (int32)sizeof(gw_message::RejectMsg)) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_reject_msg: body too short, body_len=" << body_len << end_log;
+    return;
+  }
+
+  gw_message::RejectMsg rej;
+  rej.reset();
+  if (!rej.decode(body, static_cast<size_t>(body_len))) return;
+
+  StreamInfo stream;
+  stream.counter_type = get_counter_type();
+  stream.stream_seq = ++session_seq_;
+
+  OrderRtn rtn;
+  memset(&rtn, 0, sizeof(rtn));
+  memcpy(rtn.cust_id.data(), rej.cust_id.data(), sizeof(rtn.cust_id));
+  memcpy(rtn.fund_account_id.data(), rej.fund_account_id.data(), sizeof(rtn.fund_account_id));
+  memcpy(rtn.account_id.data(), rej.account_id.data(), sizeof(rtn.account_id));
+  memcpy(rtn.branch_id.data(), rej.branch_id.data(), sizeof(rtn.branch_id));
+  rtn.client_seq_id = rej.client_seq_id;
+  rtn.err_code = rej.reject_reason_code;
+  rtn.rtn_type = RSP_TYPE_ORDER_DISCARD;
+  rtn.order_status = ORDER_STATE_DISCARD;
+
+  cb_mgr_->on_order_rtn(stream, rtn);
+}
+
+// ============================================================
+// 状态字典映射
+// ============================================================
+
+int32_t gw_counter_direct::map_ord_status(uint8_t fte_status) {
+  switch (fte_status) {
+  case 0:  return ORDER_STATE_ORDER_IDLE;    // kNull
+  case 1:  return ORDER_STATE_ORDER_NEW;     // kSended
+  case 2:  return ORDER_STATE_DONE_PART;     // kPartiallyFilled
+  case 3:  return ORDER_STATE_DONE_FULL;     // kFilled
+  case 4:  return ORDER_STATE_CANCEL_ING;    // kPendingCancel
+  case 5:  return ORDER_STATE_CANCEL_ALL;    // kCancelled
+  case 8:  return ORDER_STATE_DISCARD;       // kReject
+  default: return ORDER_STATE_ORDER_IDLE;
+  }
+}
+
+int32_t gw_counter_direct::map_exec_type(char exec_type) {
+  switch (exec_type) {
+  case '0':  return RSP_TYPE_COUNTER_RSP;     // New
+  case '8':  return RSP_TYPE_ORDER_DISCARD;   // Reject
+  case '4':  return RSP_TYPE_CANCEL_RSP;      // Cancelled
+  case 'F':  return RSP_TYPE_ORDER_TRADE;     // Trade
+  default:   return RSP_TYPE_COUNTER_RSP;
+  }
+}
+
+int16_t gw_counter_direct::map_market_id(uint16_t fte_market_id) {
+  // FTE market_id: 101=上海, 102=深圳
+  // NewAPI market_type: 1=上海, 2=深圳
+  switch (fte_market_id) {
+  case 101: return 1;
+  case 102: return 2;
+  default:  return static_cast<int16_t>(fte_market_id);
+  }
+}
+
+// ============================================================
+// deal_send_error / build_api_*_rej (FTE 版)
+// ============================================================
+
+void gw_counter_direct::build_api_order_rej(const gw_message::TradeOrderReq *req, int32 err_code,
+                                            OrderRtn &o_rtn, StreamInfo &o_stream) {
+  memset(&o_rtn, 0, sizeof(o_rtn));
+  memcpy(o_rtn.fund_account_id.data(), req->fund_account_id.data(), sizeof(o_rtn.fund_account_id));
+  memcpy(o_rtn.branch_id.data(), req->branch_id.data(), sizeof(o_rtn.branch_id));
+  o_rtn.client_seq_id = req->client_seq_id;
   o_rtn.market_type = market_type;
   o_rtn.err_code = err_code;
   o_rtn.rtn_type = RSP_TYPE_ORDER_DISCARD;
   o_rtn.order_status = ORDER_STATE_DISCARD;
   o_stream.counter_type = get_counter_type();
-  (void)msg;
-  o_stream.stream_seq = 0;
+  o_stream.stream_seq = ++session_seq_;
 }
 
-void gw_counter_direct::build_api_cancel_rej(const g1_msg_head *msg, int32 err_code, CancelRsp &o_rtn,
-                                             StreamInfo &o_stream) {
-  // todo : 依据正式个微协议重写
-  std::memset(&o_rtn, 0, sizeof(o_rtn));
+void gw_counter_direct::build_api_cancel_rej(const gw_message::CancelOrderReq *req, int32 err_code,
+                                             CancelRsp &o_rtn, StreamInfo &o_stream) {
+  memset(&o_rtn, 0, sizeof(o_rtn));
+  memcpy(o_rtn.fund_account_id.data(), req->fund_account_id.data(), sizeof(o_rtn.fund_account_id));
+  memcpy(o_rtn.branch_id.data(), req->branch_id.data(), sizeof(o_rtn.branch_id));
+  o_rtn.client_req_no = req->client_seq_id;
   o_rtn.market_type = market_type;
   o_rtn.err_code = err_code;
-  o_rtn.rej_api = 1; ///< API 层拒绝
+  o_rtn.rej_api = 1;
   o_stream.counter_type = get_counter_type();
-  (void)msg;
-  o_stream.stream_seq = 0;
+  o_stream.stream_seq = ++session_seq_;
 }
 
 void gw_counter_direct::deal_send_error(char *msg_buf, int32 msg_len, int16 link_type, int32 err_ret) {
-  (void)msg_len;
   (void)link_type;
-  if (msg_buf == nullptr || cb_mgr_ == nullptr) {
-    return;
-  }
-  if (msg_len < (int32)sizeof(g1_msg_head)) {
-    return;
-  }
-  const g1_msg_head *head = reinterpret_cast<const g1_msg_head *>(msg_buf);
-  // todo : 依据正式个微协议重写
-  switch (head->msg_id) {
-  case G1_MSG_ORDER_REQ: {
-    OrderRtn o_rtn;
-    StreamInfo o_stream;
-    build_api_order_rej(head, err_ret, o_rtn, o_stream);
-    cb_mgr_->on_order_rtn(o_stream, o_rtn);
+  if (msg_buf == nullptr || cb_mgr_ == nullptr) return;
+  if (msg_len < (int32)sizeof(gw_message::PktNewHeader)) return;
+
+  gw_message::PktNewHeader header;
+  if (!header.decode(msg_buf, static_cast<size_t>(msg_len))) return;
+
+  switch (header.msg_id) {
+  case gw_message::kPktOrderReq:
+  case gw_message::kPktETFReq: {
+    // 解析 TradeOrderReq 获取用户信息
+    if (msg_len >= (int32)(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::TradeOrderReq))) {
+      gw_message::TradeOrderReq req;
+      req.reset();
+      if (req.decode(msg_buf + sizeof(gw_message::PktNewHeader), sizeof(gw_message::TradeOrderReq))) {
+        OrderRtn o_rtn;
+        StreamInfo o_stream;
+        build_api_order_rej(&req, err_ret, o_rtn, o_stream);
+        cb_mgr_->on_order_rtn(o_stream, o_rtn);
+      }
+    }
     break;
   }
-  case G1_MSG_CANCEL_REQ: {
-    CancelRsp o_rtn;
-    StreamInfo o_stream;
-    build_api_cancel_rej(head, err_ret, o_rtn, o_stream);
-    cb_mgr_->on_cancel_rsp(o_stream, o_rtn);
+  case gw_message::kPktCancelOrderReq: {
+    if (msg_len >= (int32)(sizeof(gw_message::PktNewHeader) + sizeof(gw_message::CancelOrderReq))) {
+      gw_message::CancelOrderReq req;
+      req.reset();
+      if (req.decode(msg_buf + sizeof(gw_message::PktNewHeader), sizeof(gw_message::CancelOrderReq))) {
+        CancelRsp o_rtn;
+        StreamInfo o_stream;
+        build_api_cancel_rej(&req, err_ret, o_rtn, o_stream);
+        cb_mgr_->on_cancel_rsp(o_stream, o_rtn);
+      }
+    }
     break;
   }
   default:
@@ -422,31 +838,40 @@ void gw_counter_direct::deal_send_error(char *msg_buf, int32 msg_len, int16 link
   }
 }
 
-// ---- build_heart_msg: 构造个微心跳消息 (临时按 g1 头实现) ----
+// ============================================================
+// build_heart_msg: FTE 心跳（仅 8 字节头 + 4 字节校验和）
+// ============================================================
 
 int32 gw_counter_direct::build_heart_msg(char *o_buf, int32 buf_len) {
-  if (o_buf == nullptr || buf_len < (int32)sizeof(g1_msg_head)) {
+  int32 msg_len = static_cast<int32>(sizeof(gw_message::PktNewHeader) + sizeof(uint32_t));
+  if (o_buf == nullptr || buf_len < msg_len) {
     return -1;
   }
-  g1_msg_head *head = reinterpret_cast<g1_msg_head *>(o_buf);
-  head->msg_id = G1_MSG_HEART_REQ;
-  head->msg_len = 0;
-  head->user_id = 0;
-  head->board_no = 0;
-  head->session_id = 0;
-  return static_cast<int32>(sizeof(g1_msg_head));
+
+  gw_message::PktNewHeader header;
+  header.msg_id = gw_message::kPktNewHeartBeat;
+  header.msg_len = 0;
+
+  size_t off = header.encode(o_buf, static_cast<size_t>(buf_len));
+  // 校验和：对 [头] 求和 %256
+  uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
+  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  memcpy(o_buf + off, &be_cks, 4);
+
+  return msg_len;
 }
 
-// ---- 链接状态通知 ----
+// ============================================================
+// 链接状态通知
+// ============================================================
 
 int32 gw_counter_direct::deal_link_connect(int16 link_type, int32 have_switch) {
-  (void)have_switch; // 个微柜台不支持地址切换, 此参数忽略
+  (void)have_switch;
   if (link_type == LINK_TYPE_SPEED_TRADE) {
     trade_link_connect_ = 1;
     if (cb_mgr_ != nullptr) {
       cb_mgr_->on_link_status(get_counter_type(), 0, 1);
     }
-    // todo : 链接建立，是否重新登陆？
   }
   return 0;
 }
@@ -454,11 +879,10 @@ int32 gw_counter_direct::deal_link_connect(int16 link_type, int32 have_switch) {
 void gw_counter_direct::deal_link_close(int16 link_type) {
   if (link_type == LINK_TYPE_SPEED_TRADE) {
     trade_link_connect_ = 0;
+    login_state = 0;  // 链接断开重置登录态
     if (cb_mgr_ != nullptr) {
       cb_mgr_->on_link_status(get_counter_type(), 0, 0);
     }
-    // todo : 链接断开时, 是否登录状态重置
-    // login_state = 0;
   }
 }
 

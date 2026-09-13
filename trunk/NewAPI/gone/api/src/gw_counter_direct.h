@@ -3,10 +3,11 @@
 // 负责个微软件极速柜台 (仅直连模式) 单 TCP 链接的消息组包/解析.
 // 个微柜台无查询接口, 与 fpga_counter_gateway 一致 (无 deal_order_query 等).
 //
-// 协议状态:
-//   - 个微真实协议是外部定义, 当前未提供.
-//   - 临时替代方案: 消息头使用 g1_msg_head, 登录消息体使用 login_req/login_ans.
-//   - 委托/撤单等业务消息体无法替代, 暂留空实现 + // todo 标注.
+// 协议：FTE TCP Binary（gw_message::* 结构体，大端字节序）
+//   - 报文格式：[PktNewHeader 8B | 消息体 | 校验和 4B]
+//   - 消息头：PktNewHeader（msg_id + msg_len）
+//   - 校验和：GenerateSzCheckSum 对 [头+体] 逐字节求和 %256，转大端追加
+//   - 消息类型：1001 登录 / 1003 委托 / 1004 撤单 / 1010 ETF / 2001 登录应答 / 2003/2004/2005/2010 回报 / 3 心跳 / 9 拒绝
 //
 // 命名风格约定（与 fpga 一致）：
 //   - 类名：<prefix>_counter_<mode>  (e.g., fpga_counter_direct, gw_counter_direct)
@@ -18,14 +19,15 @@
 #include "api_event_msg.h"
 #include "callback_manager.h"
 #include "comm_sys.h"
-#include "g1msghead.h"
-#include "g1trademsg.h"
+#include "gw_head.h"
+#include "gw_session_cache.h"
 #include "matomic.h"
 #include "mlog.h"
 #include "que_mth_buf.h"
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 
 namespace lb_api {
 
@@ -135,33 +137,52 @@ protected:
     //trade_eng_op_->trigger_send();
   }
 
-  // ---- 消息构建 (个微真实协议未知, 仅登录/心跳有临时替代实现) ----
-  /// 构造个微委托消息 (g1_msg_head + 个微协议体)
-  /// (个微真实协议未知, 当前为留空实现)
+  /// FTE 报文校验和计算（对 [头+体] 逐字节求和 %256）
+  static uint32_t GenerateSzCheckSum(const char *buf, uint32_t len);
+
+  // ---- 消息构建 (FTE 协议) ----
+  /// 构造个微委托消息 (PktNewHeader + TradeOrderReq + 校验和)
   void build_order_msg(const OrderReq &req, char *o_buf);
 
-  /// 构造个微 ETF 申购赎回消息 (g1_msg_head + 个微协议体)
-  /// (个微真实协议未知, 当前为留空实现)
+  /// 构造个微 ETF 申购赎回消息 (PktNewHeader + TradeOrderReq + 校验和)
   void build_etf_order_msg(const OrderReq &req, char *o_buf);
 
-  /// 构造个微撤单消息 (g1_msg_head + 个微协议体)
-  /// (个微真实协议未知, 当前为留空实现)
+  /// 构造个微撤单消息 (PktNewHeader + CancelOrderReq + 校验和)
   void build_cancel_msg(const CancelReq &req, char *o_buf);
 
-  /// 构造个微账户登录消息 (g1_msg_head + login_req)
-  /// (个微真实协议未知, 临时使用 g1 login_req 替代)
-  void build_login_msg(const acc_login_event_info &info, int16_t log_type, g1_msg_head *o_req);
+  /// 构造个微账户登录消息 (PktNewHeader + LogOnReq + 校验和)
+  void build_login_msg(const acc_login_event_info &info, char *o_buf, int32 buf_len);
 
   void build_login_rtn(const acc_login_event_info &info, int32 err_ret, const char *err_msg, LoginAns &ans);
-  void build_login_rtn(const login_ans &msg, LoginAns &o_ans);
+  void build_login_rtn(const gw_message::LogOnAns &msg, LoginAns &o_ans);
 
-  // ---- 应答解析 (个微真实协议未知, 临时使用 g1 替代) ----
-  /// 处理个微账户登录应答 (临时用 g1 login_ans 替代)
-  void deal_log_ans(login_ans &msg);
+  // ---- 应答解析 (FTE 协议) ----
+  /// 处理个微账户登录应答 (LogOnAns)
+  void deal_log_ans(const char *body, int32 body_len);
 
-  // ---- 错误码构造 (复用 fpga 逻辑, 临时用 g1 头) ----
-  void build_api_order_rej(const g1_msg_head *msg, int32 err_code, OrderRtn &o_rtn, StreamInfo &o_stream);
-  void build_api_cancel_rej(const g1_msg_head *msg, int32 err_code, CancelRsp &o_rtn, StreamInfo &o_stream);
+  /// 处理委托回报 (TradeOrderER, exec_type='0'/'8')
+  void deal_order_rtn(const char *body, int32 body_len);
+
+  /// 处理成交回报 (TradeOrderER, exec_type='F')
+  void deal_trade_rtn(const char *body, int32 body_len);
+
+  /// 处理撤单回报 (TradeOrderER, exec_type='4')
+  void deal_cancel_rsp(const char *body, int32 body_len);
+
+  /// 处理 ETF 成交回报 (TradeOrderER + ConstituentStock[])
+  void deal_etf_trade_rtn(const char *body, int32 body_len);
+
+  /// 处理拒绝消息 (RejectMsg)
+  void deal_reject_msg(const char *body, int32 body_len);
+
+  // ---- 状态字典映射 ----
+  int32_t map_ord_status(uint8_t fte_status);
+  int32_t map_exec_type(char exec_type);
+  int16_t map_market_id(uint16_t fte_market_id);
+
+  // ---- 错误码构造 (FTE 协议) ----
+  void build_api_order_rej(const gw_message::TradeOrderReq *req, int32 err_code, OrderRtn &o_rtn, StreamInfo &o_stream);
+  void build_api_cancel_rej(const gw_message::CancelOrderReq *req, int32 err_code, CancelRsp &o_rtn, StreamInfo &o_stream);
 
 private:
   int16 trade_link_connect_ = 0; ///< 极速链接状态:0-未链接/断开, 1-已链接
@@ -169,8 +190,6 @@ private:
   int16 market_type = 0;         ///< 市场
   int16 heart_interval = 5;      ///< 心跳间隔
   lb_common::que_mth_buf *trade_send_queue_ = nullptr; ///< 极速柜台发送队列
-
-  //todo : 定义个微柜台缓存结构，添加缓存对象
 
   callback_manager *cb_mgr_ = nullptr;
   int64 session_seq_ = 0;
