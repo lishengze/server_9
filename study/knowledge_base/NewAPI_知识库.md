@@ -27,6 +27,9 @@
 15. [待完成任务清单](#15-待完成任务清单)
 16. [实现方案建议](#16-实现方案建议)
 17. [相关文档与文件索引](#17-相关文档与文件索引)
+18. [FTE 协议详解（gw_counter 对接目标）](#18-fte-协议详解gw_counter-对接目标)
+19. [gw_counter 模块设计（gw_counter_api.md）](#19-gw_counter-模块设计gw_counter_apimd)
+20. [FTE 编译部署测试环境](#20-fte-编译部署测试环境)
 
 ---
 
@@ -559,3 +562,207 @@ api_impl::position_query → c98_.deal_position_query
 ### 任务文档
 
 - `task/api_dev/api_dev_task.txt`：[NGTP-T202612257] 优化低延时 API（CMakeLists 优化 + 接口完善）
+- `task/api_dev/fte_api.md`：新 API 数据结构 ↔ FTE 数据结构转换关系（第2-3章字段映射）
+- `task/api_dev/gw_counter_api.md`：gw_counter 模块接口设计文档（完整字段映射 + 链路设计 + 实现优先级）
+
+---
+
+## 18. FTE 协议详解（gw_counter 对接目标）
+
+> **来源**：`/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/knowledge_base/README.md`、`fte_tcp_通信链路分析.md`、`include/message/gw_head.h`、`task/api_dev/fte_api.md`
+
+### 18.1 FTE 项目
+
+| 项目 | 说明 |
+|------|------|
+| 项目路径 | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte` |
+| 知识库 | `fte/knowledge_base/README.md` + `Prompt.md` |
+| 协议结构体 | `fte/include/message/gw_head.h`（`gw_message::*` 命名空间，扁平版） |
+| 服务端结构 | `fte/include/message/gw_external_message.h`（`message::*` 命名空间，嵌套版） |
+| API 示例 | `fte/api_demo/`（C++11 客户端） |
+| 编译脚本 | `compile_fte.sh`（docker 容器 otc） |
+| 部署测试 | `fte/test_all/` |
+
+### 18.2 报文格式
+
+```
+┌─────────────────┬──────────────────────────┬──────────────────┐
+│ PktNewHeader 8B │  消息体 msg_len B        │ 校验和 uint32(大端)│
+│ msg_id | msg_len│  (业务消息结构 encode)    │ (逐字节求和 %256) │
+└─────────────────┴──────────────────────────┴──────────────────┘
+whole_msg_len = sizeof(PktNewHeader) + msg_len + sizeof(uint32_t)
+```
+
+- **多字节整型按大端**（网络序）传输
+- **校验和**：`GenerateSzCheckSum()` 对 [头+体] 逐字节求和 %256，转大端 4 字节
+- **消息头**：`PktNewHeader` 8 字节（msg_id 消息类型 + msg_len 消息体长度）
+
+### 18.3 消息类型
+
+| 范围 | 说明 |
+|------|------|
+| 1xxx | 请求（客户端→FTE）：1001 登录、1003 委托、1004 撤单、1010 ETF、1007 资金查询、1008 股份查询 |
+| 2xxx | 回报（FTE→客户端）：2001 登录应答、2003 委托回报、2004 撤单回报、2005 成交回报、2010 ETF 回报 |
+| 3 | 心跳（kPktNewHeartBeat） |
+| 9 | 拒绝消息（kPktRejectMsg） |
+
+### 18.4 消息结构双版本
+
+| 版本 | 命名空间 | 文件 | 使用者 |
+|------|---------|------|--------|
+| 扁平版 | `gw_message::` | `include/message/gw_head.h` | API 客户端（纯标准库，含 encode/decode） |
+| 嵌套版 | `message::` | `include/message/gw_external_message.h` | FTE 服务端（嵌套结构，含 decode/encode） |
+
+> 两者 `#pragma pack(1)` 内存布局与大端字节序完全一致，数据可互通。
+
+### 18.5 关键结构体尺寸与字段（API 侧 gw_head.h）
+
+| 结构体 | sizeof | 关键字段 |
+|--------|--------|---------|
+| `PktNewHeader` | 8 | msg_id(uint32) + msg_len(uint32)，含 encode/decode |
+| `LogOnReq` | 1230 | TradeOrderUser 展开 + heart_bt_int(4) + password(100) + client_feature_code(1024) + agw_user(32) |
+| `LogOnAns` | 86 | TradeOrderUser 展开 + session_status(4) + error_code(4) |
+| `TradeOrderReq` | 106 | TradeOrderUser 展开 + security_id(8)/market_id(2)/side(1)/order_type(1)/order_qty(8)/order_price(8)/stop_px(8) |
+| `CancelOrderReq` | 94 | TradeOrderUser 展开 + orig_client_seq_id(8) + orig_clordno(8) |
+| `TradeOrderER` | 324 | TradeOrderUser 展开 + OrdERInfo(246) + constituent_stock[0] |
+| `RejectMsg` | 83 | TradeOrderUser 展开 + reject_reason_code(2) + cancel_flag(1) + business_type(1) |
+| `ConstituentStock` | 52 | 成分券信息 |
+
+> **TradeOrderUser 展开字段**：fund_account_id[16] + branch_id[10] + account_id[12] + cust_id[16] + client_seq_id(8) + agw_seq_id(8)
+
+### 18.6 字段级核对结论（重要）
+
+经与 API 侧 `gw_head.h` 逐字段核对，发现 **fte_api.md 与 gw_head.h 存在不一致**：
+
+| 字段 | fte_api.md 假设 | 实际 gw_head.h | 结论 |
+|------|----------------|----------------|------|
+| `policy_id` | TradeOrderReq 有 | **无** | 丢弃，不映射 |
+| `tgw_id` | TradeOrderReq 有 | **无** | 丢弃，不映射 |
+| `market_id` | 需缓存补充 | OrderReq 已有 | **直接映射** |
+| `clordid` vs `clordno` | 用 clordid(char[10]) | 撤单用 clordno(int64) | 用 clordno 做撤单映射 |
+
+> **设计原则**：字段映射以实际 `gw_head.h` 为准，`fte_api.md` 仅供参考。
+
+### 18.7 拆包组包流程
+
+**拆包（客户端接收）**：
+```
+TCP 字节流 → counter.deal_recv_msg(buf, len, link_type)
+  → 循环解析 PktNewHeader
+  → 校验 msg_len ≤ 65536
+  → 等待完整报文（whole_msg_len ≤ len - deal_len）
+  → 验证校验和（GenerateSzCheckSum [头+体] == 收到值）
+  → 按 msg_id switch 分发
+```
+
+**组包（客户端发送）**：
+```
+填充业务结构 → encode() 序列化 → 填充 PktNewHeader(msg_id+msg_len)
+  → 计算校验和 → 追加 4 字节
+  → 写入发送队列（take_req_que_mem → build_*_msg → cmt_req_que_mem）
+  → 引擎 send_msg(evt->data, evt->data_len)
+```
+
+---
+
+## 19. gw_counter 模块设计（gw_counter_api.md）
+
+> 完整设计文档：`task/api_dev/gw_counter_api.md`（14 章），经两轮复盘修正 9 处问题。
+
+### 19.1 设计核心
+
+| 设计点 | 说明 |
+|--------|------|
+| **GwSessionCache** | 全局单例，fund_account_id 主键，缓存 cust_id/account_id/order_way_ext/user_info + order_sys_no→{clordno, client_seq_id} 映射 |
+| **两阶段会话** | `create_session(acc_login_event_info)`（登录请求时）+ `fill_session_from_ans(LogOnAns)`（登录应答时回填 cust_id/account_id） |
+| **撤单定位** | CancelReq.order_sys_no → 映射表反查 orig_clordno + orig_client_seq_id |
+| **状态字典** | FTE ord_status(0-8) ↔ NewAPI ORDER_STATE_*；exec_type('0'/'4'/'8'/'F') ↔ RSP_TYPE_* |
+| **心跳确认** | 收到 FTE 心跳必须调 `trade_eng_op_->deal_heart_msg_ans(link_type)`，否则 aio_tcp 心跳超时误判 |
+
+### 19.2 消息链路
+
+| 链路 | 请求结构 | 回报结构 | 回调 |
+|------|---------|---------|------|
+| 登录 | LoginReq → LogOnReq(1001) | LogOnAns(2001) → LoginAns | `on_login` |
+| 委托 | OrderReq → TradeOrderReq(1003) | TradeOrderER(2003) → OrderRtn | `on_order_rtn` |
+| 撤单 | CancelReq → CancelOrderReq(1004) | TradeOrderER(2004) → CancelRsp | `on_cancel_rsp` |
+| 成交 | — | TradeOrderER(2005) → TradeRtn | `on_trade_rtn` |
+| ETF | OrderReq → TradeOrderReq(1010) | TradeOrderER(2010) → OrderRtn | `on_order_rtn` |
+| 心跳 | — | kPktNewHeartBeat(3) | `deal_heart_msg_ans` |
+| 拒绝 | — | RejectMsg(9) | `on_order_rtn`(reject) |
+
+### 19.3 实现优先级
+
+| 优先级 | 任务 |
+|--------|------|
+| **P0** | build_order_msg/build_cancel_msg、deal_recv_msg 改 FTE 分发、deal_order_rtn/deal_cancel_rsp/deal_trade_rtn |
+| **P1** | build_login_msg/deal_log_ans 改 FTE、GwSessionCache、build_heart_msg、链接断开重置 login_state |
+| **P2** | deal_reject_msg、deal_send_error 改 FTE、ETF 处理、订单映射表维护、登录重试 |
+
+---
+
+## 20. FTE 编译部署测试环境
+
+> **来源**：`fte/knowledge_base/README.md` 第16章、`fte/test_all/fte_test.md`
+
+### 20.1 环境
+
+| 项目 | 说明 |
+|------|------|
+| 编译环境 | docker 容器 `otc`，工作目录 `/mnt/work/gt_trunk`（映射宿主机 `/home/lsz/code/work/gt_trunk`） |
+| 编译模式 | Release/Debug/Fast（`-r`/`-d`/`-f`） |
+| 编译宏 | `-DNO_DSE`（简化版 fte） |
+| 编译器 | gcc 4.8.5 |
+| 产物目录 | `/mnt/work/gt_test/work_atp/cmake/fte/bin`（ute）与 `.../lib`（libutedatainit.so） |
+
+### 20.2 编译
+
+```bash
+./compile_fte.sh            # 默认 Release
+./compile_fte.sh -r         # Release
+./compile_fte.sh -d         # Debug
+# 脚本自动检测并进入 docker 容器 otc
+```
+
+### 20.3 部署测试目录（test_all/）
+
+| 目录/文件 | 说明 |
+|-----------|------|
+| `env.sh` | 公共环境变量 |
+| `start_all.sh` | 统一启动（模拟交易所 + 上海 FTE + 深圳 FTE） |
+| `stop_all.sh` / `status_all.sh` / `clear_all.sh` | 停止 / 检测 / 清理 |
+| `tgw_simulator/` | 模拟交易所（3 实例） |
+| `etf_test_sh/` / `etf_test_sz/` | 上海 / 深圳 FTE 测试数据与配置 |
+
+### 20.4 端口与实例
+
+| 端口 | 服务 | 实例 |
+|------|------|------|
+| 38141 | 模拟交易所（上海新债券） | TGWSimulator_Stock |
+| 38140 | 模拟交易所（上海竞价流式） | TGWSimulator_Bond |
+| 39142 | 模拟交易所（深圳） | TGWSimulator_ETF |
+| 33001 | 上海 FTE | UTE_61_611_11 |
+| 33002 | 深圳 FTE | UTE_84_842_21 |
+
+### 20.5 完整流程（已实测通过）
+
+```
+编译 → start_all.sh 启动 → status_all.sh 检测 → 日志验证建链
+→ stop_all.sh 停止 → clear_all.sh 清理
+```
+
+- **上海 FTE**：与 38140/38141 建链，持续心跳（10s）
+- **深圳 FTE**：与 39142 建链，登录成功（DealLogon Recv logon message），持续心跳
+- **数据加载**：两个 FTE 均生成 `fteinit.txt`，`register_vec size 42`
+
+### 20.6 已知问题
+
+| 问题 | 级别 | 处理 |
+|------|------|------|
+| 大页内存分配失败 `Mmap hugepage failed` | 低 | 自动降级普通内存 |
+| tgw_simulator 遗留僵尸进程 defunct | 低 | 以端口监听判断状态 |
+| oh-my-zsh compaudit 警告 | 低 | 忽略 |
+
+### 20.7 联调准备
+
+api client 开发完成后，`docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEWORK/fte/test_all/start_all.sh"` 一键启动全套环境，api client 连接 `127.0.0.1:33001`（上海）或 `127.0.0.1:33002`（深圳）与 FTE + 模拟交易所通信。

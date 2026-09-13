@@ -21,6 +21,9 @@
 6. **完成度评估**：fpga ⭐⭐⭐ / gw ⭐ / counter98 ⭐
 7. **待完成任务**：P0~P3 优先级划分
 8. **实现方案建议**：复用 fpga 模式、消息构建三步、回报解析三步
+9. **FTE 协议详解**：报文格式（头+体+校验和）、消息类型（1xxx/2xxx/3/9）、gw_head.h 结构体、字段级核对结论
+10. **gw_counter 模块设计**：GwSessionCache、两阶段会话、撤单定位、状态字典映射、消息链路
+11. **FTE 编译部署测试**：docker 容器 otc、test_all/ 脚本、模拟交易所 3 实例、完整流程
 
 ## 三、分析框架
 
@@ -56,6 +59,29 @@
 5. 检查回调模式（direct/queued）
 ```
 
+### 3.4 FTE 协议分析类问题
+```
+1. 确定消息方向：请求(1xxx) 还是 回报(2xxx) / 心跳(3) / 拒绝(9)
+2. 确定结构体：gw_message::* 扁平版（API 侧 gw_head.h，含 encode/decode）
+3. 拆包：校验 PktNewHeader.msg_len ≤ 65536 → 等待完整报文 → 验证校验和 → switch(msg_id)
+4. 字段转换：
+   - 直接映射：字段名/类型一致，直接赋值
+   - 选择映射：字段名/类型不同，需转换
+   - 缓存补充：从 GwSessionCache 获取 account_id/cust_id
+   - FTE 有 NewAPI 无：丢弃（请求）或设默认值（回报）
+   - NewAPI 有 FTE 无：丢弃（请求）或设 0/空（回报）
+5. 核对字段：以实际 gw_head.h 为准（fte_api.md 可能有偏差，如 policy_id/tgw_id 实际不存在）
+```
+
+### 3.5 联调/部署类问题
+```
+1. 编译：docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./compile_fte.sh"
+2. 部署：./DYS-FRAMEWORK/fte/test_all/start_all.sh（模拟交易所 + 上海 FTE 33001 + 深圳 FTE 33002）
+3. 验证：status_all.sh 看端口监听；日志验证建链心跳/登录
+4. 停止清理：stop_all.sh + clear_all.sh
+5. api client 连接 127.0.0.1:33001(上海)/33002(深圳)
+```
+
 ## 四、关键代码索引
 
 分析时请优先参考以下核心文件：
@@ -79,9 +105,17 @@
 | 非加速应答结构 | `trunk/NewAPI/gone/api/include/struct_ans.h` |
 | 公共结构体 | `trunk/NewAPI/gone/api/include/common_struct.h` |
 | 个微协议头 | `trunk/NewAPI/gone/api/include/gw_head.h` |
+| 登录事件结构 | `trunk/NewAPI/gone/api/src/api_event_msg.h`（acc_login_event_info） |
 | g1 协议头 | `trunk/NewAPI/gone/include/g1msghead.h` |
 | g1 交易消息 | `trunk/NewAPI/gone/include/g1trademsg.h` |
 | 无锁队列 | `trunk/NewAPI/common/include/que_mth_buf.h` |
+| **gw 设计文档** | `task/api_dev/gw_counter_api.md` |
+| **字段转换关系** | `task/api_dev/fte_api.md` |
+| **FTE 协议结构体** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/include/message/gw_head.h` |
+| **FTE 知识库** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/knowledge_base/README.md` |
+| **FTE TCP 分析** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md` |
+| **FTE API 示例** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/api_demo/` |
+| **FTE 部署测试** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/test_all/` |
 
 ## 五、常见问答模板
 
@@ -118,6 +152,46 @@ counter98：所有 build_*_msg 留空，查询应答未接入分发，deal_send_
 框架：断线重登/login_state 重置被注释、登录异常重试未实现、缓存结构未定义
 ```
 
+### Q5: gw_counter 如何向 FTE 发送委托？
+```
+1. api_impl::order_insert → gw_counter_direct::deal_order_req
+2. 校验 trade_link_connect_ + login_state==2
+3. take_req_que_mem(data, take_len)  // take_len = 8 + sizeof(TradeOrderReq) + 4
+4. build_order_msg(req, data + sizeof(link_send_event)):
+   - 填 PktNewHeader(msg_id=kPktOrderReq, msg_len=sizeof(TradeOrderReq))
+   - 填 TradeOrderReq（account_id/cust_id 从 GwSessionCache 补充，market_id 直接映射）
+   - encode() 序列化 + 校验和
+5. cmt_req_que_mem(pos, take_len)
+6. 引擎 do_work → send_msg(evt->data, evt->data_len)
+```
+
+### Q6: FTE 委托回报如何回调给客户？
+```
+1. TCP → aio_socket_link::msg_cb → gw_counter_direct::deal_recv_msg(buf, len)
+2. 循环拆包：解析 PktNewHeader → 校验 msg_len ≤ 65536 → 校验和验证 → 按 msg_id 分发
+3. kPktOrderAns(2003) → deal_order_rtn → 解析 TradeOrderER
+   - 记录 order_sys_no→{clordno, client_seq_id} 映射（供撤单）
+   - 构造 OrderRtn（状态字典映射 ord_status→ORDER_STATE_*，exec_type→RSP_TYPE_*）
+4. cb_mgr_->on_order_rtn(stream, rtn) → 用户回调
+```
+
+### Q7: gw_counter 撤单如何定位原单？
+```
+1. CancelReq 只有 order_sys_no（柜台委托号）
+2. 从 GwSessionCache 映射表反查 order_sys_no → {clordno, client_seq_id}
+3. 填 CancelOrderReq.orig_clordno = clordno（FTE 内部编号）
+4. 填 CancelOrderReq.orig_client_seq_id = 原委托 client_seq_id（找不到设 0）
+5. 发送 → 收 TradeOrderER(kPktCancelOrderAns, exec_type='4') → CancelRsp
+```
+
+### Q8: 如何启动 FTE + 模拟交易所环境？
+```
+docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./compile_fte.sh"
+docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEWORK/fte/test_all/start_all.sh"
+# 上海 FTE 33001 / 深圳 FTE 33002 / 模拟交易所 38140,38141,39142
+# 停止: stop_all.sh  清理: clear_all.sh
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -128,10 +202,11 @@ counter98：所有 build_*_msg 留空，查询应答未接入分发，deal_send_
 
 ## 七、边界与限制
 
-1. **知识边界**：本知识库基于 `study/` 下的分析文档（counter.md / question.md / 技术实现.md / 数据流转.md / 产品使用.md）和代码分析整理，不包含未分析的模块。
-2. **协议细节**：个微协议和 98 协议的真实字段定义不在知识库范围内（当前用临时结构体占位），需要时请直接查看 `gw_head.h` 和 `c98msg_tmp.h`。
+1. **知识边界**：本知识库基于 `study/` 下的分析文档（counter.md / question.md / 技术实现.md / 数据流转.md / 产品使用.md）、`task/api_dev/` 设计文档、FTE 知识库及代码分析整理。
+2. **协议细节**：gw_counter 已掌握 FTE 协议（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
-4. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-07-30。
+4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-13。
 
 ---
 

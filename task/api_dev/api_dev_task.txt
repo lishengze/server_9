@@ -59,3 +59,55 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
 
         4. 结合 1,2,3 部分的深入学习，以一个资深金融C++开发工程师的角度，设计一份完成 gw_counter 模块的接口设计文档，完善当前
            api 框架中和 fte 柜台进行通讯所需要的所有功能。文档名称为 gw_counter_api.md , 存储到 task/api_dev 目录下。
+
+        5. 现在在 /home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte 的知识库中，增加了 编译，部署，测试，fte 以及相关的
+           模拟交易所组件的详细步骤和功能，仔细学习相关的内容和步骤， 完整执行一遍，编译，部署，测试，fte 模拟交易所的功能。
+           为接下来，api client 的开发 和 fte ,模拟交易所的联调做准备。
+
+        6. 在完成 5 的步骤后，结合 4 中完成的接口设计文档，开发 gw_counter 模块，开发完成后，进行整个api的编译，确保编译通过。
+           现在的编译也需要在 docker 中完成，因为所有组件的测试都会在 docker 中进行。更新 build.sh ，使其默认在 docker 对应的目录中编译。
+
+           6.2 仔细复查代码，看是否还有疏漏的，查漏补缺。
+
+
+        7. 在步骤了 6 之后，需要完成两个 mock 组件的开发工作。
+            7.1 mock_client:
+                1. 模拟真实的客户端，通过加载 新开发的 api 动态链接库，向柜台发送请求，并接收返回的回报。
+                    此次主要是测试 与 fte 柜台进行相关请求的所有消息协议。
+                    后期要支持 98_counter 和 G1_counter 的柜台的所有消息协议。
+
+                2. 客户端要支持 配置化测试，主要通过 json 配置文件实现。主要有两类配置:
+                    1. 基础链接，测试，相关配置，比如创建 api时需要设置的配置信息。
+                    2. 具体测试的 请求相关消息和预期的回报消息。
+
+                3. 相关测试用例中的各种消息请求和预期回报要和对应柜台设置的消息一致。
+                    比如当前需要测试的 fte 柜台， 相关的请求必须与其对应的上场数据一致。
+
+                4. 使用 CMakeLists.txt 进行编译，并且加入当前CMakeLists 系统，进行统一管理。
+                   CMakeLists.txt 风格 参考 trunk/NewAPI/gone/api/CMakeLists.txt
+
+                5. 先完成 mock_client_design.md 中的内容，详细的列举，并描述 mock_client 的所有功能，
+                    并绘制对应 UML 图，Mermaid 图， 增强其可读性。将其输出到  mock/client 中。
+                
+            7.2 98_counter_mock:
+                1. 由于当前 api 使用的逻辑是，必须先链接登陆98_counter 对应的柜台成功，才能登陆目标的急速柜台进行通信。
+                    所以需要先开发 98_counter 柜台的 mock 组件，用于支持 98_counter 模块的链接和登陆。
+
+                2. 当前 98_counter 柜台的 mock 组件，需要支持 98_counter 柜台的 登陆，登出，心跳这几个基础功能即可。
+                
+                3. 需要考察 api 中的 98_counter 模块，在链接，登陆，心跳 这几个功能上，是否有需要完善的地方。 
+                    如果需要进行相关的开发，完善这些功能。
+
+                4. 使用 CMakeLists.txt 进行编译，并且加入当前CMakeLists 系统，进行统一管理。
+                   CMakeLists.txt 风格 参考 trunk/NewAPI/gone/api/CMakeLists.txt
+
+                5. 先完成 98_counter_mock_design.md 中的内容，详细的列举，并描述 98_counter_mock 的所有功能，
+                    并绘制对应 UML 图，Mermaid 图， 增强其可读性。将其输出到 mock/98_counter 中。
+
+            7.3 完成上面的两个 mock 组件的设计文档后，从全局的角度，仔细复盘，看是否还有疏漏的，查漏补缺。
+
+            7.4 确认没有疏漏后，开始进行 mock_client 和 98_counter_mock 的开发工作， 一定要确保两个组件编译通过。
+                编译通过后，将其与 fte, 模拟交易所 进行联调，先确保基础的链接，登陆请求没有问题。
+                登陆的客户信息，可以通过研究 fte 的上场数据进行相关设置。
+                反复调试，测试，直到完成相关功能测试， 将开发测试过程中遇到的问题，解决的方案， 实际的结果 都记录下来。
+                记录到 mock/client/mock_client_test.md 中。
