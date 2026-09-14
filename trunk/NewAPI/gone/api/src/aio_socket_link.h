@@ -243,7 +243,7 @@ private:
     buf_attr.dispatch_zero_copy = 0;
     buf_attr.heartinterval = check_interval_;
     buf_attr.puserdata = reinterpret_cast<void *>(this);
-    ch_attr.family = 1;
+    ch_attr.family = CHANNEL_FAMILY_IPV4;
     ch_attr.recvsockbuflen = 1 * 1024 * 1024;
     ch_attr.sendsockbuflen = 1 * 1024 * 1024;
     ch_attr.tcpdelayack = 1;
@@ -312,12 +312,14 @@ int32 aio_socket_link<TCounter>::connect(int32 recv_pool_num, int32 need_switch,
 
   int32 ret = ch_.connect_ch(buf_attr, ch_attr, &msg_cb_, this, recv_th,
                              const_cast<lb_common::csock_addr *>(&active_addr_()), nullptr, 0);
+  fprintf(stderr, "[DBG] aio_socket_link.connect: connect_ch ret=%d ip=%s port=%d\n", ret, addrs_[active_idx_].ip, (int)addrs_[active_idx_].port);
 
   if (ret < 0 && need_switch == 0 && addr_valid_num == 2) {
     active_idx_ = 1 - active_idx_;
     if (addrs_[active_idx_].ip[0] != '\0' && addrs_[active_idx_].port > 0) {
       ret = ch_.connect_ch(buf_attr, ch_attr, &msg_cb_, this, recv_th,
                            const_cast<lb_common::csock_addr *>(&active_addr_()), nullptr, 0);
+      fprintf(stderr, "[DBG] aio_socket_link.connect: connect_ch(sw) ret=%d ip=%s port=%d\n", ret, addrs_[active_idx_].ip, (int)addrs_[active_idx_].port);
     }
   }
 

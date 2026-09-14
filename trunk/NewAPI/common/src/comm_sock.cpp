@@ -1,6 +1,7 @@
 #include "comm_sock.h"
 #include "comm_errno.h"
 #include <arpa/inet.h>
+#include <cstdio>
 #include <cstring>
 #include <errno.h>
 #include <ifaddrs.h>
@@ -480,10 +481,16 @@ int32 sock_utils::create_tcp_connect_sock(int32 async_connect, channel_attr &att
   struct sockaddr_in remoteaddr;
   struct sockaddr_in baddr;
   int32 addrlen = sizeof(baddr);
-  if (NULL == premote || attr.family != CHANNEL_FAMILY_IPV4)
+  if (NULL == premote || attr.family != CHANNEL_FAMILY_IPV4) {
+    fprintf(stderr, "[DBG] create_tcp_connect_sock ARGV: premote=%p family=%d CHANNEL_IPV4=%d\n",
+            (void *)premote, (int)attr.family, (int)CHANNEL_FAMILY_IPV4);
     return LBERR_ARGV_WRONG;
-  if ('\0' == premote->ip[0] || premote->port <= 0)
+  }
+  if ('\0' == premote->ip[0] || premote->port <= 0) {
+    fprintf(stderr, "[DBG] create_tcp_connect_sock ADDR: ip0='%c'(0x%02x) port=%d ip=[%s]\n",
+            premote->ip[0], (unsigned char)premote->ip[0], (int)premote->port, premote->ip);
     return LBERR_ARGV_WRONG;
+  }
   struct linger so_linger;
 
   int32 tfd = socket(attr.family, SOCK_STREAM, IPPROTO_TCP);

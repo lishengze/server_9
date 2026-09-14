@@ -156,6 +156,7 @@ int ClientSession::handle_acc_login(const c98_acc_login_req* req) {
     std::string password(req->password, strnlen(req->password, sizeof(req->password)));
 
     std::cout << "[Session] 账户登录请求: fund_account=" << fund_account
+              << ", password=[" << password << "] password_len=" << password.size()
               << ", client_req_no=" << req->client_req_no << std::endl;
 
     if (acct_mgr_->verify_account(fund_account, password)) {

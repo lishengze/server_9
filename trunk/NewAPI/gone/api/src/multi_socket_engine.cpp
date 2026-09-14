@@ -52,11 +52,13 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
   tq_size = tq_size * 1024 * 1024;
 
   int32 ret = send_queue_.init(tq_size, 8);
+  fprintf(stderr, "[DBG] multi_engine.init: send_queue ret=%d\n", ret);
   if (ret < 0) {
     error_log(tlh) << "init multi socket engine queue error,que_size=" << tq_size << ",ret=" << ret << end_log;
     return LBAPI_ERR_QUEUE_INIT;
   }
   ret = queue_wake_.init(0);
+  fprintf(stderr, "[DBG] multi_engine.init: queue_wake ret=%d\n", ret);
   if (ret < 0) {
     error_log(tlh) << "init multi socket engine queue wake error,ret=" << ret << end_log;
     return LBAPI_ERR_ATTR_INIT;
@@ -64,6 +66,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
 
   int32 once_recv_len = 2048;
   ret = g98_link_.init(log, counter98_, LINK_TYPE_98, once_recv_len, check_interval, max_fails);
+  fprintf(stderr, "[DBG] multi_engine.init: g98_link.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
@@ -74,6 +77,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
     taddr.port = tcfg_addr.port;
     std::memcpy(taddr.ip, tcfg_addr.ip, sizeof(taddr.ip));
     g98_link_.set_remote(taddr);
+    fprintf(stderr, "[DBG] multi_engine.init: set_remote 98 addr=%s:%d\n", taddr.ip, (int)taddr.port);
   }
   tcfg_addr = cfg.get_counter98_addr_bak();
   if (tcfg_addr.port > 0 && tcfg_addr.ip[0] != '\0') {
@@ -83,6 +87,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
   }
 
   ret = g98_link_timer_.init_timer(&g98_link_, this, check_interval);
+  fprintf(stderr, "[DBG] multi_engine.init: g98_timer.init ret=%d\n", ret);
   if (ret < 0) {
     error_log(tlh) << "init multi socket engine 98 timer error,interval=" << check_interval << ",ret=" << ret
                    << end_log;
@@ -91,10 +96,10 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
 
   /// 槽 1: 极速柜台网关链接（fast_gw_link）
   /// 语义：fpga_direct 模式 = fpga GW；fpga_gateway 模式 = fpga GW（业务也走此）；个微模式 = 闲置
-  aio_socket_link<TFastCounter> fast_gw_link_;
-  link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_gw_link_timer_;
   counter_type t_fast_counter = cfg.get_fast_counter_type();
   if (t_fast_counter == counter_type::fpga_direct || t_fast_counter == counter_type::fpga_gateway) {
+    aio_socket_link<TFastCounter> fast_gw_link_;
+    link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_gw_link_timer_;
     once_recv_len = 2048;
     ret = fast_gw_link_.init(log, counter_, LINK_TYPE_SPEED_GW, once_recv_len, check_interval, max_fails);
     if (ret < 0) {
@@ -122,6 +127,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
   }
 
   ret = epoll_th_.init_th(0, 16, 0, 0, twaitms);
+  fprintf(stderr, "[DBG] multi_engine.init: epoll_th.init ret=%d\n", ret);
   if (ret < 0) {
     error_log(tlh) << "init multi socket engine thread error,cpuid=" << tcpuid << ",waitms=" << twaitms
                    << ",ret=" << ret << end_log;
@@ -130,6 +136,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
   info_log(tlh) << "init multi socket engine ok,cpuid=" << tcpuid << ",waitms=" << twaitms
                 << ",timer_interval=" << heart_interval << ",que_size=" << tq_size << ",once_recv_len=" << once_recv_len
                 << end_log;
+  fprintf(stderr, "[DBG] multi_engine.init: about to return 0\n");
 
   return 0;
 }

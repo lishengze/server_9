@@ -308,7 +308,7 @@ public:
       buf.close_buf();
       return ret;
     }
-    return 0;
+    return ret;
   }
 
   /**

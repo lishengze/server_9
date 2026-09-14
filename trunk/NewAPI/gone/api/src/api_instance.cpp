@@ -146,29 +146,39 @@ template <class TF, class TE> int32 api_impl<TF, TE>::init(const api_config_impl
   }
 
   // 2. 初始化回调管理器
+  fprintf(stderr, "[DBG] init: cb_mgr.init begin\n");
   int32 single_writer = (speed_counter_type_ == counter_type::fpga_gateway) ? 1 : 0;
   ret = cb_mgr_.init(&log_, cb, cfg.get_callback_mode(), cfg.get_callback_thread_cpu(),
                      cfg.get_callback_queue_size_mb(), cfg.get_callback_wait_ms(), single_writer);
+  fprintf(stderr, "[DBG] init: cb_mgr.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
 
   // 3. 初始化柜台
+  fprintf(stderr, "[DBG] init: fast.init begin\n");
   ret = fast_.init(cfg, &cb_mgr_, &log_);
+  fprintf(stderr, "[DBG] init: fast.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
+  fprintf(stderr, "[DBG] init: c98.init begin\n");
   ret = c98_.init(cfg, &cb_mgr_, &log_);
+  fprintf(stderr, "[DBG] init: c98.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
 
   // 4. 初始化引擎
+  fprintf(stderr, "[DBG] init: fast_engine.init begin\n");
   ret = fast_engine_.init(cfg, &fast_, &log_);
+  fprintf(stderr, "[DBG] init: fast_engine.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
+  fprintf(stderr, "[DBG] init: multi_engine.init begin\n");
   ret = multi_engine_.init(cfg, &fast_, &log_, &c98_);
+  fprintf(stderr, "[DBG] init: multi_engine.init ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
@@ -191,6 +201,7 @@ template <class TF, class TE> int32 api_impl<TF, TE>::init(const api_config_impl
 
 // start: 启动所有链接和线程
 template <class TF, class TE> int32 api_impl<TF, TE>::start() {
+  fprintf(stderr, "[DBG] api start() begin\n");
   while (true) {
     int32 t = lb_common::atomic_load32(&have_start);
     if (t == 0) {
@@ -217,25 +228,33 @@ template <class TF, class TE> int32 api_impl<TF, TE>::start() {
   }
 
   // 3. 98 链接同步连接 (仅建链, 不收发)
+  fprintf(stderr, "[DBG] start: connect_98agw begin\n");
   ret = multi_engine_.connect_98agw();
+  fprintf(stderr, "[DBG] start: connect_98agw ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
 
   // 4. multi 引擎 (异步启动 epoll 线程, 接管 98 + 极速GW 链接的 IO)
+  fprintf(stderr, "[DBG] start: multi_engine.start begin\n");
   ret = multi_engine_.start();
+  fprintf(stderr, "[DBG] start: multi_engine.start ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
 
   // 5. fast 引擎 (异步启动业务 epoll 线程, 接管极速业务链接的 IO)
+  fprintf(stderr, "[DBG] start: fast_engine.start begin\n");
   ret = fast_engine_.start();
+  fprintf(stderr, "[DBG] start: fast_engine.start ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }
 
   // 6. 同步 agw 登陆 (必须最后, 此时 multi 线程已运行, 可接收 AGW_LOGIN_ANS 应答)
+  fprintf(stderr, "[DBG] start: deal_agw_login begin\n");
   ret = c98_.deal_agw_login();
+  fprintf(stderr, "[DBG] start: deal_agw_login ret=%d\n", ret);
   if (ret < 0) {
     return ret;
   }

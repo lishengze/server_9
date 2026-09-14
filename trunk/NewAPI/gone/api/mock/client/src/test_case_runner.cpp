@@ -164,6 +164,8 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 std::string val;
 
                 val = tc.request_fields["fund_account_id"].as_string();
+                std::cerr << "[DEBUG] login fund_account_id val=[" << val << "] len=" << val.size()
+                          << " req.size=" << req.fund_account_id.size() << std::endl;
                 std::memcpy(req.fund_account_id.data(), val.c_str(),
                             std::min(val.size(), req.fund_account_id.size()));
 

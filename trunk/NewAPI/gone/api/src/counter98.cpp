@@ -699,11 +699,16 @@ int32 counter98::deal_login_req(const LoginReq &req) {
 
 void counter98::build_cust_login_event(const LoginReq &req, acc_login_event_info &o_info) {
   o_info.cust_req_no = req.client_req_no;
-  lb_common::comm_utils::str_copy_format(o_info.cust_id, req.cust_id.data(), sizeof(o_info.cust_id));
-  lb_common::comm_utils::str_copy_format(o_info.fund_account_id, req.fund_account_id.data(),
-                                         sizeof(o_info.fund_account_id));
-  lb_common::comm_utils::str_copy_format(o_info.account_id, req.account_id.data(), sizeof(o_info.account_id));
-  lb_common::comm_utils::str_copy_format(o_info.branch_id, req.branch_id.data(), sizeof(o_info.branch_id));
+  // 注意：fund_account_id/cust_id 等为定长字段，可能占满字段（无 '\0' 结尾）。
+  // 不能用 str_copy_format（其最多拷贝 dst_size-1 字节，会把满字段截断），改用 memcpy 完整拷贝。
+  std::memcpy(o_info.cust_id, req.cust_id.data(),
+              std::min<size_t>(sizeof(o_info.cust_id), req.cust_id.size()));
+  std::memcpy(o_info.fund_account_id, req.fund_account_id.data(),
+              std::min<size_t>(sizeof(o_info.fund_account_id), req.fund_account_id.size()));
+  std::memcpy(o_info.account_id, req.account_id.data(),
+              std::min<size_t>(sizeof(o_info.account_id), req.account_id.size()));
+  std::memcpy(o_info.branch_id, req.branch_id.data(),
+              std::min<size_t>(sizeof(o_info.branch_id), req.branch_id.size()));
 
   o_info.order_way_ext[0] = req.order_way_ext[0];
   o_info.order_way_ext[1] = req.order_way_ext[1];
@@ -742,6 +747,7 @@ int32 counter98::build_login_msg(const acc_login_event_info &info, char *o_buf, 
   std::memcpy(body->fund_account_id, info.fund_account_id, sizeof(body->fund_account_id));
   std::memcpy(body->branch_id, info.branch_id, sizeof(body->branch_id));
   std::memcpy(body->account_id, info.account_id, sizeof(body->account_id));
+  std::memcpy(body->password, info.password, sizeof(body->password));
   std::memcpy(body->session, info.session, sizeof(body->session));
   std::memcpy(body->end_code, info.client_feature_code, sizeof(body->end_code));
   body->market_type = market_type;
@@ -853,10 +859,14 @@ void counter98::deal_cust_login_ans(const c98_msg_head_tmp *msg) {
 void counter98::build_fast_counter_login_event(const c98_acc_login_ans &msg, acc_login_event_info &o_info) {
   // todo : 依据正式协议重写
   o_info.cust_req_no = msg.client_req_no;
-  lb_common::comm_utils::str_copy_format(o_info.cust_id, msg.cust_id, sizeof(o_info.cust_id));
-  lb_common::comm_utils::str_copy_format(o_info.fund_account_id, msg.fund_account_id, sizeof(o_info.fund_account_id));
-  lb_common::comm_utils::str_copy_format(o_info.account_id, msg.account_id, sizeof(o_info.account_id));
-  lb_common::comm_utils::str_copy_format(o_info.branch_id, msg.branch_id, sizeof(o_info.branch_id));
+  // 定长字段用 memcpy 完整拷贝，避免 str_copy_format 截断满字段（同 build_cust_login_event）
+  std::memcpy(o_info.cust_id, msg.cust_id, std::min<size_t>(sizeof(o_info.cust_id), sizeof(msg.cust_id)));
+  std::memcpy(o_info.fund_account_id, msg.fund_account_id,
+              std::min<size_t>(sizeof(o_info.fund_account_id), sizeof(msg.fund_account_id)));
+  std::memcpy(o_info.account_id, msg.account_id,
+              std::min<size_t>(sizeof(o_info.account_id), sizeof(msg.account_id)));
+  std::memcpy(o_info.branch_id, msg.branch_id,
+              std::min<size_t>(sizeof(o_info.branch_id), sizeof(msg.branch_id)));
 
   o_info.order_way_ext[0] = msg.order_way_ext[0];
   o_info.order_way_ext[1] = msg.order_way_ext[1];
