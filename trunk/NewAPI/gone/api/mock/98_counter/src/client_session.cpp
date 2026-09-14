@@ -2,6 +2,8 @@
 #include <iostream>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <vector>
+#include <algorithm>
 
 namespace mock_98 {
 
@@ -11,6 +13,7 @@ ClientSession::ClientSession(int fd, AccountManager* acct_mgr)
     , last_heartbeat_(std::time(nullptr))
     , agw_logged_in_(false)
     , account_logged_in_(false)
+    , disconnected_(false)
 {
 }
 
@@ -18,7 +21,46 @@ ClientSession::~ClientSession() {
     close();
 }
 
-int ClientSession::handle_data(const char* data, size_t len) {
+int ClientSession::feed_data(const char* data, size_t len) {
+    if (!data || len == 0) return 0;
+
+    // 防止缓冲区溢出
+    if (recv_buf_.size() + len > MAX_RECV_BUF) {
+        std::cerr << "[Session] 接收缓冲区溢出, 清空缓冲区" << std::endl;
+        recv_buf_.clear();
+        return -2;
+    }
+
+    // 追加到接收缓冲区
+    recv_buf_.insert(recv_buf_.end(), data, data + len);
+
+    // 循环处理缓冲区中所有完整消息
+    while (recv_buf_.size() >= sizeof(c98_msg_head_tmp)) {
+        // 解析消息头
+        c98_msg_head_tmp head;
+        std::memcpy(&head, recv_buf_.data(), sizeof(c98_msg_head_tmp));
+
+        size_t msg_total = sizeof(c98_msg_head_tmp) + head.msg_len;
+        if (recv_buf_.size() < msg_total) {
+            // 消息体尚未收全，等待更多数据
+            break;
+        }
+
+        // 处理完整消息
+        int ret = handle_message(recv_buf_.data(), msg_total);
+        if (ret < 0) {
+            recv_buf_.clear();
+            return ret;
+        }
+
+        // 从缓冲区移除已处理的消息
+        recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + msg_total);
+    }
+
+    return 0;
+}
+
+int ClientSession::handle_message(const char* data, size_t len) {
     if (len < sizeof(c98_msg_head_tmp)) {
         std::cerr << "[Session] 数据长度不足: " << len << std::endl;
         return -2;
@@ -74,6 +116,7 @@ void ClientSession::close() {
         ::close(fd_);
         fd_ = -1;
     }
+    disconnected_ = true;
     std::cout << "[Session] 会话已关闭"
               << ", agw_user=" << agw_user_
               << ", fund_account=" << fund_account_id_ << std::endl;
@@ -196,7 +239,7 @@ bool ClientSession::send_acc_login_ans(const c98_acc_login_req* req, int32_t err
     if (err_msg) {
         std::memcpy(ans.err_msg, err_msg, std::min(strlen(err_msg), sizeof(ans.err_msg) - 1));
     }
-    ans.login_time = std::time(nullptr);
+    ans.login_time = static_cast<int32_t>(std::time(nullptr));
 
     return send_message(C98_MSG_ACC_LOGIN_ANS, &ans, sizeof(ans));
 }

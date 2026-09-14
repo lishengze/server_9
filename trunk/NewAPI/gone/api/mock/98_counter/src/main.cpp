@@ -2,6 +2,8 @@
 #include <iostream>
 #include <cstring>
 #include <csignal>
+#include <thread>
+#include <chrono>
 
 // 全局服务指针，用于信号处理
 static mock_98::Counter98Server* g_server = nullptr;
@@ -63,8 +65,7 @@ int main(int argc, char* argv[]) {
     // 覆盖端口
     if (override_port > 0) {
         std::cout << "[Main] 覆盖端口: " << override_port << std::endl;
-        // 这里简单处理，直接修改配置
-        // 实际可通过 reload 实现
+        server.set_port(override_port);
     }
 
     // 注册信号处理

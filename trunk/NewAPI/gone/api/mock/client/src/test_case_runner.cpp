@@ -17,10 +17,10 @@ TestCaseRunner::TestCaseRunner(lb_api::api_interface* api, CallbackHandler* hand
 
 TestCaseType TestCaseRunner::parse_type(const std::string& type_str) {
     if (type_str == "login") return TestCaseType::Login;
-    if (type_str == "order_insert") return TestCaseType::OrderInsert;
-    if (type_str == "etf_order_insert") return TestCaseType::EtfOrderInsert;
-    if (type_str == "order_cancel") return TestCaseType::OrderCancel;
-    if (type_str == "wait_heartbeat") return TestCaseType::WaitHeartbeat;
+    if (type_str == "order_insert" || type_str == "order_rtn") return TestCaseType::OrderInsert;
+    if (type_str == "etf_order_insert" || type_str == "trade_rtn") return TestCaseType::EtfOrderInsert;
+    if (type_str == "order_cancel" || type_str == "cancel_rsp") return TestCaseType::OrderCancel;
+    if (type_str == "wait_heartbeat" || type_str == "heartbeat_ok") return TestCaseType::WaitHeartbeat;
     return TestCaseType::Unknown;
 }
 
@@ -120,7 +120,16 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     if (tc.response_type == TestCaseType::WaitHeartbeat) {
         // 心跳测试：等待指定时间，检查链接状态
         int wait_sec = tc.request_fields["wait_seconds"].as_int();
-        std::this_thread::sleep_for(std::chrono::seconds(wait_sec));
+        std::cout << "[Runner] 等待 " << wait_sec << " 秒验证心跳..." << std::endl;
+        for (int i = 0; i < wait_sec; i++) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (!handler_->last_link_status()) {
+                result.fail_reason = "心跳中断 (链接断开)";
+                auto end = std::chrono::steady_clock::now();
+                result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                return result;
+            }
+        }
         result.passed = true;
         result.match_details.push_back("心跳维持正常");
     } else {
@@ -199,8 +208,10 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 std::memcpy(req.branch_id.data(), val.c_str(),
                             std::min(val.size(), req.branch_id.size()));
 
-                req.side = tc.request_fields["side"].as_string()[0];
-                req.order_type = tc.request_fields["order_type"].as_string()[0];
+                std::string side_str = tc.request_fields["side"].as_string();
+                req.side = side_str.empty() ? 0 : side_str[0];
+                std::string order_type_str = tc.request_fields["order_type"].as_string();
+                req.order_type = order_type_str.empty() ? 0 : order_type_str[0];
                 req.policy_id = tc.request_fields["policy_id"].as_int();
                 req.tgw_id = tc.request_fields["tgw_id"].as_int();
 
@@ -286,8 +297,7 @@ bool TestCaseRunner::validate_response(const TestCase& tc, std::vector<std::stri
                 }
                 break;
             }
-            case TestCaseType::OrderInsert:
-            case TestCaseType::OrderCancel: {
+            case TestCaseType::OrderInsert: {
                 const auto& rtn = handler_->last_order_rtn();
                 if (fm.field_name == "order_status") {
                     actual_value = std::to_string((int)rtn.order_status);
@@ -306,6 +316,20 @@ bool TestCaseRunner::validate_response(const TestCase& tc, std::vector<std::stri
                     field_found = true;
                 } else if (fm.field_name == "order_price") {
                     actual_value = std::to_string(rtn.order_price);
+                    field_found = true;
+                }
+                break;
+            }
+            case TestCaseType::OrderCancel: {
+                const auto& rsp = handler_->last_cancel_rsp();
+                if (fm.field_name == "err_code") {
+                    actual_value = std::to_string(rsp.err_code);
+                    field_found = true;
+                } else if (fm.field_name == "order_sys_no") {
+                    actual_value = std::to_string(rsp.order_sys_no);
+                    field_found = true;
+                } else if (fm.field_name == "client_seq_id") {
+                    actual_value = std::to_string(rsp.client_seq_id);
                     field_found = true;
                 }
                 break;

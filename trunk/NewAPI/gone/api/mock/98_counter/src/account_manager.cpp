@@ -73,6 +73,7 @@ bool AccountManager::get_account_info(const std::string& fund_account_id, Accoun
 }
 
 std::string AccountManager::generate_session_id() {
+    std::lock_guard<std::mutex> lock(mutex_);
     session_counter_++;
     std::ostringstream oss;
     oss << "SESS" << std::time(nullptr) << "_" << session_counter_;

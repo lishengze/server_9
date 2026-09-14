@@ -315,7 +315,6 @@ classDiagram
         -bool running_
         -vector~ClientSession~ sessions_
         -AccountManager* account_mgr_
-        -Logger* logger_
         +start() bool
         +stop()
         +set_port(int port)
@@ -358,12 +357,6 @@ classDiagram
         +build_header(char* buf, size_t cap, uint32_t msg_id, uint32_t msg_len, int64_t seq_no) int
     }
 
-    class Logger {
-        +log(const string& msg)
-        +log_hex(const char* data, size_t len)
-        +set_output(const string& path)
-    }
-
     class Config {
         +int listen_port
         +int heartbeat_timeout
@@ -389,7 +382,6 @@ classDiagram
 
     Counter98Server *-- ClientSession : manages
     Counter98Server *-- AccountManager
-    Counter98Server *-- Logger
     Counter98Server --> Config : loads
     ClientSession --> MessageParser : uses
     ClientSession --> AccountManager : uses

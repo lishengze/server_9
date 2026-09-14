@@ -7,6 +7,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 namespace mock_98 {
 
@@ -36,6 +37,9 @@ public:
     /// 是否正在运行
     bool is_running() const { return running_; }
 
+    /// 设置监听端口（在 start() 之前调用）
+    void set_port(int port) { config_.listen_port = port; }
+
 private:
     /// 接收连接的主循环（运行在独立线程）
     void accept_loop();
@@ -43,13 +47,10 @@ private:
     /// 清理超时会话
     void cleanup_loop();
 
-    /// 移除会话
-    void remove_session(int fd);
-
     ServerConfig config_;
     AccountManager acct_mgr_;
     int server_fd_;
-    bool running_;
+    std::atomic<bool> running_;
 
     // 会话管理
     std::vector<ClientSession*> sessions_;

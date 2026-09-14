@@ -18,15 +18,24 @@ public:
     /// 获取套接字
     int fd() const { return fd_; }
 
-    /// 处理接收到的消息
+    /// 处理接收数据（支持 TCP 粘包/拆包，内部维护接收缓冲区）
     /// @return 0=正常, -1=连接关闭, -2=协议错误
-    int handle_data(const char* data, size_t len);
+    int feed_data(const char* data, size_t len);
+
+    /// 处理单条完整消息（由 feed_data 内部调用）
+    int handle_message(const char* data, size_t len);
 
     /// 检查是否心跳超时
     bool is_timeout(int timeout_sec) const;
 
     /// 关闭会话
     void close();
+
+    /// 标记为已断开（由客户端线程调用）
+    void mark_disconnected() { disconnected_ = true; }
+
+    /// 检查是否已断开
+    bool is_disconnected() const { return disconnected_; }
 
     /// 是否已登录
     bool is_agw_logged_in() const { return agw_logged_in_; }
@@ -60,9 +69,14 @@ private:
     time_t last_heartbeat_;
     bool agw_logged_in_;
     bool account_logged_in_;
+    bool disconnected_;
     std::string session_id_;
     std::string agw_user_;
     std::string fund_account_id_;
+
+    // TCP 接收缓冲区（处理粘包/拆包）
+    std::vector<char> recv_buf_;
+    static const size_t MAX_RECV_BUF = 65536;
 };
 
 } // namespace mock_98

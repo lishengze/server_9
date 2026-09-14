@@ -190,12 +190,12 @@ private:
                     case 'r': result += '\r'; break;
                     case 't': result += '\t'; break;
                     case 'u': {
-                        // 简单处理：跳过 unicode 转义
+                        // 简单处理：跳过 unicode 转义（保留原始文本）
                         result += "\\u";
                         for (int i = 0; i < 4 && pos_ + 1 < input_.size(); i++) {
                             result += input_[++pos_];
                         }
-                        break;
+                        continue; // 跳过末尾的 pos_++，因为 for 循环已推进到正确位置
                     }
                     default: result += input_[pos_]; break;
                 }

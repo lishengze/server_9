@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <mutex>
 
 namespace mock_98 {
 
@@ -56,6 +57,7 @@ private:
     std::vector<AgwUserConfig> agw_users_;
     std::vector<AccountConfig> accounts_;
     int64_t session_counter_;
+    mutable std::mutex mutex_;
 };
 
 } // namespace mock_98

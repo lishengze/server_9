@@ -37,9 +37,9 @@ bool MockClient::init(const std::string& config_path) {
 
         // 设置配置属性
         cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
-        cfg->set_attr("market_type", config["market_type"].as_int());
-        cfg->set_attr("fast_counter_type", config["fast_counter_type"].as_int());
-        cfg->set_attr("speed_link_type", config["speed_link_type"].as_int());
+        cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int()));
+        cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int()));
+        cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
 
         // 柜台地址
         std::string speed_ip = config["speed_counter_addr"]["ip"].as_string();
@@ -54,9 +54,9 @@ bool MockClient::init(const std::string& config_path) {
 
         cfg->set_attr("98agw_user", config["98agw_user"].as_string().c_str());
         cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string().c_str());
-        cfg->set_attr("heartbeat_interval", config["heartbeat_interval"].as_int());
-        cfg->set_attr("agw_user_login_timeout", config["agw_user_login_timeout"].as_int());
-        cfg->set_attr("log_level", config["log_level"].as_int());
+        cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int()));
+        cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int()));
+        cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int()));
         cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
 
         // 创建回调
@@ -79,6 +79,10 @@ bool MockClient::init(const std::string& config_path) {
         ret = api_->start();
         if (ret != 0) {
             std::cerr << "[MockClient] api->start() 失败: " << ret << std::endl;
+            delete callback_;
+            callback_ = nullptr;
+            lb_api::api_interface::release_instance(api_);
+            api_ = nullptr;
             return false;
         }
         std::cout << "[MockClient] API 启动成功" << std::endl;

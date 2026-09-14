@@ -2,6 +2,7 @@
 #include <iostream>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -130,7 +131,17 @@ void Counter98Server::stop() {
     delete cleanup_thread_;
     cleanup_thread_ = nullptr;
 
-    // 关闭所有会话
+    // 先关闭所有客户端 fd，让阻塞的 recv() 返回错误，线程退出
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        for (size_t i = 0; i < sessions_.size(); i++) {
+            sessions_[i]->close();
+        }
+    }
+    // 等待客户端线程退出
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // 清理所有会话
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         for (size_t i = 0; i < sessions_.size(); i++) {
@@ -160,6 +171,10 @@ void Counter98Server::accept_loop() {
         std::cout << "[Server] 新连接: " << client_ip << ":" << ntohs(client_addr.sin_port)
                   << ", fd=" << client_fd << std::endl;
 
+        // 设置 TCP_NODELAY，及时发送响应
+        int opt = 1;
+        setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
         // 创建会话
         ClientSession* session = new ClientSession(client_fd, &acct_mgr_);
         {
@@ -173,15 +188,17 @@ void Counter98Server::accept_loop() {
             while (this->running_) {
                 ssize_t n = recv(session->fd(), buf, sizeof(buf), 0);
                 if (n <= 0) {
-                    // 连接关闭或错误
+                    // 连接关闭或错误：关闭 fd 并标记断开，由 cleanup_loop 清理
                     std::cout << "[Server] 客户端断开: fd=" << session->fd() << std::endl;
-                    this->remove_session(session->fd());
+                    session->close();
+                    session->mark_disconnected();
                     break;
                 }
-                int ret = session->handle_data(buf, (size_t)n);
+                int ret = session->feed_data(buf, (size_t)n);
                 if (ret < 0) {
                     std::cout << "[Server] 协议错误, 关闭会话: fd=" << session->fd() << std::endl;
-                    this->remove_session(session->fd());
+                    session->close();
+                    session->mark_disconnected();
                     break;
                 }
             }
@@ -195,24 +212,17 @@ void Counter98Server::cleanup_loop() {
 
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         for (size_t i = 0; i < sessions_.size(); ) {
-            if (sessions_[i]->is_timeout(config_.heartbeat_timeout)) {
-                std::cout << "[Server] 心跳超时, 关闭会话: fd=" << sessions_[i]->fd() << std::endl;
+            bool need_cleanup = sessions_[i]->is_disconnected() ||
+                                sessions_[i]->is_timeout(config_.heartbeat_timeout);
+            if (need_cleanup) {
+                std::cout << "[Server] 清理会话: fd=" << sessions_[i]->fd()
+                          << (sessions_[i]->is_disconnected() ? " (已断开)" : " (心跳超时)")
+                          << std::endl;
                 delete sessions_[i];
                 sessions_.erase(sessions_.begin() + i);
             } else {
                 i++;
             }
-        }
-    }
-}
-
-void Counter98Server::remove_session(int fd) {
-    std::lock_guard<std::mutex> lock(sessions_mutex_);
-    for (size_t i = 0; i < sessions_.size(); i++) {
-        if (sessions_[i]->fd() == fd) {
-            delete sessions_[i];
-            sessions_.erase(sessions_.begin() + i);
-            break;
         }
     }
 }
