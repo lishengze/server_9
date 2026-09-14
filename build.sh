@@ -38,6 +38,7 @@ BUILD_TYPE="Debug"
 JOBS=$(nproc)  # 默认使用所有 CPU 核心
 
 # 解析参数
+CMAKE_EXTRA_OPTS=""
 for arg in "$@"; do
     case "$arg" in
         Debug|Release|RelWithDebInfo|MinSizeRel)
@@ -56,9 +57,13 @@ for arg in "$@"; do
         -j*)
             JOBS="${arg#-j}"
             ;;
+        -D*)
+            # CMake 选项透传，如 -DBUILD_MOCK=ON
+            CMAKE_EXTRA_OPTS="${CMAKE_EXTRA_OPTS} ${arg}"
+            ;;
         *)
             echo "未知参数: $arg"
-            echo "用法: $0 [Debug|Release] [-jN] [clean|rebuild]"
+            echo "用法: $0 [Debug|Release] [-jN] [-D<cmake_option>=<value>] [clean|rebuild]"
             exit 1
             ;;
     esac
@@ -78,7 +83,8 @@ cd "${BUILD_DIR}"
 # 运行 cmake（清除 LD_LIBRARY_PATH 避免 VSCode 扩展的旧 libstdc++ 冲突）
 env -u LD_LIBRARY_PATH cmake "${PROJECT_DIR}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    ${CMAKE_EXTRA_OPTS}
 
 # 编译
 env -u LD_LIBRARY_PATH make -j"${JOBS}"

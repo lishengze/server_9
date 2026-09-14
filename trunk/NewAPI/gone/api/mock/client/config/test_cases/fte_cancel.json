@@ -1,0 +1,25 @@
+{
+  "test_case": {
+    "name": "FTE 撤单测试",
+    "description": "测试 FTE 柜台撤单功能，验证撤单成功（需先有委托）",
+    "counter_type": "fte",
+    "timeout_ms": 10000
+  },
+  "request": {
+    "type": "order_cancel",
+    "fields": {
+      "client_req_no": 3001,
+      "fund_account_id": "1000000000000001",
+      "branch_id": "0001",
+      "order_sys_no": 0,
+      "client_seq_id": 2001
+    }
+  },
+  "expected_response": {
+    "type": "cancel_rsp",
+    "fields": {
+      "err_code": 0
+    },
+    "validate": ["err_code"]
+  }
+}

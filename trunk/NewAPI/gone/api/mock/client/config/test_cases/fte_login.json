@@ -1,0 +1,30 @@
+{
+  "test_case": {
+    "name": "FTE 登录测试",
+    "description": "测试 FTE 柜台登录功能，验证登录成功后 err_code 为 0",
+    "counter_type": "fte",
+    "timeout_ms": 10000
+  },
+  "request": {
+    "type": "login",
+    "fields": {
+      "client_req_no": 1001,
+      "fund_account_id": "1000000000000001",
+      "branch_id": "0001",
+      "account_id": "A12345678901",
+      "cust_id": "C000000000000001",
+      "password": "test_password",
+      "order_way_ext": "01",
+      "user_info": "test_user",
+      "client_feature_code": ""
+    }
+  },
+  "expected_response": {
+    "type": "login",
+    "fields": {
+      "err_code": 0,
+      "market_type": 1
+    },
+    "validate": ["err_code", "market_type"]
+  }
+}

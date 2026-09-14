@@ -129,4 +129,12 @@ if (DEFINED BUILD_SUM_COUNT)
     set(BUILD_SUM_COUNT ${BUILD_SUM_COUNT} PARENT_SCOPE)
 endif()
 
+# ================= Mock 组件（可选编译） =================
+option(BUILD_MOCK "构建 Mock 测试组件" OFF)
+if(BUILD_MOCK)
+    message(STATUS "Mock 组件构建已启用")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/client mock_client_build)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/98_counter mock_98_counter_build)
+endif()
+
 message(STATUS "API 库构建完成：liblbapi.so（${SOURCE_COUNT} 个文件）")

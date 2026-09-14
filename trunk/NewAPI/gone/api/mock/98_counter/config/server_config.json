@@ -1,0 +1,40 @@
+{
+  "server": {
+    "listen_port": 9001,
+    "heartbeat_timeout": 30,
+    "log_file": "./counter98_mock.log",
+    "log_level": "info"
+  },
+  "agw_users": [
+    {
+      "user": "agw_user_01",
+      "password": "agw_pwd_01",
+      "description": "测试 AGW 用户 1"
+    },
+    {
+      "user": "agw_user_02",
+      "password": "agw_pwd_02",
+      "description": "测试 AGW 用户 2"
+    }
+  ],
+  "accounts": [
+    {
+      "fund_account_id": "1000000000000001",
+      "password": "test_password",
+      "cust_id": "C000000000000001",
+      "account_id": "A12345678901",
+      "branch_id": "0001",
+      "market_type": 1,
+      "description": "上海测试账户"
+    },
+    {
+      "fund_account_id": "2000000000000002",
+      "password": "test_password_2",
+      "cust_id": "C000000000000002",
+      "account_id": "A12345678902",
+      "branch_id": "0002",
+      "market_type": 2,
+      "description": "深圳测试账户"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "api_instance_name": "fte_test_client",
+  "market_type": 1,
+  "fast_counter_type": 1,
+  "speed_link_type": 1,
+  "speed_counter_addr": {
+    "ip": "127.0.0.1",
+    "port": 33001
+  },
+  "counter98_addr": {
+    "ip": "127.0.0.1",
+    "port": 9001
+  },
+  "98agw_user": "agw_user_01",
+  "98agw_user_password": "agw_pwd_01",
+  "heartbeat_interval": 5,
+  "agw_user_login_timeout": 10,
+  "log_level": 1,
+  "log_output_dir": "./api_log"
+}

@@ -716,7 +716,8 @@ void counter98::build_cust_login_event(const LoginReq &req, acc_login_event_info
 // 检查该用户是否需要登陆，若是构造登陆消息到o_buf;若否，发起极速柜台登陆事件，成功返回0
 int32 counter98::deal_cust_login(const acc_login_event_info &req, char *o_buf, int32 buf_len) {
   // todo : 依据正式协议和柜台规则重写
-  bool cust_need_login = false;
+  // 默认需要账户登录，后续可基于缓存优化（如已登录则跳过）
+  bool cust_need_login = true;
   if (cust_need_login) {
     return build_login_msg(req, o_buf, buf_len);
   } else {
@@ -747,7 +748,6 @@ int32 counter98::build_login_msg(const acc_login_event_info &info, char *o_buf, 
   body->heart_bt_int = static_cast<uint16>(heart_interval);
   body->order_way[0] = info.order_way_ext[0];
   body->order_way[1] = info.order_way_ext[1];
-  std::memcpy(body->session, info.session, sizeof(body->session));
 
   return static_cast<int32>(sizeof(c98_msg_head_tmp) + sizeof(c98_acc_login_req));
 }
