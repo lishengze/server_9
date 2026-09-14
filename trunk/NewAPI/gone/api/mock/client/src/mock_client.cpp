@@ -36,28 +36,41 @@ bool MockClient::init(const std::string& config_path) {
         }
 
         // 设置配置属性
-        cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
-        cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int()));
-        cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int()));
-        cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
+        int32_t ret_attr = 0;
+        ret_attr = cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(api_instance_name)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(market_type)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(fast_counter_type)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(speed_link_type)=" << ret_attr << std::endl;
 
         // 柜台地址
         std::string speed_ip = config["speed_counter_addr"]["ip"].as_string();
         int speed_port = config["speed_counter_addr"]["port"].as_int();
         std::string speed_addr = speed_ip + ":" + std::to_string(speed_port);
-        cfg->set_attr("speed_counter_addr", speed_addr.c_str());
+        ret_attr = cfg->set_attr("speed_counter_addr", speed_addr.c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(speed_counter_addr)=" << ret_attr << std::endl;
 
         std::string c98_ip = config["counter98_addr"]["ip"].as_string();
         int c98_port = config["counter98_addr"]["port"].as_int();
         std::string c98_addr = c98_ip + ":" + std::to_string(c98_port);
-        cfg->set_attr("counter98_addr", c98_addr.c_str());
+        ret_attr = cfg->set_attr("counter98_addr", c98_addr.c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(counter98_addr)=" << ret_attr << std::endl;
 
-        cfg->set_attr("98agw_user", config["98agw_user"].as_string().c_str());
-        cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string().c_str());
-        cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int()));
-        cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int()));
-        cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int()));
-        cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
+        ret_attr = cfg->set_attr("98agw_user", config["98agw_user"].as_string().c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(98agw_user)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string().c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(98agw_user_password)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(heartbeat_interval)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(agw_user_login_timeout)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int()));
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(log_level)=" << ret_attr << std::endl;
+        ret_attr = cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
+        if (ret_attr) std::cerr << "[DEBUG] set_attr(log_output_dir)=" << ret_attr << std::endl;
 
         // 创建回调
         callback_ = new CallbackHandler();

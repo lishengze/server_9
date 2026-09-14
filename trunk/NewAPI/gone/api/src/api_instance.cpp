@@ -44,7 +44,7 @@ int32 api_interface::create_instance(api_interface *&o_api, api_config &config, 
   // 1. 校验配置
   int32 ret = config.validate();
   if (ret != LBAPI_OK) {
-    return LBAPI_ERR_CFG_INVALID;
+    return ret;
   }
   // 2. 取出 api_config_impl
   api_config_impl *cfg = dynamic_cast<api_config_impl *>(&config);

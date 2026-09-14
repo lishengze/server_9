@@ -157,11 +157,34 @@ int32_t api_config_impl::set_attr(const char *attr_name, int64_t attr_val) {
 }
 
 int32_t api_config_impl::set_attr(const char *attr_name, const char *attr_val) {
+  if (!attr_val)
+    return LBAPI_ERR_INVALID_PARAM;
+
+  // 先检查是否是 addr_val 类型 (支持 "ip:port" 格式字符串设置)
+  if (check_attr_type(attr_name, attr_type::addr_val) == LBAPI_OK) {
+    // 解析 "ip:port" 格式
+    net_addr addr;
+    std::memset(&addr, 0, sizeof(addr));
+    const char *colon = std::strchr(attr_val, ':');
+    if (colon) {
+      int32_t ip_len = static_cast<int32_t>(colon - attr_val);
+      if (ip_len > 0 && ip_len < 64) {
+        std::strncpy(addr.ip, attr_val, ip_len);
+        addr.ip[ip_len] = '\0';
+      }
+      addr.port = static_cast<int32_t>(std::atoi(colon + 1));
+    } else {
+      // 没有冒号，尝试全当 ip
+      std::strncpy(addr.ip, attr_val, sizeof(addr.ip) - 1);
+    }
+    // 调试: 打印解析结果
+    fprintf(stderr, "[DEBUG] set_attr(addr) name=%s val=%s -> ip=%s port=%d\n", attr_name, attr_val, addr.ip, (int)addr.port);
+    return set_attr(attr_name, addr);
+  }
+
   int32_t ret = check_attr_type(attr_name, attr_type::string_val);
   if (ret != LBAPI_OK)
     return ret;
-  if (!attr_val)
-    return LBAPI_ERR_INVALID_PARAM;
 
   if (std::strcmp(attr_name, config_name::solarflare_iface) == 0) {
     std::memset(solarflare_iface_, 0, sizeof(solarflare_iface_));
@@ -396,6 +419,8 @@ int32_t api_config_impl::validate() const {
   }
 
   // 98柜台地址必须配置
+  fprintf(stderr, "[DEBUG] validate: c98_addr ip='%s' port=%d\n", counter98_addr_.ip, (int)counter98_addr_.port);
+  fprintf(stderr, "[DEBUG] validate: speed_addr ip='%s' port=%d\n", speed_counter_addr_.ip, (int)speed_counter_addr_.port);
   if (counter98_addr_.ip[0] == '\0' || counter98_addr_.port <= 0) {
     return LBAPI_ERR_LINK_ADDR;
   }

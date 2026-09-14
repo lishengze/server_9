@@ -478,7 +478,7 @@ void counter98::build_position_query_msg(const PositionQueryReq &req, char *o_bu
 }
 
 /// engine 调用，处理发送消息失败，如对于委托，构建委托rtn 回调通知客户
-void deal_send_error(char *msg_buf, int32 msg_len, int16 link_type, int32 err_ret) {
+void counter98::deal_send_error(char *msg_buf, int32 msg_len, int16 link_type, int32 err_ret) {
   // todo : 依据正式协议重写
 
   const c98_msg_head_tmp *head = reinterpret_cast<const c98_msg_head_tmp *>(msg_buf);
