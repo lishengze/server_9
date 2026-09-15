@@ -1,3 +1,9 @@
+// account_manager.cpp - AccountManager 账户管理器实现
+//
+// 职责：管理 98 柜台模拟服务端的 AGW 用户和资金账户配置。
+//   从 JSON 配置文件加载用户/账户列表，提供验证和查询接口。
+//   generate_session_id() 使用时间戳+自增计数器生成唯一会话 ID。
+
 #include "account_manager.h"
 #include <sstream>
 #include <ctime>
@@ -9,6 +15,10 @@ AccountManager::AccountManager()
 {
 }
 
+// load_config: 从 JSON 文件加载 AGW 用户和资金账户配置
+// 配置结构：
+//   { "agw_users": [{"user":"...", "password":"...", "description":"..."}],
+//     "accounts": [{"fund_account_id":"...", "password":"...", ...}] }
 bool AccountManager::load_config(const std::string& path) {
     try {
         mock::JsonValue root = mock::JsonParser::parse_file(path);
@@ -43,6 +53,7 @@ bool AccountManager::load_config(const std::string& path) {
     }
 }
 
+// verify_agw_user: 校验 AGW 用户（用户名 + 密码同时匹配）
 bool AccountManager::verify_agw_user(const std::string& user, const std::string& password) {
     for (size_t i = 0; i < agw_users_.size(); i++) {
         if (agw_users_[i].user == user && agw_users_[i].password == password) {
@@ -52,6 +63,7 @@ bool AccountManager::verify_agw_user(const std::string& user, const std::string&
     return false;
 }
 
+// verify_account: 校验资金账户（资金账号 + 密码同时匹配）
 bool AccountManager::verify_account(const std::string& fund_account_id, const std::string& password) {
     for (size_t i = 0; i < accounts_.size(); i++) {
         if (accounts_[i].fund_account_id == fund_account_id &&

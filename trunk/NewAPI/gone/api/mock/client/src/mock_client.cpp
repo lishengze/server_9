@@ -1,3 +1,14 @@
+// mock_client.cpp - MockClient 主类实现
+//
+// 职责：封装被测对象（liblbapi.so）的完整生命周期管理：
+//   1. load_api()   加载动态库（当前为直接链接，为未来 dlopen 扩展保留接口）
+//   2. init()       加载连接配置 → 创建 api_config → 设置属性 → 创建回调 → 创建 API 实例 → start()
+//   3. run_test()   运行单个测试用例（返回首个 TestResult）
+//   4. run_all_tests() 运行目录下全部测试用例
+//   5. shutdown()   停止 API 并释放 runner_ / callback_ 资源
+//
+// 被测链路：MockClient → api_interface → gw_counter_direct → FTE 柜台
+
 #include "mock_client.h"
 #include "api_interface.h"
 #include "api_config.h"
@@ -16,13 +27,24 @@ MockClient::~MockClient() {
     shutdown();
 }
 
+// load_api: 加载被测 API 动态库
+// 当前实现采用「直接链接」方式（编译时已链接 liblbapi.so），
+// 因此本方法仅做占位并打印信息，lib_path 参数保留给未来 dlopen 动态加载扩展。
 bool MockClient::load_api(const std::string& lib_path) {
-    // 直接链接 liblbapi.so，无需 dlopen
-    // lib_path 保留供未来动态加载扩展使用
     std::cout << "[MockClient] 使用直接链接方式加载 API" << std::endl;
     return true;
 }
 
+// init: 初始化测试环境
+// 完整流程：
+//   1. 解析连接配置 JSON（api_instance_name / market_type / 柜台地址 / 98agw 账号等）
+//   2. 通过 api_config::create_config() 创建配置对象
+//   3. 调用 set_attr() 逐项写入配置属性（柜台地址拼接为 "ip:port" 字符串）
+//   4. 创建 CallbackHandler 回调处理器
+//   5. 调用 api_interface::create_instance() 创建 API 实例
+//   6. 调用 api_->start() 启动 API（建立柜台链接）
+//   7. 创建 TestCaseRunner 测试执行器
+// 任一步失败都会释放已分配资源并返回 false。
 bool MockClient::init(const std::string& config_path) {
     try {
         // 加载 JSON 配置
@@ -110,6 +132,9 @@ bool MockClient::init(const std::string& config_path) {
     }
 }
 
+// run_test: 运行单个测试用例文件
+// 加载指定 JSON 测试用例 → execute_all() 执行 → 将全部结果计入报告。
+// 返回第一个 TestResult；加载/执行失败时返回带错误信息的 TestResult。
 TestResult MockClient::run_test(const std::string& testcase_path) {
     if (!runner_) {
         TestResult r;
@@ -142,6 +167,8 @@ TestResult MockClient::run_test(const std::string& testcase_path) {
     return results[0];
 }
 
+// run_all_tests: 运行指定目录下全部测试用例
+// 通过 load_test_dir() 扫描目录下所有 .json 文件并加载，逐个 execute_all() 执行。
 std::vector<TestResult> MockClient::run_all_tests(const std::string& test_dir) {
     if (!runner_) {
         std::cerr << "[MockClient] MockClient 未初始化" << std::endl;
@@ -163,6 +190,8 @@ std::vector<TestResult> MockClient::run_all_tests(const std::string& test_dir) {
     return results;
 }
 
+// shutdown: 关闭并释放全部资源
+// 逆序释放：先停止并释放 API 实例，再释放 runner_ 和 callback_。
 void MockClient::shutdown() {
     if (api_) {
         api_->stop();

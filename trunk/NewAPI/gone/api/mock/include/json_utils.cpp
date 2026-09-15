@@ -1,8 +1,24 @@
+// json_utils.cpp - 轻量级 JSON 解析/序列化工具实现
+//
+// 设计目标：零外部依赖，兼容 gcc 4.8.5，仅支持 mock_client 测试场景所需的
+//   JSON 子集（嵌套对象/数组、字符串、数字、布尔、null）。
+//
+// 解析器（JsonParserImpl）：递归下降解析器，逐字符扫描输入字符串。
+// 序列化器（write_json_value）：递归遍历 JsonValue 树，输出 JSON 文本。
+//
+// 已知限制：
+//   - 不支持浮点数科学计数法（如 1.5e10）
+//   - 不支持大整数（超出 int64_t 范围）
+//   - Unicode 转义（\\uXXXX）仅跳过保留原始文本，不实际解码
+
 #include "json_utils.h"
 
 namespace mock {
 
 // ==================== JsonValue 实现 ====================
+// JsonValue 是一个可存储 7 种 JSON 类型的变体类：
+//   Null / Bool / Int / Double / String / Array / Object
+// 类型转换方法（as_xxx）在类型不匹配时抛 std::runtime_error。
 
 bool JsonValue::as_bool() const {
     if (type_ == JsonType::Bool) return bool_val_;
@@ -93,6 +109,12 @@ void JsonValue::set(const std::string& key, const JsonValue& val) {
 }
 
 // ==================== JsonParser 实现 ====================
+// JsonParserImpl 是递归下降解析器的内部实现类：
+//   - pos_ 指向当前扫描位置
+//   - skip_whitespace() 跳过空白字符
+//   - parse() 依据首字符分发到 parse_object / parse_array / parse_string /
+//     parse_bool / parse_null / parse_number
+//   - expect(c) 断言下一个字符为 c，否则抛异常
 
 class JsonParserImpl {
 public:
@@ -145,6 +167,8 @@ private:
     }
 
     JsonValue parse_object() {
+        // 解析对象：{ "key": value, ... }
+        // 递归调用 parse() 解析每个 value
         JsonValue obj(JsonType::Object);
         expect('{');
         if (peek() == '}') { next(); return obj; }
@@ -161,6 +185,8 @@ private:
     }
 
     JsonValue parse_array() {
+        // 解析数组：[ value, ... ]
+        // 递归调用 parse() 解析每个元素
         JsonValue arr(JsonType::Array);
         expect('[');
         if (peek() == ']') { next(); return arr; }
@@ -173,6 +199,8 @@ private:
         return arr;
     }
 
+    // parse_string: 解析字符串 "..."，支持转义序列与 \\uXXXX（仅跳过保留原文）
+    // 注意：case 'u' 用 continue 而非 break，避免 off-by-one 多跳字符
     JsonValue parse_string() {
         expect('"');
         std::string result;
@@ -208,6 +236,8 @@ private:
         return JsonValue(result);
     }
 
+    // parse_number: 解析数字（整数或浮点数）
+    // 依据是否出现小数点/指数标记判定为 double 或 int64
     JsonValue parse_number() {
         size_t start = pos_;
         if (pos_ < input_.size() && input_[pos_] == '-') pos_++;
@@ -253,11 +283,14 @@ private:
     }
 };
 
+// 入口：从字符串解析 JSON，返回 JsonValue 根节点
 JsonValue JsonParser::parse(const std::string& json_str) {
     JsonParserImpl impl(json_str);
     return impl.parse();
 }
 
+// 入口：从文件读取内容并解析为 JSON
+// 文件无法打开时抛 std::runtime_error
 JsonValue JsonParser::parse_file(const std::string& file_path) {
     std::ifstream file(file_path.c_str());
     if (!file.is_open()) {
@@ -269,6 +302,13 @@ JsonValue JsonParser::parse_file(const std::string& file_path) {
 }
 
 // ==================== JsonWriter 实现 ====================
+// write_json_value 是递归序列化核心函数，按 JsonValue 类型分发到对应格式：
+//   - Null → "null"
+//   - Bool → "true"/"false"
+//   - Int/Double → to_string()
+//   - String → 转义特殊字符后加双引号
+//   - Array → [elem, ...]（pretty 模式下每行缩进）
+//   - Object → {"key": value, ...}（pretty 模式下每行缩进）
 
 static std::string write_json_value(const JsonValue& val, bool pretty, int indent) {
     std::string result;
@@ -344,6 +384,8 @@ static std::string write_json_value(const JsonValue& val, bool pretty, int inden
     return result;
 }
 
+// 入口：将 JsonValue 序列化为 JSON 字符串
+// pretty=true 时输出带缩进格式，否则输出紧凑格式
 std::string JsonWriter::write(const JsonValue& val, bool pretty) {
     return write_json_value(val, pretty, 0);
 }

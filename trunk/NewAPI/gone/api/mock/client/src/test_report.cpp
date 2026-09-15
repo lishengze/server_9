@@ -1,3 +1,9 @@
+// test_report.cpp - TestReport 测试报告实现
+//
+// 职责：收集测试结果（TestResult），提供控制台打印和文件保存功能。
+//   报告格式包含：总计/通过/失败统计、每个用例的 PASS/FAIL 状态、
+//   耗时和字段校验详情。
+
 #include "test_report.h"
 #include <iostream>
 #include <fstream>
@@ -9,6 +15,7 @@ TestReport::TestReport()
 {
 }
 
+// add_result: 添加单个测试结果，更新统计计数
 void TestReport::add_result(const TestResult& result) {
     results_.push_back(result);
     total_++;
@@ -16,6 +23,8 @@ void TestReport::add_result(const TestResult& result) {
     else failed_++;
 }
 
+// print: 打印汇总报告到控制台
+// 输出统计行，随后逐个用例打印 PASS/FAIL、耗时、失败原因和字段校验详情。
 void TestReport::print() const {
     std::cout << "\n========================================\n";
     std::cout << "          测试报告\n";
@@ -39,6 +48,8 @@ void TestReport::print() const {
     std::cout << "========================================\n";
 }
 
+// save: 将详细报告写入文件
+// 与 print() 内容一致，写入指定路径；打开失败时打印错误并返回 false。
 bool TestReport::save(const std::string& path) const {
     std::ofstream file(path.c_str());
     if (!file.is_open()) {

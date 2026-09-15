@@ -1,3 +1,8 @@
+// test_report.h - 测试报告类声明
+//
+// 职责：汇总测试结果（TestResult），支持控制台打印与文件保存。
+//   维护总计/通过/失败计数，供外部查询统计信息。
+
 #ifndef MOCK_CLIENT_TEST_REPORT_H
 #define MOCK_CLIENT_TEST_REPORT_H
 

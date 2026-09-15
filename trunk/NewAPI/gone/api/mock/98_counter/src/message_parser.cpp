@@ -1,19 +1,32 @@
+// message_parser.cpp - MessageParser 消息解析工具实现
+//
+// 职责：98 柜台 TCP 协议消息的组包与拆包。
+//   消息格式：[c98_msg_head_tmp 消息头 | 消息体]
+//   消息头包含 msg_id（消息类型）、msg_len（消息体长度）、seq_no（序号）。
+//   本工具类全部为静态方法，无状态，供 Counter98Server / ClientSession 复用。
+
 #include "message_parser.h"
 
 namespace mock_98 {
 
+// parse_header: 从数据缓冲区解析消息头
+// len 不足消息头大小时返回 false。
 bool MessageParser::parse_header(const char* data, size_t len, c98_msg_head_tmp& head) {
     if (len < sizeof(c98_msg_head_tmp)) return false;
     std::memcpy(&head, data, sizeof(c98_msg_head_tmp));
     return true;
 }
 
+// get_body: 返回消息体指针（位于消息头之后）
+// 数据长度不足以容纳完整消息时返回 nullptr。
 const char* MessageParser::get_body(const char* data, size_t len, const c98_msg_head_tmp& head) {
     size_t total = sizeof(c98_msg_head_tmp) + head.msg_len;
     if (len < total) return nullptr;
     return data + sizeof(c98_msg_head_tmp);
 }
 
+// build_header: 构建消息头到缓冲区
+// 返回写入的消息头字节数；缓冲区容量不足时返回 -1。
 int MessageParser::build_header(char* buf, size_t cap, uint32_t msg_id, uint32_t msg_len, int64_t seq_no) {
     if (cap < sizeof(c98_msg_head_tmp)) return -1;
     c98_msg_head_tmp head;

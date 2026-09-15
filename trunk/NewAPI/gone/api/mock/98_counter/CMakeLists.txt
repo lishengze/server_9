@@ -1,3 +1,13 @@
+# counter98_mock CMakeLists.txt
+#
+# 构建目标：counter98_mock（可执行文件，~1MB）
+# 功能：模拟 98 柜台服务端，支持 AGW 登录 / 账户登录 / 心跳
+# 依赖：pthread（无外部库）
+#
+# 编译方式：
+#   独立编译：mkdir build && cd build && cmake .. && make
+#   父模块编译：项目根目录 ./build.sh -DBUILD_MOCK=ON
+
 # 设置最小版本
 cmake_minimum_required(VERSION 2.8)
 
@@ -16,7 +26,7 @@ if(NOT BUILD_SUM_COUNT)
   endif()
 endif()
 
-# 源文件
+# 源文件：服务端核心 + JSON 工具
 file(GLOB MOCK_98_SRC
   src/main.cpp
   src/counter98_server.cpp

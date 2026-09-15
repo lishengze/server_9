@@ -1,3 +1,13 @@
+# mock_client CMakeLists.txt
+#
+# 构建目标：mock_client（可执行文件，~1MB）
+# 功能：加载 liblbapi.so，通过 JSON 配置化测试 FTE 协议完整链路
+# 依赖：liblbapi.so（被测对象）、pthread、dl
+#
+# 编译方式：
+#   独立编译：mkdir build && cd build && cmake .. && make
+#   父模块编译：项目根目录 ./build.sh -DBUILD_MOCK=ON
+
 # 设置最小版本
 cmake_minimum_required(VERSION 2.8)
 
@@ -16,7 +26,7 @@ if(NOT BUILD_SUM_COUNT)
   endif()
 endif()
 
-# 源文件
+# 源文件：mock_client 核心 + JSON 工具
 file(GLOB MOCK_CLIENT_SRC
   src/main.cpp
   src/mock_client.cpp
@@ -29,7 +39,7 @@ file(GLOB JSON_UTILS_SRC
   ../include/json_utils.cpp
 )
 
-# API 头文件路径
+# API 头文件路径（liblbapi.so 的接口定义）
 set(API_INCLUDE_DIR ../../include)
 set(API_SRC_DIR ../src)
 
