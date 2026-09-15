@@ -57,10 +57,9 @@
       "expected_response": {
         "type": "order_rtn",
         "fields": {
-          "order_status": 6,
-          "rtn_type": 4,
+          "order_status": 0,
+          "rtn_type": 1,
           "order_qty": 100,
-          "trade_qty": 100,
           "side": "1"
         },
         "validate": ["order_status", "rtn_type", "order_qty", "side"]
