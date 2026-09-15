@@ -15,6 +15,7 @@
 #include "cpu_affinity.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -80,6 +81,7 @@ private:
     perf::MetricStats stats_;   ///< 统计结果
     size_t sent_ = 0;           ///< 发送笔数
     size_t ok_ = 0;             ///< 成功笔数
+    std::map<int32_t, size_t> fail_codes_; ///< 失败返回码统计
     double actual_tps_ = 0.0;   ///< 实际 TPS
     double test_time_sec_ = 0.0;///< 实际测试时长（秒）
     std::string cpu_bind_desc_; ///< CPU 绑定描述

@@ -55,7 +55,7 @@ public:
 
   link_engine_outop *get_out_op() { return &link_outop_; }
 
-  tcpdirect_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr) {}
+  tcpdirect_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr), stopped_(0) {}
   ~tcpdirect_engine() override { stop(); }
 
   friend class eng_heart_ans_op;
@@ -82,6 +82,7 @@ private:
   lb_common::lb_log *log_;                                              ///< 日志指针
   link_timer_op<tcpdir_link<TFastCounter>, tcpdirect_engine> timer_op_; ///< 链接定时器 (由 link_timer_op 决策)
   eng_link_op link_outop_;
+  int32 stopped_;               ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api

@@ -56,7 +56,7 @@ public:
 
   link_engine_outop *get_out_op() { return &link_outop_; }
 
-  single_socket_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr) {}
+  single_socket_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr), stopped_(0) {}
   ~single_socket_engine() override { stop(); }
 
   single_socket_engine(const single_socket_engine &) = delete;
@@ -84,6 +84,7 @@ private:
   lb_common::mthread recv_th_;         ///< 链接接收线程 (epoll, aio_tcp 需要非空接收线程)
   link_timer_op<aio_socket_link<TFastCounter>, single_socket_engine> timer_op_; ///< 链接定时器 (由 link_timer_op 决策)
   eng_link_op link_outop_;
+  int32 stopped_;                ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api

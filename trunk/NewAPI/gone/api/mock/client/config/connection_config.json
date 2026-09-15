@@ -20,9 +20,9 @@
 
   "perf_test": {
     "enable": true,
-    "duration_sec": 5,
-    "tps": 200,
-    "warmup_sec": 2,
+    "duration_sec": 30,
+    "tps": 500,
+    "warmup_sec": 3,
     "cpu_id": -1,
     "report_file": "perf_report.txt",
     "order": {
@@ -31,8 +31,8 @@
       "password": "TEST000000001",
       "side": "1",
       "order_type": "2",
-      "security_id": "600000",
-      "order_price": 10000,
+      "security_id": "600007",
+      "order_price": 250200,
       "order_qty": 100,
       "stop_price": 0,
       "market_type": 1

@@ -527,6 +527,8 @@ int32 gw_counter_direct::deal_recv_msg(const char *buf, int32 len, int16 link_ty
     if (recv_cks != calc_cks) {
       lb_common::lb_log_hand tlh(log_);
       error_log(tlh) << "gw deal_recv_msg: checksum mismatch, msg_id=" << header.msg_id
+                     << ", msg_len=" << header.msg_len
+                     << ", whole_len=" << whole_msg_len
                      << ", recv_cks=" << recv_cks << ", calc_cks=" << calc_cks << end_log;
       deal_len += whole_msg_len;
       continue;

@@ -171,7 +171,7 @@ public:
       dlen = f_msg->deal_msg(this, tmsg);
       buf.cmt_deal(dlen);
       if (likely(dlen > 0)) {
-        // heart.on_msg();
+        heart.on_msg();
         if (dispatch_zero_copy == 0)
           buf.cmt_buf(tmsg.buf_addr, dlen);
       } else if (dlen < 0) {

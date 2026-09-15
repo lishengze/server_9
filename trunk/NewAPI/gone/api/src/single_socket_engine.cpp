@@ -122,6 +122,13 @@ template <class TFastCounter> int32 single_socket_engine<TFastCounter>::start() 
 }
 
 template <class TFastCounter> void single_socket_engine<TFastCounter>::stop() {
+  // 幂等保护：api_impl::stop() 会调用本方法，析构函数 ~single_socket_engine 也会调用，
+  // 若重复执行会在 log_ 已 close 后再次写日志导致崩溃。
+  if (stopped_) {
+    return;
+  }
+  stopped_ = 1;
+
   timer_op_.close();
   join();
   recv_th_.join();
@@ -194,8 +201,6 @@ template <class TFastCounter> void single_socket_engine<TFastCounter>::do_work()
     }
     send_queue_.read_cmt(evt_len);
   }
-
-  link_.deal_recv();
 }
 
 template <class TFastCounter>

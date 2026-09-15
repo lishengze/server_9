@@ -101,6 +101,7 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
     int64_t seq = 1;
     sent_ = 0;
     ok_ = 0;
+    fail_codes_.clear();
 
     auto next_send = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() < end_time) {
@@ -111,6 +112,8 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
         ++sent_;
         if (ret == 0) {
             ++ok_;
+        } else {
+            ++fail_codes_[ret];
         }
 
         // 计算 api 内耗时（纳秒）
@@ -203,8 +206,17 @@ std::string PerfRunner::report_text() const {
         << "CPU 绑定 : " << cpu_bind_desc_ << "\n"
         << "\n"
         << "------- API 内处理耗时（纳秒）-------\n"
-        << stats_.to_string()
-        << "============================================\n";
+        << stats_.to_string();
+
+    // 失败统计
+    if (!fail_codes_.empty()) {
+        oss << "------- 失败返回码统计 -------\n";
+        for (auto& kv : fail_codes_) {
+            oss << "  返回码 " << kv.first << " : " << kv.second << " 次\n";
+        }
+    }
+
+    oss << "============================================\n";
     return oss.str();
 }
 

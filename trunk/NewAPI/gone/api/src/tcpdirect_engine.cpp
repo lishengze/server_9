@@ -92,6 +92,13 @@ template <class TFastCounter> int32 tcpdirect_engine<TFastCounter>::start() {
 }
 
 template <class TFastCounter> void tcpdirect_engine<TFastCounter>::stop() {
+  // 幂等保护：api_impl::stop() 会调用本方法，析构函数 ~tcpdirect_engine 也会调用，
+  // 若重复执行会在 log_ 已 close 后再次写日志导致崩溃。
+  if (stopped_) {
+    return;
+  }
+  stopped_ = 1;
+
   timer_op_.close();
   join();
   send_queue_.close();
