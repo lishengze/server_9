@@ -1104,7 +1104,7 @@ LD_LIBRARY_PATH=/custom/path/lib \
 | 请求类型 | 必需字段 | 说明 |
 |----------|---------|------|
 | `login` | `fund_account_id`, `branch_id`, `account_id`, `cust_id`, `password` | 登录请求 |
-| `order_insert` | `fund_account_id`, `branch_id`, `side`, `security_id`, `order_price`, `order_qty`, `market_id` | 委托请求 |
+| `order_insert` | `fund_account_id`, `branch_id`, `side`, `security_id`, `order_price`, `order_qty`, `market_type` | 委托请求 |
 | `order_cancel` | `fund_account_id`, `branch_id`, `order_sys_no`, `client_seq_id` | 撤单请求（`order_sys_no` 支持 `$last_order_sys_no`） |
 | `wait_heartbeat` | 无 | 心跳等待 |
 
@@ -1156,7 +1156,7 @@ LD_LIBRARY_PATH=/custom/path/lib \
       "security_id": "600007",
       "order_price": 250200,
       "order_qty": 100,
-      "market_id": 1
+      "market_type": 1
     }
   },
   "expected_response": {
@@ -1311,7 +1311,7 @@ mock/
 | `account_id` | `account_id` | `"A12345678901"` |
 | `cust_id` | `cust_id` | `"C000000000000001"`（FTE 回报中可能用 fund_account_id） |
 | `security_id` | `security_id` | `"600007"` |
-| `market_id` | `market_id` | `1` (上海) |
+| `market_type` | `market_type` | `1` (上海) |
 | `side` | `side` | `'1'` (买入) `'2'` (卖出) |
 | `order_type` | `order_type` | `'2'` (限价) |
 | `order_qty` | `order_qty` | `100` |

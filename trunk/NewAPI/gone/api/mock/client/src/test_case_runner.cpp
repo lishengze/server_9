@@ -300,7 +300,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.order_qty = tc.request_fields["order_qty"].as_int();
                 req.stop_price = tc.request_fields["stop_price"].as_int();
                 req.client_seq_id = tc.request_fields["client_seq_id"].as_int();
-                req.market_id = tc.request_fields["market_id"].as_int();
+                req.market_type = tc.request_fields["market_type"].as_int();
 
                 int32_t ret = api_->order_insert(req);
                 std::cout << "[Runner] order_insert() 返回: " << ret << std::endl;

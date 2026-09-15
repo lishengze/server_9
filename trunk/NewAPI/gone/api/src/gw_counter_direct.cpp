@@ -254,7 +254,7 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
   cksum_net64(p, 0, sum);  // agw_seq_id
   // TradeOrderInfo
   cksum_copy_pad(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id), sum);
-  cksum_net16(p, map_api_market_id_to_fte(req.market_id), sum);
+  cksum_net16(p, map_api_market_id_to_fte(req.market_type), sum);
   cksum_put(p, static_cast<uint8_t>(req.side), sum);
   cksum_put(p, static_cast<uint8_t>(req.order_type), sum);
   cksum_net64(p, req.order_qty, sum);
@@ -289,7 +289,7 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
   cksum_net64(p, 0, sum);  // agw_seq_id
   // TradeOrderInfo
   cksum_copy_pad(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id), sum);
-  cksum_net16(p, map_api_market_id_to_fte(req.market_id), sum);
+  cksum_net16(p, map_api_market_id_to_fte(req.market_type), sum);
   cksum_put(p, static_cast<uint8_t>(req.side), sum);
   cksum_put(p, static_cast<uint8_t>(req.order_type), sum);
   cksum_net64(p, req.order_qty, sum);
