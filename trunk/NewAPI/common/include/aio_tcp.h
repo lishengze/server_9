@@ -13,6 +13,7 @@
  */
 
 #include "aio_recv_buf.h"
+#include <cstdio>
 #include "aio_recv_pool.h"
 #include "aio_recv_que.h"
 #include "comm_aio.h"
@@ -300,8 +301,11 @@ public:
     init_set(buf_attr, pcb_msg, pcb_ch, precvth);
 
     int32 ret = buf.build_buf(buf_attr);
-    if (ret < 0)
+    if (ret < 0) {
+      fprintf(stderr, "[DBG] aio_tcp::connect_ch build_buf ret=%d onerecvtimes=%d oncerecvlen=%d maxmsglen=%d bufsize=%d\n",
+              (int)ret, (int)buf_attr.onerecvtimes, (int)buf_attr.oncerecvlen, (int)buf_attr.maxmsglen, (int)buf_attr.buf_size);
       return ret;
+    }
 
     ret = ch.connect_ch(ch_attr, &op_base, asyn_connect, premote, plocal, precvth);
     if (ret < 0) {

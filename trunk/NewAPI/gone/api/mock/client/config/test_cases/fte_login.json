@@ -13,7 +13,7 @@
       "branch_id": "0001",
       "account_id": "A12345678901",
       "cust_id": "C000000000000001",
-      "password": "test_password",
+      "password": "TEST000000001",
       "order_way_ext": "01",
       "user_info": "test_user",
       "client_feature_code": ""

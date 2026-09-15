@@ -12,6 +12,7 @@
 #include "link_timer_op.h"
 #include "mlog.h"
 //#include "multi_socket_engine.h"
+#include "mthread.h"
 #include "que_mth_buf.h"
 #include "simple_thread.h"
 
@@ -80,6 +81,7 @@ private:
   aio_socket_link<TFastCounter> link_; ///< 极速交易链接
   TFastCounter *counter_;              ///< 极速柜台指针 (init 阶段注入)
   lb_common::lb_log *log_;             ///< 日志指针
+  lb_common::mthread recv_th_;         ///< 链接接收线程 (epoll, aio_tcp 需要非空接收线程)
   link_timer_op<aio_socket_link<TFastCounter>, single_socket_engine> timer_op_; ///< 链接定时器 (由 link_timer_op 决策)
   eng_link_op link_outop_;
 };

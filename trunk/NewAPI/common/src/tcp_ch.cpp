@@ -131,11 +131,17 @@ int32 tcp_ch::delive_ch_event(mthread &tpth, event_op *tpe_op, void *tpe_data, i
 
 int32 tcp_ch::connect_ch(channel_attr &tattr, tcp_ch_op *tpfunc, int32 isasynconnect, csock_addr *premote,
                          csock_addr *plocal, mthread *tpconnectth) {
-  if ((isasynconnect == 1 && NULL == tpconnectth) || NULL == premote || tattr.family != CHANNEL_FAMILY_IPV4)
+  if ((isasynconnect == 1 && NULL == tpconnectth) || NULL == premote || tattr.family != CHANNEL_FAMILY_IPV4) {
+    fprintf(stderr, "[DBG] tcp_ch::connect_ch ARGV: asyn=%d premote=%p family=%d CHANNEL_IPV4=%d ip=[%s] port=%d\n",
+            (int)isasynconnect, (void *)premote, (int)tattr.family, (int)CHANNEL_FAMILY_IPV4,
+            premote ? premote->ip : "NULL", premote ? (int)premote->port : 0);
     return LBERR_ARGV_WRONG;
+  }
 
-  if (!thctl.to_init())
+  if (!thctl.to_init()) {
+    fprintf(stderr, "[DBG] tcp_ch::connect_ch STATE_LIMIT\n");
     return LBERR_OBJ_STATE_LIMIT;
+  }
 
   pfunc = tpfunc;
   sysfd = -1;

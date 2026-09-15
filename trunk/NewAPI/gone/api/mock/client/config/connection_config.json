@@ -9,7 +9,7 @@
   },
   "counter98_addr": {
     "ip": "127.0.0.1",
-    "port": 9002
+    "port": 9001
   },
   "98agw_user": "agw_user_01",
   "98agw_user_password": "agw_pwd_01",

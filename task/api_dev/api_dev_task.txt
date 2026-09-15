@@ -125,5 +125,4 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
                         反复的 调试，请求的数据，fte 的上场数据，模拟交易所的上场数据
                         等等，将回报的数据和预期的数据进行比对，完成相关的测试。
 
-                6. 将开发测试过程中遇到的问题，解决的方案， 实际的结果 都记录下来。
-                    并记录到 mock/client/mock_client_test.md 中。
+                6. 将开发测试过程中遇到的问题，修改的代码，增删的数据，解决的方案， 实际的结果 等，详细的记录到 mock/client/mock_client_test.md 中。

@@ -164,6 +164,22 @@ int32_t gw_counter_direct::deal_cancel_req(const CancelReq &req) {
 // 消息构建 (FTE 协议)
 // ============================================================
 
+// 将 NewAPI 市场ID（1=上海, 2=深圳/北交所）映射为 FTE 市场ID（101=上海, 102=深圳, 109=北京）
+static uint16_t map_api_market_id_to_fte(uint16_t api_market_id) {
+  switch (api_market_id) {
+    case 1:  return 101;  // SH → kShangHai
+    case 2:  return 102;  // SZ → kShenZhen
+    default: return api_market_id;
+  }
+}
+
+// 将定长 char 数组按 strnlen 截断后尾部补空格（与 FTE fund_data 的空格填充约定一致）
+template <size_t N>
+static void space_pad(std::array<char, N>& arr) {
+  size_t len = strnlen(arr.data(), N);
+  for (size_t i = len; i < N; ++i) arr[i] = ' ';
+}
+
 // build_order_msg: 构造 FTE 委托消息 (PktNewHeader + TradeOrderReq + 校验和)
 void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
   // 获取会话缓存（补充 account_id / cust_id）
@@ -184,12 +200,18 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
     memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
     memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
   }
+  // FTE fund_data 用空格填充，订单定长字段必须空格填充，否则 kIDMismatch
+  space_pad(body.fund_account_id);
+  space_pad(body.branch_id);
+  space_pad(body.account_id);
+  space_pad(body.cust_id);
   body.client_seq_id = req.client_seq_id;
   body.agw_seq_id = 0;
 
   // TradeOrderInfo 字段
   memcpy(body.security_id.data(), req.security_id.data(), sizeof(body.security_id));
-  body.market_id = req.market_id;  // 直接映射
+  space_pad(body.security_id);  // 空格填充，与 FTE 证券数据一致
+  body.market_id = map_api_market_id_to_fte(req.market_id);
   body.side = req.side;
   body.order_type = req.order_type;
   body.order_qty = req.order_qty;
@@ -202,7 +224,7 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
   off += sizeof(gw_message::TradeOrderReq);
   // 校验和
   uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
-  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  uint32_t be_cks = gw_message::detail::ByteSwap32(calc_cks);
   memcpy(o_buf + off, &be_cks, 4);
 }
 
@@ -225,11 +247,17 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
     memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
     memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
   }
+  // FTE fund_data 用空格填充，订单定长字段必须空格填充，否则 kIDMismatch
+  space_pad(body.fund_account_id);
+  space_pad(body.branch_id);
+  space_pad(body.account_id);
+  space_pad(body.cust_id);
   body.client_seq_id = req.client_seq_id;
   body.agw_seq_id = 0;
 
   memcpy(body.security_id.data(), req.security_id.data(), sizeof(body.security_id));
-  body.market_id = req.market_id;
+  space_pad(body.security_id);  // 空格填充，与 FTE 证券数据一致
+  body.market_id = map_api_market_id_to_fte(req.market_id);
   body.side = req.side;
   body.order_type = req.order_type;
   body.order_qty = req.order_qty;
@@ -240,7 +268,7 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
   body.encode(o_buf + off, sizeof(gw_message::TradeOrderReq));
   off += sizeof(gw_message::TradeOrderReq);
   uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
-  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  uint32_t be_cks = gw_message::detail::ByteSwap32(calc_cks);
   memcpy(o_buf + off, &be_cks, 4);
 }
 
@@ -262,6 +290,11 @@ void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
     memcpy(body.account_id.data(), session->account_id.data(), sizeof(body.account_id));
     memcpy(body.cust_id.data(), session->cust_id.data(), sizeof(body.cust_id));
   }
+  // 空格填充，与 FTE fund_data 约定一致
+  space_pad(body.fund_account_id);
+  space_pad(body.branch_id);
+  space_pad(body.account_id);
+  space_pad(body.cust_id);
   body.client_seq_id = req.client_req_no;
   body.agw_seq_id = 0;
 
@@ -273,7 +306,7 @@ void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
   body.encode(o_buf + off, sizeof(gw_message::CancelOrderReq));
   off += sizeof(gw_message::CancelOrderReq);
   uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
-  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  uint32_t be_cks = gw_message::detail::ByteSwap32(calc_cks);
   memcpy(o_buf + off, &be_cks, 4);
 }
 
@@ -290,8 +323,17 @@ void gw_counter_direct::build_login_msg(const acc_login_event_info &info, char *
   body.reset();
 
   // TradeOrderUser 字段
-  memcpy(body.fund_account_id.data(), info.fund_account_id, sizeof(body.fund_account_id));
-  memcpy(body.branch_id.data(), info.branch_id, sizeof(body.branch_id));
+  // FTE 协议用空格填充（CopyToArray），确保定长字段匹配
+  body.fund_account_id.fill(' ');
+  size_t fa_len = strnlen(info.fund_account_id, sizeof(body.fund_account_id));
+  if (fa_len > sizeof(body.fund_account_id)) fa_len = sizeof(body.fund_account_id);
+  memcpy(body.fund_account_id.data(), info.fund_account_id, fa_len);
+
+  body.branch_id.fill(' ');
+  size_t br_len = strnlen(info.branch_id, sizeof(body.branch_id));
+  if (br_len > sizeof(body.branch_id)) br_len = sizeof(body.branch_id);
+  memcpy(body.branch_id.data(), info.branch_id, br_len);
+
   memcpy(body.account_id.data(), info.account_id, sizeof(body.account_id));
   memcpy(body.cust_id.data(), info.cust_id, sizeof(body.cust_id));  // 可留空，由 FTE 回填
   body.client_seq_id = info.cust_req_no;
@@ -317,7 +359,7 @@ void gw_counter_direct::build_login_msg(const acc_login_event_info &info, char *
   off += sizeof(gw_message::LogOnReq);
   // 校验和
   uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
-  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  uint32_t be_cks = gw_message::detail::ByteSwap32(calc_cks);
   memcpy(o_buf + off, &be_cks, 4);
 }
 
@@ -461,7 +503,7 @@ int32 gw_counter_direct::deal_recv_msg(const char *buf, int32 len, int16 link_ty
     memcpy(&recv_cks, buf + deal_len + sizeof(gw_message::PktNewHeader) + header.msg_len, 4);
     uint32_t calc_cks = GenerateSzCheckSum(buf + deal_len,
         static_cast<uint32_t>(sizeof(gw_message::PktNewHeader) + header.msg_len));
-    recv_cks = gw_message::detail::HostToNetwork(recv_cks);
+    recv_cks = gw_message::detail::ByteSwap32(recv_cks);
     if (recv_cks != calc_cks) {
       lb_common::lb_log_hand tlh(log_);
       error_log(tlh) << "gw deal_recv_msg: checksum mismatch, msg_id=" << header.msg_id
@@ -855,7 +897,7 @@ int32 gw_counter_direct::build_heart_msg(char *o_buf, int32 buf_len) {
   size_t off = header.encode(o_buf, static_cast<size_t>(buf_len));
   // 校验和：对 [头] 求和 %256
   uint32_t calc_cks = GenerateSzCheckSum(o_buf, static_cast<uint32_t>(off));
-  uint32_t be_cks = gw_message::detail::HostToNetwork(calc_cks);
+  uint32_t be_cks = gw_message::detail::ByteSwap32(calc_cks);
   memcpy(o_buf + off, &be_cks, 4);
 
   return msg_len;

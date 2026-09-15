@@ -87,6 +87,14 @@ int32 single_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFast
     error_log(tlh) << "init single socket engine thread error,cpuid=" << tcpuid << ",ret=" << ret << end_log;
     return LBAPI_ERR_THREAD_INIT;
   }
+
+  // 初始化链接接收线程 (aio_tcp 连接必须传入非空 mthread 接收线程)
+  ret = recv_th_.init_th(0, 16, 0, 0, 100);
+  if (ret < 0) {
+    error_log(tlh) << "init single socket engine recv thread error,ret=" << ret << end_log;
+    return LBAPI_ERR_THREAD_INIT;
+  }
+
   info_log(tlh) << "init single socket engine ok,cpuid=" << tcpuid << ",timer_interval=" << heart_interval
                 << ",que_size=" << tq_size << ",once_recv_len=" << once_recv_len << end_log;
   return 0;
@@ -101,6 +109,14 @@ template <class TFastCounter> int32 single_socket_engine<TFastCounter>::start() 
     error_log(tlh) << "start single socket engine thread error,ret=" << ret << end_log;
     return LBAPI_ERR_THRAD_START;
   }
+
+  // 启动链接接收线程 (epoll 循环, 供 aio_tcp connect/recv 使用)
+  ret = recv_th_.run();
+  if (ret < 0) {
+    error_log(tlh) << "start single socket engine recv thread error,ret=" << ret << end_log;
+    return LBAPI_ERR_THRAD_START;
+  }
+
   info_log(tlh) << "start single socket engine ok" << end_log;
   return 0;
 }
@@ -108,6 +124,7 @@ template <class TFastCounter> int32 single_socket_engine<TFastCounter>::start() 
 template <class TFastCounter> void single_socket_engine<TFastCounter>::stop() {
   timer_op_.close();
   join();
+  recv_th_.join();
   send_queue_.close();
   link_.close_ch();
 
@@ -197,7 +214,7 @@ void single_socket_engine<TFastCounter>::deal_cust_login(const acc_login_event_i
   int32 ret = 0;
   if (link_.is_free()) {
     // 个微柜台直连核心，不支持切换
-    ret = link_.connect(recv_poll_num_, 0, NULL);
+    ret = link_.connect(recv_poll_num_, 0, &recv_th_);
     if (ret < 0) {
       error_log(tlh) << "fast socket link connect to login error,branch_id=" << pmlog.branch_id
                      << ",fund_account=" << pmlog.fund_account_id << ",session=" << pmlog.session
@@ -241,7 +258,7 @@ void single_socket_engine<TFastCounter>::deal_fpga_core_connect(const fpga_core_
   std::memcpy(taddr.ip, pmlog.trade_ip, sizeof(taddr.ip));
   link_.set_remote(taddr);
 
-  int32 ret = link_.connect(recv_poll_num_, 0, NULL);
+  int32 ret = link_.connect(recv_poll_num_, 0, &recv_th_);
   if (ret == 0) {
     info_log(tlh) << "cust login to connect fast counter ok,trade_ip=" << pmlog.trade_ip
                   << ",trade_port=" << pmlog.trade_port << end_log;

@@ -161,9 +161,15 @@ inline uint64_t ByteSwap64(uint64_t v)
 
 // 主机序 -> 大端（网络序）。大端平台保持不变，小端平台做字节反转。
 // ByteSwap 为自反操作，故 大端->主机序 复用同一函数。
-inline uint16_t HostToNetwork(uint16_t v) { return IsLittleEndian() ? ByteSwap16(v) : v; }
-inline uint32_t HostToNetwork(uint32_t v) { return IsLittleEndian() ? ByteSwap32(v) : v; }
-inline uint64_t HostToNetwork(uint64_t v) { return IsLittleEndian() ? ByteSwap64(v) : v; }
+//
+// 注意：FTE 服务器（ute 二进制）在 x86 上编译时未定义 FTE_BIG_ENDIAN，
+// 其 message::* 的 decode/encode 通过 FTE_MEMCOPY / FTE_CODEC_SWITCH 宏
+// 直接按主机字节序（小端）原始 memcpy，不做任何字节序转换。
+// 因此 API 端也必须按主机字节序（小端）发送/解析，这里统一改为直通(no-op)，
+// 否则数值字段（client_seq_id/order_qty/market_id 等）会因字节交换而错位。
+inline uint16_t HostToNetwork(uint16_t v) { return v; }
+inline uint32_t HostToNetwork(uint32_t v) { return v; }
+inline uint64_t HostToNetwork(uint64_t v) { return v; }
 
 // 按类型宽度选择字节序转换（int16/int32/int64 与对应无符号类型位模式一致）
 template <typename T>
@@ -221,9 +227,11 @@ public:
     size_t encode(char* dest, size_t cap) const
     {
         if (cap < sizeof(PktNewHeader)) return 0;
+        // FTE 服务器 PktNewHeader::decode 用 DECODE_BINARY -> set_host_value -> NetworkToHost(be32toh)，
+        // 即消息头按大端(网络序)解析，故这里必须显式字节交换，不能依赖 no-op 的 HostToNetwork。
         size_t off = 0;
-        uint32_t be = detail::HostToNetwork(msg_id);  memcpy(dest + off, &be, 4); off += 4;
-        be = detail::HostToNetwork(msg_len);          memcpy(dest + off, &be, 4); off += 4;
+        uint32_t be = detail::ByteSwap32(msg_id);  memcpy(dest + off, &be, 4); off += 4;
+        be = detail::ByteSwap32(msg_len);          memcpy(dest + off, &be, 4); off += 4;
         return off;
     }
 
@@ -240,10 +248,11 @@ public:
     bool decode(const char* data, size_t len)
     {
         if (len < sizeof(PktNewHeader)) return false;
+        // FTE 服务器按大端(网络序)发送/解析消息头，故这里必须显式字节交换。
         size_t off = 0;
         uint32_t be;
-        memcpy(&be, data + off, 4); msg_id = detail::HostToNetwork(be); off += 4;
-        memcpy(&be, data + off, 4); msg_len = detail::HostToNetwork(be); off += 4;
+        memcpy(&be, data + off, 4); msg_id = detail::ByteSwap32(be); off += 4;
+        memcpy(&be, data + off, 4); msg_len = detail::ByteSwap32(be); off += 4;
         return true;
     }
 };

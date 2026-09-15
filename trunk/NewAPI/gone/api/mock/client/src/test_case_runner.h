@@ -64,6 +64,9 @@ public:
     /// 加载单个测试用例 JSON 文件
     bool load_test_case(const std::string& path);
 
+    /// 从 JSON 节点解析单个测试用例
+    bool load_single_case(const JsonValue& root);
+
     /// 加载目录下所有测试用例 JSON 文件
     int load_test_dir(const std::string& dir);
 

@@ -707,6 +707,8 @@ void counter98::build_cust_login_event(const LoginReq &req, acc_login_event_info
               std::min<size_t>(sizeof(o_info.fund_account_id), req.fund_account_id.size()));
   std::memcpy(o_info.account_id, req.account_id.data(),
               std::min<size_t>(sizeof(o_info.account_id), req.account_id.size()));
+  // branch_id 定长 10 字节，FTE 端 CopyToArray 用空格填充；此处同样用空格填充以便 key 匹配
+  std::memset(o_info.branch_id, ' ', sizeof(o_info.branch_id));
   std::memcpy(o_info.branch_id, req.branch_id.data(),
               std::min<size_t>(sizeof(o_info.branch_id), req.branch_id.size()));
 
@@ -865,8 +867,13 @@ void counter98::build_fast_counter_login_event(const c98_acc_login_ans &msg, acc
               std::min<size_t>(sizeof(o_info.fund_account_id), sizeof(msg.fund_account_id)));
   std::memcpy(o_info.account_id, msg.account_id,
               std::min<size_t>(sizeof(o_info.account_id), sizeof(msg.account_id)));
+  // branch_id 定长 10 字节，FTE 端 CopyToArray 用空格填充；此处同样用空格填充以便 key 匹配
+  std::memset(o_info.branch_id, ' ', sizeof(o_info.branch_id));
   std::memcpy(o_info.branch_id, msg.branch_id,
               std::min<size_t>(sizeof(o_info.branch_id), sizeof(msg.branch_id)));
+  // 拷贝密码，用于后续 FTE 登录验证
+  std::memcpy(o_info.password, msg.password,
+              std::min<size_t>(sizeof(o_info.password), sizeof(msg.password)));
 
   o_info.order_way_ext[0] = msg.order_way_ext[0];
   o_info.order_way_ext[1] = msg.order_way_ext[1];

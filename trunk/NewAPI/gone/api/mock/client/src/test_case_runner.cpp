@@ -27,6 +27,25 @@ TestCaseType TestCaseRunner::parse_type(const std::string& type_str) {
 bool TestCaseRunner::load_test_case(const std::string& path) {
     try {
         JsonValue root = JsonParser::parse_file(path);
+
+        // 支持 test_cases 数组（多个用例顺序执行）
+        JsonValue arr = root["test_cases"];
+        if (arr.is_array() && arr.size() > 0) {
+            for (size_t i = 0; i < arr.size(); i++) {
+                if (!load_single_case(arr[i])) return false;
+            }
+            return true;
+        }
+        // 兼容单个 test_case
+        return load_single_case(root);
+    } catch (const std::exception& e) {
+        std::cerr << "[Loader] 加载失败: " << path << " - " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool TestCaseRunner::load_single_case(const JsonValue& root) {
+    try {
         JsonValue tc = root["test_case"];
 
         TestCase test_case;
@@ -61,7 +80,7 @@ bool TestCaseRunner::load_test_case(const std::string& path) {
                   << " (type=" << req["type"].as_string() << ")" << std::endl;
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[Loader] 加载失败: " << path << " - " << e.what() << std::endl;
+        std::cerr << "[Loader] 加载失败: " << e.what() << std::endl;
         return false;
     }
 }

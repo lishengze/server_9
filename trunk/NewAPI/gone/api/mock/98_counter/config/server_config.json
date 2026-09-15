@@ -20,7 +20,7 @@
   "accounts": [
     {
       "fund_account_id": "1000000000000001",
-      "password": "test_password",
+      "password": "TEST000000001",
       "cust_id": "C000000000000001",
       "account_id": "A12345678901",
       "branch_id": "0001",
