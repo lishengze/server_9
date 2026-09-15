@@ -126,6 +126,26 @@ LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
   - `order_qty: 100`、`side: "1"`（去掉 `trade_qty` 校验，委托回报 trade_qty=0）
 - **结果**：测试用例通过。
 
+### 问题 11：成交回报（msg_id=2005）无法到达客户端 ★核心
+- **现象**：委托/撤单测试通过，但客户端始终收不到成交回报（2005）。客户端日志只收到 `2001`（登录）、`2003`（委托回报）、`2003`（委托确认），随后链接断开（`err_type=1, err_code=-39` = `LBERR_CH_LINK_BROKEN`，即对端关闭连接）。
+- **链路定位**：
+  - FTE 日志确认 2005 已生成并写入 endpoint：`SendReportTradeOrderER fund_idx=0 endpoint=0x... msg_type=2005`，且 `SendTradeOrderER exec_type[F] ord_status[2] cum_qty[100]`（全部成交）。
+  - 但紧接着 FTE 日志出现：`Heartbeat timeout, Endpoint [127.0.0.1:35232]` → `DoLogOut` → `Sesssion will be closed` → `Passive close` → `write 737 | Socket is closed`。
+  - 即 **FTE 在发送 2005 后约 8~10ms 因"心跳超时"主动关闭了连接**，2005 数据未及被客户端读取。
+- **根因**（FTE 心跳周期单位错误）：
+  - 客户端登录消息 `heart_bt_int=5`（意图 5 **秒**）。
+  - FTE `uplink_biz_processor.cpp:207`（tcp_direct 分支）`output = logon_req.heart_bt_int;` 把 5（秒）直接赋给 `heart_period_`（默认 5000ms）。
+  - `tcp_endpoint.h:749` `detect_timer_.expires_from_now(LocalMilliseconds_def(hb_hd_->get_period_milli() * 2))` 按**毫秒**解释 → 超时 = 5*2 = **10ms**（而非 10 秒）。
+  - 客户端心跳间隔 5 秒，远大于 10ms，FTE 在收到首个心跳前即判定超时并关闭连接。
+- **解决**（FTE 代码修复，1 行）：
+  - `uplink_biz_processor.cpp:207`：`output = logon_req.heart_bt_int;` → `output = logon_req.heart_bt_int * 1000;`（秒 → 毫秒）
+  - 同时清理此前遗留的编译错误调试日志（`SendTradeOrderER SEND` 引用了不存在的 `trade_order_er->exec_type/ord_status`，应访问 `order_er_info.exec_type`，直接删除）。
+  - 重新编译 `./compile_fte.sh`，`stop_all.sh` + `start_all.sh` 重启 FTE。
+- **结果**：
+  - FTE 日志 `get_period_milli` 由 `5` 变为 `5000`，`Heartbeat timeout` 不再出现。
+  - 客户端日志新增 `msg_id=2005`，且 `on_trade_rtn: exec_price=250200, exec_qty=100, exec_id=1` 回调触发。
+  - 成交回报完整链路打通：**登录 → 委托 → 委托回报 → 委托确认 → 成交回报（2005）→ 撤单**。
+
 ---
 
 ## 三、最终测试结果（2026-09-15）
@@ -138,15 +158,26 @@ LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
 [PASS] FTE 撤单测试        err_code=0
 ```
 
-### 3.2 FTE 日志确认完整成交链路（委托 → 确认 → 成交）
+### 3.2 客户端日志确认收到全部回报（含 2005 成交回报）★修复后
+```
+gw deal_recv_msg: msg_id=2001 msg_len=78   登录应答
+gw deal_recv_msg: msg_id=2003 msg_len=324  委托回报
+gw deal_recv_msg: msg_id=2003 msg_len=324  委托确认
+gw deal_recv_msg: msg_id=2005 msg_len=324  成交回报  ← 修复后新增
+[Callback] on_trade_rtn: exec_price=250200, exec_qty=100, exec_id=1
+```
+修复前客户端在收到 2003 后就因 FTE 心跳超时断开（`err_code=-39`），2005 从未到达；修复后 2005 正常到达并触发 `on_trade_rtn`。
+
+### 3.3 FTE 日志确认完整成交链路（委托 → 确认 → 成交）
 ```
 DealTradeOrderReqBusi: internal_order offer_way[1] gw_index[0]  (无 offerWay 错误)
 SendTradeOrderER:  exec_type[1] ord_status[10]  委托回报
 DealConfirm:       PktSHOrderConfirm exec_type[0] ord_status[0]  委托确认
 DealReport:        PktSHOrderReport  exec_type[F] ord_status[2]  last_px[250200] last_qty[100] leaves_qty[0]  成交回报
 SendTradeOrderER:  exec_type[F] ord_status[2] cum_qty[100] last_qty[100] last_px[250200]  全部成交
+get_period_milli [5000]  (修复后心跳周期为 5000ms，无 Heartbeat timeout)
 ```
-委托全流程：**登录 → 委托 → 交易所确认 → 成交回报（全部成交）→ 撤单** 全部打通。
+委托全流程：**登录 → 委托 → 交易所确认 → 成交回报（全部成交）→ 撤单** 全部打通，且客户端能收到 2005 成交回报。
 
 ---
 
@@ -161,6 +192,7 @@ SendTradeOrderER:  exec_type[F] ord_status[2] cum_qty[100] last_qty[100] last_px
 | `DYS-FRAMEWORK/fte/test_all/tgw_simulator/data/simulator_tgw.xml` | `<pbu_id>21085</pbu_id>` |
 | `DYS-FRAMEWORK/fte/test_all/etf_test_sh/account_ute_61.bin` | trade_pbu/offer_pbu 空格填充（备份 .bak_pbu） |
 | `trunk/NewAPI/gone/api/mock/client/config/test_cases/fte_combo.json` | 委托用例预期值修正 |
+| `DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp` | `heart_bt_int * 1000`（秒→毫秒）；删除遗留调试日志 |
 
 ---
 
@@ -171,4 +203,5 @@ SendTradeOrderER:  exec_type[F] ord_status[2] cum_qty[100] last_qty[100] last_px
 3. **FTE 登录密码在 XML**，不在 cash_fund.bin。
 4. **FTE 启动强校验**：cash_fund 与 account_ute 数量必须一致。
 5. **FTE 配置与模拟交易所配置分离**：连接 pbu 在 FTE `ute.xml`（`pbu_id_list`），模拟交易所下发的 pbu_array 在 `simulator_tgw.xml`，两者需一致。
-6. 测试用例预期值应先核对 NewAPI 状态/回报类型映射，避免猜测。
+6. **FTE 心跳周期单位陷阱**：登录消息 `heart_bt_int` 语义为秒，但 FTE 的 `detect_timer`/`send_timer` 按毫秒解释（`LocalMilliseconds_def(period*2)`）。若客户端发送 5（秒），FTE 会按 5ms 处理 → 10ms 心跳超时 → 主动断链，导致后续回报（如 2005 成交回报）丢失。对接方需保证 `heart_period` 为毫秒值。
+7. 测试用例预期值应先核对 NewAPI 状态/回报类型映射，避免猜测。

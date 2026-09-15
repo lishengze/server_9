@@ -1,36 +1,69 @@
 {
-  "test_case": {
-    "name": "FTE 委托买入测试",
-    "description": "测试 FTE 柜台委托买入功能，验证委托回报的 ord_status 和 order_qty",
-    "counter_type": "fte",
-    "timeout_ms": 10000
-  },
-  "request": {
-    "type": "order_insert",
-    "fields": {
-      "fund_account_id": "1000000000000001",
-      "branch_id": "0001",
-      "side": "1",
-      "order_type": "2",
-      "policy_id": 0,
-      "tgw_id": 0,
-      "security_id": "60000001",
-      "order_price": 100000,
-      "order_qty": 100,
-      "stop_price": 0,
-      "client_seq_id": 2001,
-      "market_id": 1
-    }
-  },
-  "expected_response": {
-    "type": "order_rtn",
-    "fields": {
-      "order_status": 6,
-      "rtn_type": 4,
-      "order_qty": 100,
-      "trade_qty": 100,
-      "side": "1"
+  "test_cases": [
+    {
+      "test_case": {
+        "name": "FTE 登录测试",
+        "description": "测试 FTE 柜台登录功能",
+        "counter_type": "fte",
+        "timeout_ms": 10000
+      },
+      "request": {
+        "type": "login",
+        "fields": {
+          "client_req_no": 1001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "account_id": "A12345678901",
+          "cust_id": "C000000000000001",
+          "password": "TEST000000001",
+          "order_way_ext": "01",
+          "user_info": "test_user",
+          "client_feature_code": ""
+        }
+      },
+      "expected_response": {
+        "type": "login",
+        "fields": {
+          "err_code": 0,
+          "market_type": 1
+        },
+        "validate": ["err_code", "market_type"]
+      }
     },
-    "validate": ["order_status", "rtn_type", "order_qty", "side"]
-  }
+    {
+      "test_case": {
+        "name": "FTE 委托买入测试",
+        "description": "测试 FTE 柜台委托买入功能",
+        "counter_type": "fte",
+        "timeout_ms": 10000
+      },
+      "request": {
+        "type": "order_insert",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
+          "policy_id": 0,
+          "tgw_id": 0,
+          "security_id": "600007",
+          "order_price": 250200,
+          "order_qty": 100,
+          "stop_price": 0,
+          "client_seq_id": 2001,
+          "market_id": 1
+        }
+      },
+      "expected_response": {
+        "type": "order_rtn",
+        "fields": {
+          "order_status": 0,
+          "rtn_type": 1,
+          "order_qty": 100,
+          "side": "1"
+        },
+        "validate": ["order_status", "rtn_type", "order_qty", "side"]
+      }
+    }
+  ]
 }

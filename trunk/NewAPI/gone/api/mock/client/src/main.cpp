@@ -1,6 +1,8 @@
 #include "mock_client.h"
 #include <iostream>
 #include <cstring>
+#include <thread>
+#include <chrono>
 
 /// 打印帮助信息
 void print_usage(const char* prog) {
@@ -87,6 +89,9 @@ int main(int argc, char* argv[]) {
     // 保存报告
     client.report().save(report_path);
     std::cout << "测试报告已保存到: " << report_path << std::endl;
+
+    // 等待异步回报（如成交回报）到达后处理，再关闭
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 
     // 关闭
     client.shutdown();

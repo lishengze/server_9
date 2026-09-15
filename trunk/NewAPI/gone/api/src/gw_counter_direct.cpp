@@ -514,6 +514,16 @@ int32 gw_counter_direct::deal_recv_msg(const char *buf, int32 len, int16 link_ty
 
     // 4. 按 msg_id 分发
     const char *body = buf + deal_len + sizeof(gw_message::PktNewHeader);
+    {
+      lb_common::lb_log_hand tlh(log_);
+      uint32_t raw_id = 0;
+      memcpy(&raw_id, buf + deal_len, 4);
+      char hexbuf[16];
+      snprintf(hexbuf, sizeof(hexbuf), "0x%08x", (unsigned)raw_id);
+      info_log(tlh) << "gw deal_recv_msg: msg_id=" << header.msg_id
+                    << " raw=" << hexbuf
+                    << " msg_len=" << header.msg_len << end_log;
+    }
     switch (header.msg_id) {
     case gw_message::kPktLoginAns:
       deal_log_ans(body, static_cast<int32>(header.msg_len));
@@ -623,7 +633,16 @@ void gw_counter_direct::deal_trade_rtn(const char *body, int32 body_len) {
 
   gw_message::TradeOrderER er;
   er.reset();
-  if (!er.decode(body, static_cast<size_t>(body_len))) return;
+  {
+    lb_common::lb_log_hand tlh(log_);
+    info_log(tlh) << "gw deal_trade_rtn: enter, body_len=" << body_len
+                  << ", sizeof(TradeOrderER)=" << (int)sizeof(gw_message::TradeOrderER) << end_log;
+  }
+  if (!er.decode(body, static_cast<size_t>(body_len))) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "gw deal_trade_rtn: decode failed, body_len=" << body_len << end_log;
+    return;
+  }
 
   // 记录 order_id → {clordno, client_seq_id} 映射
   std::string fa_id(er.fund_account_id.data(), strnlen(er.fund_account_id.data(), 16));
