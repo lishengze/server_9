@@ -136,3 +136,6 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
                 现在给它补充完善的代码说明和使用说明 到 trunk/NewAPI/gone/api/mock/client/mock_client_design.md 中。
 
             7.7 给此次新增的 mock_client, 98_counter_mock,和 api中修改的，增加的代码，都增加详细的注释，增加其可度读性。
+
+            7.8 分析当前 gw_counter 模块整个处理流程中的性能瓶颈，分析从请求到api,再到发送给 柜台，哪些操作耗时较多，然后给出优化方案。
+                将其补充到 trunk/NewAPI/gone/api/mock/client/mock_client_design.md 中。

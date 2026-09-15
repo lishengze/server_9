@@ -26,6 +26,9 @@
 11. **FTE 编译部署测试**：docker 容器 otc、test_all/ 脚本、模拟交易所 3 实例、完整流程
 12. **API 编译系统**：build.sh 自动转发到 docker otc 编译，CMakeLists 兼容 gcc 4.8.5（check_cxx_compiler_flag 跳过 -mprefer-vector-width）
 13. **代码复查**：发现并修复 sizeof(.data()) 缺陷和 stream_seq=0 问题，12 项关键点核对无误
+14. **Mock 组件** ✅：mock_client（JSON 配置化测试 FTE 全链路）、98_counter_mock（模拟 98 柜台服务端）、json_utils（轻量 JSON 工具）；编译 `./build.sh -DBUILD_MOCK=ON`
+15. **FTE 联调关键发现**：登录密码来源（XML 非 bin）、pbu 空格填充（offerWay invalid 根因）、心跳周期单位（秒 vs 毫秒，2005 丢失根因）、委托/撤单/登录链路打通、逐字段回报校验机制
+16. **gw_counter 性能分析**：瓶颈排序（GwSessionCache 全局锁 > 日志 > 消息构建重复遍历 > 校验和），P0 方案（会话缓存到实例 + 日志降噪）
 
 ## 三、分析框架
 
@@ -119,6 +122,14 @@
 | **FTE TCP 分析** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md` |
 | **FTE API 示例** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/api_demo/` |
 | **FTE 部署测试** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/test_all/` |
+| **mock_client 源码** | `trunk/NewAPI/gone/api/mock/client/src/`（main/mock_client/test_case_runner/callback_handler/test_report） |
+| **mock_client 设计文档** | `trunk/NewAPI/gone/api/mock/client/mock_client_design.md` |
+| **mock_client 测试记录** | `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` |
+| **mock_client 用例** | `trunk/NewAPI/gone/api/mock/client/config/test_cases/*.json` |
+| **98_counter_mock 源码** | `trunk/NewAPI/gone/api/mock/98_counter/src/`（counter98_server/client_session/account_manager/message_parser） |
+| **98_counter_mock 设计文档** | `trunk/NewAPI/gone/api/mock/98_counter/98_counter_mock_design.md` |
+| **JSON 工具** | `trunk/NewAPI/gone/api/mock/include/json_utils.h/.cpp` |
+| **bin 文件工具** | `trunk/NewAPI/gone/api/mock/98_counter/bin_tool.py`（update 字段） |
 
 ## 五、常见问答模板
 
@@ -151,10 +162,12 @@
 ### Q4: 当前哪些是 todo？
 ```
 gw 柜台：✅ 已完成（FTE TCP Binary 协议全部实现，编译通过）
+Mock 组件：✅ 已完成（mock_client + 98_counter_mock + json_utils，FTE 联调 4/4 通过）
 counter98：所有 build_*_msg 留空，查询应答未接入分发，deal_send_error 留空
 框架：断线重登/login_state 重置被注释、登录异常重试未实现、缓存结构未定义
 非加速消息接口：struct_req.h/struct_ans.h 待完善
 CMakeLists 优化：支持独立编译+父模块编译（参考 grc_trunk）
+gw_counter 性能优化：会话缓存到实例 + 日志降噪（P0），见知识库 §25
 ```
 
 ### Q5: gw_counter 如何向 FTE 发送委托？
@@ -197,6 +210,50 @@ docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEW
 # 停止: stop_all.sh  清理: clear_all.sh
 ```
 
+### Q9: 如何编译运行 mock_client？
+```
+# 编译（宿主机自动转发到 docker otc）
+./build.sh -DBUILD_MOCK=ON
+# 运行（产物 build_cmake/bin/mock_client）
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/client/config/connection_config.json \
+  --lib build_cmake/lib/liblbapi.so --testcase mock/client/config/test_cases/fte_combo.json
+# 目录模式：--testdir <目录> 运行全部用例；--report <路径> 保存报告
+```
+
+### Q10: mock_client 测试用例 JSON 怎么写？
+```
+{
+  "name": "委托测试",
+  "type": "order",   // login/order/cancel/trade_rtn/heartbeat
+  "request": { "fund_account_id":"...", "security_id":"...", "side":1, "order_type":2,
+               "order_qty":100, "order_price":250200, "order_sys_no":"$last_order_sys_no" },
+  "expected_response": {
+    "type": "order_rtn",
+    "fields": { "fund_account_id":"...", "security_id":"...", "order_qty":100, "exec_type":null }
+  }
+}
+# fields 中 null=动态字段跳过，非 null=精确比对；撤单 order_sys_no 用 $last_order_sys_no 引用上笔委托
+```
+
+### Q11: FTE 联调遇到委托被拒 / 收不到成交回报怎么排查？
+```
+1. 委托被拒（offerWay invalid）→ 检查 pbu 空格填充：account_ute bin 的 trade_pbu/offer_pbu 必须是空格填充(如 "21085 ")，
+   与 FTE ute.xml 的 pbu_id、simulator_tgw.xml 的 pbu_array 三方一致（PBUID_def=std::array<char,6> 统一空格填充）
+2. 收不到成交回报(2005)且链接断（err_code=-39）→ 心跳周期单位错误：FTE 将 heart_bt_int(秒) 直接赋给按毫秒解释的 heart_period_，
+   需在 uplink_biz_processor.cpp 乘 1000（秒→毫秒）
+3. FTE 登录失败（err_code=67108864=kPasswdErr）→ 密码来源是 XML ext_mod_user_info_ute_<partition>.xml 的 <Password>，
+   不是 cash_fund.bin
+```
+
+### Q12: gw_counter 性能瓶颈在哪？如何优化？
+```
+瓶颈排序：GwSessionCache 全局锁 > 日志输出 > 消息构建重复遍历 > 校验和逐字节循环
+P0 优化：
+  A. 会话信息缓存到 counter 实例成员变量（个微单连接），消除 get_session() 的全局锁+哈希+string 构造
+  E. 高频日志降级 debug，生产关闭
+详见知识库 §25 / mock_client_design.md §14
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -207,11 +264,11 @@ docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./DYS-FRAMEW
 
 ## 七、边界与限制
 
-1. **知识边界**：本知识库基于 `study/` 下的分析文档（counter.md / question.md / 技术实现.md / 数据流转.md / 产品使用.md）、`task/api_dev/` 设计文档、FTE 知识库及代码分析整理。
+1. **知识边界**：本知识库基于 `study/` 下的分析文档（counter.md / question.md / 技术实现.md / 数据流转.md / 产品使用.md）、`task/api_dev/` 设计文档、`mock/` 组件设计文档、FTE 知识库及代码分析整理。
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
-4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-14。
+4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-15。知识库 v2.1 新增 Mock 组件、FTE 联调发现、性能分析章节。
 
 ---
 

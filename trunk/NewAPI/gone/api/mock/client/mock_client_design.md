@@ -22,6 +22,7 @@
 11. [项目文件结构](#11-项目文件结构)
 12. [FTE 柜台测试用例清单](#12-fte-柜台测试用例清单)
 13. [未来扩展](#13-未来扩展)
+14. [gw_counter 模块性能分析与优化](#14-gwcounter-模块性能分析与优化)
 
 ---
 
@@ -1345,9 +1346,106 @@ mock/
 
 ---
 
-> **文档版本**：v2.0
+## 14. gw_counter 模块性能分析与优化
+
+> **分析对象**：`gw_counter_direct`（个微软件极速柜台直连模式）
+> **分析范围**：从「API 接口层发起请求」→「gw_counter 组包」→「入队」→「引擎线程发送给柜台」的完整发送路径，以及回报接收路径。
+> **分析基准**：单笔委托报文约 118 字节（PktNewHeader 8B + TradeOrderReq 106B + 校验和 4B）。
+
+### 14.1 完整处理流程拆解
+
+```
+api_interface / api_impl<TF,TE>          （API 接口层）
+   │  调用 deal_order_req(req)
+   ▼
+gw_counter_direct::deal_order_req()      （业务发送函数）
+   ├─ ① 检查 trade_link_connect_ / login_state          [状态判断]
+   ├─ ② take_req_que_mem() → que_mth_buf::write_get_mth [队列取内存，多写加锁]
+   ├─ ③ build_order_msg(req, o_buf)                     [组包]
+   │     ├─ 3.1 GwSessionCache::get_session()           [会话查找：mutex + 哈希 + string]
+   │     ├─ 3.2 构造 PktNewHeader + TradeOrderReq body  [栈上对象 + 多次 memcpy]
+   │     ├─ 3.3 space_pad() × 5                         [补空格，5 次数组遍历]
+   │     ├─ 3.4 header.encode()                         [2 次 ByteSwap32 + memcpy]
+   │     ├─ 3.5 body.encode()                           [逐字段 memcpy + 5 次字节序转换]
+   │     ├─ 3.6 GenerateSzCheckSum()                    [逐字节求和 %256，O(n)]
+   │     └─ 3.7 ByteSwap32 + memcpy 校验和
+   └─ ④ cmt_req_que_mem() → write_cmt_mth()             [队列提交]
+   ▼
+engine（引擎线程）→ link → TCP send()                  [发送给柜台]
+```
+
+### 14.2 性能瓶颈定位与耗时分析
+
+按「单笔委托」估算相对开销（绝对值随硬件与并发度波动，重点看**相对占比**与**放大因子**）：
+
+| 环节 | 位置 | 开销特征 | 相对占比 | 高并发放大 |
+|------|------|---------|---------|-----------|
+| **会话查找** | `GwSessionCache::get_session()` | 全局 `std::mutex` 加锁 + `unordered_map` 哈希 + `std::string` 构造（`fa_key`） | 中 | **高**（全局锁竞争） |
+| **校验和** | `GenerateSzCheckSum()` | 对 [头+体] 逐字节 `sum += buf[i]`，O(n) 循环 | 中 | 中（线性，随消息变长） |
+| **消息构建** | `build_order_msg` 的 memcpy + space_pad | 先逐字段 `memcpy`，再 `space_pad` 遍历补空格（同一数组遍历两次） | 中 | 中 |
+| **序列化** | `body.encode()` | 逐字段 `HostToNetwork` 字节序转换 + 多次小 `memcpy` | 低-中 | 低 |
+| **中间拷贝** | 栈上 `body` → `encode` 到 o_buf | 存在一次「构造到局部再序列化拷贝」 | 低 | 低 |
+| **队列操作** | `write_get_mth` / `write_cmt_mth` | 多写队列加锁 + 内存申请 | 中 | 中 |
+| **日志输出** | `info_log` / `snprintf`（尤其 `deal_recv_msg`） | 每条消息打日志，含 hexbuf 构造 | 低-中 | **高**（I/O 放大） |
+| **非原子状态** | `++session_seq_` / `login_state` / `trade_link_connect_` | 普通成员变量，多线程访问有数据竞争 | 低 | 取决于线程模型 |
+
+**结论（瓶颈排序）**：
+1. **GwSessionCache 全局互斥锁** —— 单连接场景下本可避免，却每次请求都做锁 + 哈希查找，是首要瓶颈。
+2. **日志输出** —— 每笔委托/回报都打日志，生产高吞吐下 I/O 开销显著放大。
+3. **消息构建的重复遍历与多次小拷贝** —— 单笔开销不大，但高吞吐下累计明显。
+4. **校验和逐字节循环** —— 线性开销，消息较大（如 ETF 含成分券）时更突出。
+
+### 14.3 优化方案
+
+#### 方案 A（推荐）：会话信息缓存到 counter 实例，消除全局锁
+- **现状**：`build_order_msg` 每次调用 `GwSessionCache::instance().get_session()`，做全局 mutex 锁 + `unordered_map` 哈希 + `std::string` 构造。
+- **优化**：个微柜台是**单 TCP 链接**，一个 `gw_counter_direct` 实例同时只服务一个会话。在 `deal_cust_login` 登录成功时，把 `account_id` / `cust_id` 等静态会话字段直接缓存到 counter 的成员变量（如 `session_account_id_` / `session_cust_id_`）。
+- **效果**：委托/撤单路径零锁、零哈希、零 string 构造，直接读成员变量。
+- **注意**：需在 `deal_link_close` 时清空缓存，保证断线重登后数据正确。
+
+#### 方案 B：合并 memcpy 与空格填充，减少遍历
+- **现状**：先 `memcpy` 数据，再 `space_pad()` 遍历同一数组补空格。
+- **优化**：实现 `copy_and_pad(dest, src, n)`，一次循环完成「拷贝 + 尾部补空格」，将同一数组的两次遍历合并为一次。
+
+#### 方案 C：校验和计算与序列化合并
+- **现状**：`body.encode()` 写完后再单独 `GenerateSzCheckSum()` 遍历一遍。
+- **优化**：在 `encode` 过程中边写边累加字节和，序列化完成即得到校验和，消除第二次遍历。
+- **进阶**：对消息中固定不变的部分（fund_account_id / branch_id / account_id / cust_id）预先编码并缓存，仅对变化字段（client_seq_id / order_qty / order_price）重算，可显著降低高频委托的重复计算。
+
+#### 方案 D：直接构建到队列内存，减少中间拷贝
+- **现状**：栈上构造 `TradeOrderReq body`，再 `body.encode()` 拷贝到 o_buf。
+- **优化**：参考 `fpga_counter_direct` 的做法，直接在 `take_req_que_mem` 返回的队列内存里构建 `link_send_event + 消息`，省去局部对象与序列化之间的中间拷贝。
+- **权衡**：FTE 结构体需做字节序转换，直接构建需保证字段按网络序写入，实现复杂度略增。
+
+#### 方案 E：日志分级与降噪
+- **现状**：`deal_recv_msg` 每条消息都构造 `hexbuf` + `snprintf` 打 `info_log`。
+- **优化**：将高频日志（每笔委托/回报/心跳）降级为 debug 级别，生产配置 `log_level` 关闭；仅保留错误与关键状态日志。
+
+#### 方案 F：原子化状态变量
+- **现状**：`++session_seq_`、`login_state`、`trade_link_connect_` 为普通成员变量。
+- **优化**：若存在多线程访问，改用 `std::atomic` 或 `__atomic_*` 内建，消除数据竞争。
+
+### 14.4 优先级与收益评估
+
+| 优先级 | 方案 | 预期收益 | 实现成本 | 风险 |
+|--------|------|---------|---------|------|
+| P0 | A（会话缓存到实例） | 消除全局锁竞争，收益最大 | 低 | 需处理断线清缓存 |
+| P0 | E（日志降噪） | 高吞吐下 I/O 显著下降 | 低 | 需保留错误日志 |
+| P1 | B（合并拷贝+填空） | 减少数组重复遍历 | 低 | 低 |
+| P1 | C（校验和合并） | 减少一次 O(n) 遍历 | 中 | 中 |
+| P2 | D（直接构建到队列） | 减少中间拷贝 | 中 | 中 |
+| P2 | F（原子化状态） | 消除数据竞争 | 低 | 低 |
+
+### 14.5 后续验证建议
+- 在 mock_client 中增加「性能测试」用例类型，记录单笔委托从 `deal_order_req` 到发送的耗时（可借助 `std::chrono::steady_clock`）。
+- 用 `perf` / `gprof` 对 `build_order_msg`、`GenerateSzCheckSum`、`GwSessionCache::get_session` 采样，验证优化前后热点占比变化。
+
+---
+
+> **文档版本**：v2.1
 > **作者**：AI 研发平台
 > **更新日期**：2026-09-15
 > **主要更新**：
+> - v2.1: 新增 §14 gw_counter 模块性能分析与优化（全流程拆解、瓶颈定位、6 项优化方案与优先级）
 > - v2.0: 新增 TradeRtn 异步等待、逐字段校验机制、`$last_order_sys_no` 动态引用、特定响应等待、完整代码说明和使用说明
 > - v1.0: 初始版本

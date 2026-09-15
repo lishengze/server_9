@@ -3,8 +3,9 @@
 > 本知识库系统化整理了 `trunk/NewAPI` 交易 API 客户端框架的架构、设计、数据流与待办任务。
 > 面向后续接入/维护/开发人员，以及需要理解该框架的大模型。
 >
-> **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`
+> **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
+> **版本**：v2.1（2026-09-15，新增 §23~25 Mock 组件 / FTE 联调发现 / 性能分析）
 
 ---
 
@@ -30,6 +31,11 @@
 18. [FTE 协议详解（gw_counter 对接目标）](#18-fte-协议详解gw_counter-对接目标)
 19. [gw_counter 模块设计（gw_counter_api.md）](#19-gw_counter-模块设计gw_counter_apimd)
 20. [FTE 编译部署测试环境](#20-fte-编译部署测试环境)
+21. [编译系统与 docker 环境](#21-编译系统与-docker-环境)
+22. [代码复查与缺陷修复记录](#22-代码复查与缺陷修复记录)
+23. [Mock 组件（mock_client / 98_counter_mock / json_utils）](#23-mock-组件mock_client--98_counter_mock--json_utils)
+24. [FTE 联调关键发现（Task 7.4~7.6）](#24-fte-联调关键发现task-74-76)
+25. [gw_counter 性能分析与优化（Task 7.8）](#25-gw_counter-性能分析与优化task-78)
 
 ---
 
@@ -897,3 +903,134 @@ set(CMAKE_CXX_FLAGS "... ${PREFER_VECTOR_FLAG} ...")
 | deal_etf_trade_rtn 成分券展开 | 第 8.2 节 | 只解析固定部分，映射为 OrderRtn | 符合"成分券暂不展开" |
 | deal_link_connect 触发重新登录 | 第 12.2 节 | 由 multi_engine 驱动 | 框架级职责 |
 | deal_send_error 重置 login_state | 第 12.2 节 | 不重置 | 链接断开已由 deal_link_close 重置，单条发送失败不应误杀会话 |
+
+---
+
+## 23. Mock 组件（mock_client / 98_counter_mock / json_utils）
+
+> **来源**：`mock/client/mock_client_design.md`（v2.1）、`mock/98_counter/98_counter_mock_design.md`
+> **代码路径**：`trunk/NewAPI/gone/api/mock/`
+
+### 23.1 组件总览
+
+| 组件 | 类型 | 功能 | 编译目标 |
+|------|------|------|---------|
+| `mock_client` | 客户端测试工具 | 加载 `liblbapi.so`，JSON 配置化测试 FTE 协议全链路 | `mock_client`（可执行，~1MB） |
+| `98_counter_mock` | 服务端模拟 | 模拟 98 柜台，支持 AGW 登录/账户登录/心跳 | `counter98_mock`（可执行，~1MB） |
+| `json_utils` | 工具库 | 轻量级 JSON 解析/序列化，零外部依赖，兼容 gcc 4.8.5 | 静态编译进两个目标 |
+
+**编译方式**：`./build.sh -DBUILD_MOCK=ON`（父模块透传 CMake 选项）。
+
+### 23.2 mock_client 架构与流程
+
+```
+JSON Config → TestCaseRunner → API Loader(链接 liblbapi.so) → CallbackHandler
+                                  ↓ 发送请求
+                             gw_counter_direct → FTE 柜台
+                                  ↕ 回报
+                             CallbackHandler 记录 → 字段校验
+```
+
+- **直接链接**（非 dlopen）`liblbapi.so`。
+- **逐字段校验**：`extract_response_fields()` 提取回报结构体全部字段到 `map<string,string>`；`trim_fixed()` 裁剪定长 char 数组的 `\0`/空格；`match_field()` 字符串比对。
+- **异步等待**：成交回报(2005)用 `has_trade_rtn()` 轮询等待（超时 5s）；撤单用 `has_cancel_rsp()` 特定等待，避免被中间委托回报(2003)干扰。
+- **动态引用**：撤单请求 `order_sys_no` 支持 `"$last_order_sys_no"`，自动引用上一笔委托的 order_sys_no。
+- **支持的回报类型**：LoginAns(2001)、OrderRtn(2003)、TradeRtn(2005)、CancelRsp(2004)、WaitHeartbeat。
+- **JSON 预期格式**：`expected_response.fields` 中 `null`=动态字段跳过，非 `null`=精确比对。
+
+### 23.3 98_counter_mock 架构
+
+```
+TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一线程)
+                    ↕                        → account_manager（用户/账户校验）
+             message_parser（组包/拆包）
+```
+
+- **线程模型**：`accept_loop` 主线程 + 每连接 `client_session` 线程 + `cleanup_loop` 清理线程。
+- **关键修复**：cleanup_loop 删除 session 用 `disconnected_` 标记避免 use-after-free；`running_` 用 `std::atomic`；TCP 粘包/拆包用 `feed_data` + 接收缓冲区循环处理；新 socket 设 `TCP_NODELAY`。
+
+### 23.4 测试结果
+
+- mock_client 4/4 通过（登录 6 字段、委托 17 字段、成交回报 17 字段、撤单 7 字段）。
+- 测试记录文档：`mock/client/mock_client_test.md`。
+
+---
+
+## 24. FTE 联调关键发现（Task 7.4~7.6）
+
+> 以下为 mock_client 与 FTE 真实联调中验证的关键结论，含多个易踩坑点。
+
+### 24.1 FTE 登录密码来源（重要）
+
+- FTE 登录密码从 XML `ext_mod_user_info_ute_<partition>.xml` 的 `<Password>` 字段加载（`ftedata_init.cpp LoadLoginInfo`），**不是** `cash_fund.bin`！改 bin 密码无效。
+- `passwd_map_` 的 key 为 `GeneralFundAssetKey(fund_account_id, branch_id)`，branch_id 数组带 `\0` 填充（如 `0001\0\0\0\0\0\0`）。
+
+### 24.2 FTE 启动校验与数据加载
+
+- `fund_info_manager.cpp Init` 要求 `cash_fund_map_.size() == account_data_map_.size()`，否则 `SetDataLoadErr(2)` → 启动失败。插入 cash_fund 必须同步插 account_ute。
+- 编译产物安装到 `${CMAKE_ATP_RES_ROOT}/fte`（=/mnt/work/gt_test/work_atp/cmake/fte），覆盖 0 字节文件。
+- `env.sh` 中 `UTE_BIN` 原指向 0 字节文件，需改为有效二进制；`libutedatainit.so` 0 字节需复制有效版本。
+- `bin_tool.py update <file> --field <定位字段> --eq <匹配值> --set <field=value> [--show]` 支持 bin 文件字段更新。
+
+### 24.3 offerWay invalid 根因（pbu 空格填充）
+
+- **根因**：account_ute bin 的 offer_pbu 是空字节填充 `"21085\0"`，而 FTE 配置 ute.xml 的 pbu_id 经 CopyToArray 是**空格填充** `"21085 "`，byte[5]（' ' vs '\0'）不同导致 `pbu_id_set_.find()` 失败，`group_index_array_[kSHOes]` 保持 -1。
+- **修复**：改 `account_ute_61.bin` 的 trade_pbu/offer_pbu 为空格填充（备份 .bak_pbu）；`simulator_tgw.xml` 的 `<pbu_id>` 空→21085。
+- **关键约束**：`PBUID_def = std::array<char,6>`，FTE 内部统一空格填充；上游 bin 若空字节填充会致精确比较失败。
+- **一致性要求**：连接 pbu 在 FTE ute.xml（pbu_id_list），模拟交易所 pbu_array 在 simulator_tgw.xml，两者必须一致。
+
+### 24.4 心跳周期单位修复（2005 丢失根因）
+
+- **现象**：客户端收不到成交回报(2005)，只收到 2001/2003/2003，随后链接断（err_type=1, err_code=-39=LBERR_CH_LINK_BROKEN）。
+- **根因**：FTE 心跳周期单位错误。客户端发 `heart_bt_int=5`（秒），FTE `uplink_biz_processor.cpp:207` 直接赋给 `heart_period_`，而 `tcp_endpoint.h:749` detect_timer 按**毫秒**解释 `LocalMilliseconds_def(period*2)` → 10ms 心跳超时，FTE 主动断链，2005 丢失。
+- **修复**（1 行）：`uplink_biz_processor.cpp:207` `output = logon_req.heart_bt_int * 1000;`（秒→毫秒）。
+- **注意**：FTE 心跳 `heart_bt_int` 语义为秒但 timer 按毫秒，对接方须保证 heart_period 为毫秒值。
+
+### 24.5 委托/撤单/登录链路打通
+
+- 委托到达交易所并成交（exec_type[F] ord_status[2] cum_qty=100）。
+- 状态映射：`map_ord_status(2)→ORDER_STATE_DONE_PART(3)`，(3)→DONE_FULL(4)；`map_exec_type('F')→RSP_TYPE_ORDER_TRADE(3)`，('0')→COUNTER_RSP(1)。
+
+### 24.6 逐字段回报校验机制（Task 7.5）
+
+- **JSON 格式**：`expected_response.fields` 对象包含回报结构体全部字段；`null`=动态字段跳过，非 `null`=精确比对。
+- **字段提取**：`extract_response_fields()` 自动提取 LoginAns/OrderRtn/TradeRtn/CancelRsp 所有字段到 `map<string,string>`，支持定长 char 数组的 `\0`/空格裁剪（`trim_fixed`）。
+- **动态引用**：撤单请求 `order_sys_no` 支持 `"$last_order_sys_no"`，自动引用上一笔委托的 order_sys_no。
+- **异步等待**：成交回报(2005)用主动轮询等待（超时 5s）；撤单测试用 `has_cancel_rsp()` 特定等待避免被中间回报干扰。
+- **测试结果**：4/4 通过。关键文件：`test_case_runner.cpp`、`fte_combo.json`。
+
+---
+
+## 25. gw_counter 性能分析与优化（Task 7.8）
+
+> 详细分析见 `mock/client/mock_client_design.md` §14。
+
+### 25.1 发送路径瓶颈
+
+单笔委托（约 118 字节）从 `deal_order_req` 到发送的耗时环节：
+
+| 瓶颈 | 位置 | 特征 |
+|------|------|------|
+| **会话查找**（首要） | `GwSessionCache::get_session()` | 全局 mutex 锁 + unordered_map 哈希 + std::string 构造 |
+| **日志输出**（高放大） | `deal_recv_msg` | 每条消息构造 hexbuf + snprintf 打 info_log |
+| **消息构建** | `build_order_msg` | 先 memcpy 再 space_pad 遍历同一数组两次 |
+| **校验和** | `GenerateSzCheckSum()` | 逐字节求和 %256，O(n) |
+| **中间拷贝** | 栈上 body → encode 到 o_buf | 一次不必要的中间拷贝 |
+
+**瓶颈排序**：GwSessionCache 全局锁 > 日志输出 > 消息构建重复遍历 > 校验和逐字节循环。
+
+### 25.2 优化方案
+
+| 优先级 | 方案 | 收益 |
+|--------|------|------|
+| **P0** | A：会话信息缓存到 counter 实例成员变量，消除全局锁（个微单连接特性） | 最大 |
+| **P0** | E：日志降级为 debug，生产关闭高频日志 | 高吞吐 I/O 显著下降 |
+| P1 | B：合并 memcpy 与空格填充（`copy_and_pad`） | 减少数组重复遍历 |
+| P1 | C：校验和与序列化合并，固定字段预编码缓存 | 减少一次 O(n) 遍历 |
+| P2 | D：直接构建到队列内存（参考 fpga_counter_direct） | 减少中间拷贝 |
+| P2 | F：`++session_seq_`/`login_state` 原子化 | 消除数据竞争 |
+
+### 25.3 验证建议
+
+- mock_client 增加「性能测试」用例类型，用 `std::chrono::steady_clock` 记录单笔委托耗时。
+- 用 `perf`/`gprof` 对 `build_order_msg`、`GenerateSzCheckSum`、`GwSessionCache::get_session` 采样验证优化前后热点变化。
