@@ -12,6 +12,7 @@
 #include "test_case_runner.h"
 #include "test_report.h"
 #include "callback_handler.h"
+#include "perf_runner.h"
 #include <string>
 
 namespace lb_api {
@@ -38,6 +39,11 @@ public:
     /// 运行目录下所有测试用例
     std::vector<TestResult> run_all_tests(const std::string& test_dir);
 
+    /// 运行性能测试（配置开启时）
+    /// @param perf_node  connection_config.json 中的 "perf_test" 配置节点
+    /// @return 是否成功执行
+    bool run_perf_test(const JsonValue& perf_node);
+
     /// 获取测试报告
     const TestReport& report() const { return report_; }
 
@@ -48,6 +54,7 @@ private:
     lb_api::api_interface* api_;
     CallbackHandler* callback_;
     TestCaseRunner* runner_;
+    PerfRunner* perf_runner_;
     TestReport report_;
 };
 

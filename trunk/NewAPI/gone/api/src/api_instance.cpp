@@ -28,6 +28,16 @@
 #endif
 
 #include <cstring>
+#include <time.h>
+
+namespace {
+// 性能测试辅助：获取当前单调时钟纳秒（低开销，clock_gettime 约 10-30ns）
+inline uint64_t perf_now_ns() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+}
+}
 
 namespace lb_api {
 
@@ -293,12 +303,16 @@ template <class TF, class TE> int32 api_impl<TF, TE>::login(const LoginReq &req)
 }
 
 // order_insert: 买卖委托 (D22: a+b 组合降级)
+// 性能测试：在请求到达 api 与离开 api 时记录单调时钟纳秒到 OrderReq 的时间戳字段，
+//   供上层性能测试程序计算 api 内处理耗时（api_leave_time_ns - api_arrive_time_ns）。
 template <class TF, class TE> int32 api_impl<TF, TE>::order_insert(const OrderReq &req) {
+  req.api_arrive_time_ns = perf_now_ns();   // 请求到达 api
   int32 ret = fast_.deal_order_req(req);
   if (ret == LBAPI_ERR_COUNTER_OFFLINE || ret == LBAPI_ERR_UNSUPPORTED_OP) {
     // 降级到 98
-    return c98_.deal_order_req(req);
+    ret = c98_.deal_order_req(req);
   }
+  req.api_leave_time_ns = perf_now_ns();    // 请求离开 api
   return ret;
 }
 

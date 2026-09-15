@@ -20,6 +20,7 @@ MockClient::MockClient()
     : api_(nullptr)
     , callback_(nullptr)
     , runner_(nullptr)
+    , perf_runner_(nullptr)
 {
 }
 
@@ -125,6 +126,9 @@ bool MockClient::init(const std::string& config_path) {
         // 创建测试执行器
         runner_ = new TestCaseRunner(api_, callback_);
 
+        // 创建性能测试执行器
+        perf_runner_ = new PerfRunner(api_);
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[MockClient] 初始化异常: " << e.what() << std::endl;
@@ -190,8 +194,29 @@ std::vector<TestResult> MockClient::run_all_tests(const std::string& test_dir) {
     return results;
 }
 
+// run_perf_test: 运行性能测试
+// 从 connection_config.json 的 "perf_test" 节点加载配置，若 enable=true 则执行。
+bool MockClient::run_perf_test(const JsonValue& perf_node) {
+    if (!perf_runner_) {
+        std::cerr << "[MockClient] PerfRunner 未初始化" << std::endl;
+        return false;
+    }
+
+    if (!perf_runner_->load_config(perf_node)) {
+        std::cerr << "[MockClient] 性能测试配置加载失败" << std::endl;
+        return false;
+    }
+
+    if (!perf_runner_->enabled()) {
+        std::cout << "[MockClient] 性能测试未开启（perf_test.enable=false）" << std::endl;
+        return false;
+    }
+
+    return perf_runner_->run();
+}
+
 // shutdown: 关闭并释放全部资源
-// 逆序释放：先停止并释放 API 实例，再释放 runner_ 和 callback_。
+// 逆序释放：先停止并释放 API 实例，再释放 runner_、perf_runner_ 和 callback_。
 void MockClient::shutdown() {
     if (api_) {
         api_->stop();
@@ -204,6 +229,9 @@ void MockClient::shutdown() {
 
     delete runner_;
     runner_ = nullptr;
+
+    delete perf_runner_;
+    perf_runner_ = nullptr;
 
     delete callback_;
     callback_ = nullptr;

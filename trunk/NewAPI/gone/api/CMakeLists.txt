@@ -135,6 +135,7 @@ if(BUILD_MOCK)
     message(STATUS "Mock 组件构建已启用")
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/client mock_client_build)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/98_counter mock_98_counter_build)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/perf_client mock_perf_client_build)
 endif()
 
 message(STATUS "API 库构建完成：liblbapi.so（${SOURCE_COUNT} 个文件）")

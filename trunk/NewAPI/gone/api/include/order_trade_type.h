@@ -47,6 +47,10 @@ public:
   int64_t stop_price;                   ///< 止损价
   int64_t client_seq_id;                ///< 用户私有报单号
   uint16_t market_type;                  ///< 市场ID
+
+  // ---- 性能测试临时字段（Task: 性能测试, 单位纳秒, mutable 以便 api 内部在 const 引用上记录）----
+  mutable uint64_t api_arrive_time_ns;  ///< 请求到达 api 的时间（单调时钟纳秒）
+  mutable uint64_t api_leave_time_ns;   ///< 请求离开 api 的时间（单调时钟纳秒）
 };
 
 /// 撤单请求

@@ -70,7 +70,7 @@ public:
   lb_common::mthread *get_thread() { return &epoll_th_; }
 
   multi_socket_engine()
-      : send_poll_num_(0), recv_poll_num_(0), queue_dealing_(0), counter_(nullptr), counter98_(nullptr), log_(nullptr) {
+      : send_poll_num_(0), recv_poll_num_(0), queue_dealing_(0), counter_(nullptr), counter98_(nullptr), log_(nullptr), stopped_(0) {
   }
   ~multi_socket_engine() override { stop(); }
 
@@ -119,6 +119,7 @@ protected:
   lb_common::mthread epoll_th_; ///< epoll 线程
   lb_common::lb_log *log_;      ///< 日志
   eng_link_op link_outop_;
+  int32 stopped_;               ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api

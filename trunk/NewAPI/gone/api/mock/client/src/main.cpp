@@ -90,6 +90,21 @@ int main(int argc, char* argv[]) {
     client.report().save(report_path);
     std::cout << "测试报告已保存到: " << report_path << std::endl;
 
+    // 性能测试（可选，通过 connection_config.json 的 perf_test.enable 控制）
+    try {
+        using mock::JsonParser;
+        using mock::JsonValue;
+        JsonValue config = JsonParser::parse_file(config_path);
+        JsonValue perf_node = config["perf_test"];
+        if (!perf_node.is_null()) {
+            client.run_perf_test(perf_node);
+        } else {
+            std::cout << "配置中未找到 perf_test 节点，跳过性能测试" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "性能测试配置解析失败: " << e.what() << std::endl;
+    }
+
     // 等待异步回报（如成交回报）到达后处理，再关闭
     std::this_thread::sleep_for(std::chrono::seconds(2));
 

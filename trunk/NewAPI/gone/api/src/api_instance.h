@@ -71,6 +71,10 @@ public:
 
 private:
   // ---- 拷贝自 cfg 的配置项 ----
+  // 注意：log_ 必须最先声明（析构时最后销毁），因为 fast_engine_/multi_engine_ 等
+  // 引擎的析构函数会调用 stop() 并写日志；若 log_ 声明在它们之后，会先被销毁，
+  // 引擎析构时访问已销毁的 log_ 导致崩溃。
+  lb_common::lb_log log_;                          ///< 日志
   speed_link_type speed_link_type_;                ///< 极速链接类型
   counter_type speed_counter_type_;                ///< 极速柜台类型
   TFastCounter fast_;                              ///< 极速柜台
@@ -79,7 +83,6 @@ private:
   counter98 c98_;                                  ///< 98 柜台
   callback_manager cb_mgr_;                        ///< 回调管理器
   int32_t have_start;                              ///< 是否启动
-  lb_common::lb_log log_;                          ///< 日志
 };
 
 } // namespace lb_api

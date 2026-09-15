@@ -198,6 +198,13 @@ template <class TFastCounter> int32 multi_socket_engine<TFastCounter>::start() {
 }
 
 template <class TFastCounter> void multi_socket_engine<TFastCounter>::stop() {
+  // 幂等保护：api_impl::stop() 会调用本方法，析构函数 ~multi_socket_engine 也会调用，
+  // 若重复执行会 double-close 资源并在 log_ 已 close 后再次写日志导致崩溃。
+  if (stopped_) {
+    return;
+  }
+  stopped_ = 1;
+
   g98_link_.close_ch();
   fast_gw_link_.close_ch();
   epoll_th_.join();

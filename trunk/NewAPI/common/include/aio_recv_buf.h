@@ -230,8 +230,10 @@ public:
 
   /**
    * @brief 构造函数
+   * @note 必须显式初始化 buflock（atomic_lock 无构造函数，依赖 init()），
+   *       否则 mlock 为未初始化垃圾值会导致 build_buf 自旋锁死循环。
    */
-  aio_recv_buf() : maxmsglen(0), recvlen(0), onerecvlen(0), bufflag(0), curbuf(NULL) {}
+  aio_recv_buf() : maxmsglen(0), recvlen(0), onerecvlen(0), bufflag(0), curbuf(NULL) { buflock.init(); }
   /**
    * @brief 析构函数
    */
