@@ -29,6 +29,10 @@
 14. **Mock 组件** ✅：mock_client（JSON 配置化测试 FTE 全链路）、98_counter_mock（模拟 98 柜台服务端）、json_utils（轻量 JSON 工具）；编译 `./build.sh -DBUILD_MOCK=ON`
 15. **FTE 联调关键发现**：登录密码来源（XML 非 bin）、pbu 空格填充（offerWay invalid 根因）、心跳周期单位（秒 vs 毫秒，2005 丢失根因）、委托/撤单/登录链路打通、逐字段回报校验机制
 16. **gw_counter 性能分析**：瓶颈排序（GwSessionCache 全局锁 > 日志 > 消息构建重复遍历 > 校验和），P0 方案（会话缓存到实例 + 日志降噪）
+17. **性能测试系统** ✅：mock_client 内置 perf_runner 模块（JSON 配置 enable/duration/tps/warmup/cpu_id），复用 `api_arrive_time_ns`/`api_leave_time_ns` 统计延迟（均值/P50/P75/P90/最大/最小/标准差），支持 CPU 绑定
+18. **关键缺陷修复**：P1 双线程并发接收数据竞争（移除 `single_socket_engine::do_work()` 末尾 `link_.deal_recv()`，校验和不匹配 69→0）；P2 心跳超时断链（启用 `aio_tcp.h::deal_recv()` 的 `heart.on_msg()`，-22 失败 110→0）
+19. **FTE 对象池扩容**：7 个回报/拒绝对象池 2000→32768（etf_sync 1000→16384，sz_internal 8→2048），支撑 500 TPS/30s/15000 笔稳定运行
+20. **CPU 绑定验证**：绑核功能正常（P50/P90 略优 ~10ns），建议绑非 CPU0 专用核或 isolcpus；多轮稳定性（3×200TPS/10s）全部通过
 
 ## 三、分析框架
 
@@ -130,6 +134,13 @@
 | **98_counter_mock 设计文档** | `trunk/NewAPI/gone/api/mock/98_counter/98_counter_mock_design.md` |
 | **JSON 工具** | `trunk/NewAPI/gone/api/mock/include/json_utils.h/.cpp` |
 | **bin 文件工具** | `trunk/NewAPI/gone/api/mock/98_counter/bin_tool.py`（update 字段） |
+| **性能测试模块** | `trunk/NewAPI/gone/api/mock/client/src/perf_runner.h/.cpp`（PerfConfig+PerfRunner） |
+| **延迟统计** | `trunk/NewAPI/gone/api/mock/client/src/metric_stats.h/.cpp` |
+| **CPU 绑定** | `trunk/NewAPI/gone/api/mock/client/src/cpu_affinity.h/.cpp` |
+| **perf 测试记录** | `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` §7.4~7.12 |
+| **业务引擎（数据竞争修复）** | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp`（do_work 移除 deal_recv） |
+| **TCP 心跳（超时修复）** | `trunk/NewAPI/common/include/aio_tcp.h`（deal_recv 启用 heart.on_msg） |
+| **FTE 对象池** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp`（SetFTE2DSEQueue） |
 
 ## 五、常见问答模板
 
@@ -254,6 +265,56 @@ P0 优化：
 详见知识库 §25 / mock_client_design.md §14
 ```
 
+### Q13: 如何运行性能测试？
+```
+# 配置：mock/client/config/connection_config.json 的 perf_test 块
+# enable:true, duration_sec:30, tps:500, warmup_sec:3, cpu_id:-1(不绑)/0~(绑核)
+# order: 委托模板（fund_account_id, security_id, side, order_price 等）
+
+# 运行（功能测试后自动启动 perf test）
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/client/config/connection_config.json \
+  --lib build_cmake/lib/liblbapi.so --testcase mock/client/config/test_cases/fte_combo.json
+
+# 输出：perf_report.txt（TPS/样本数/均值/P50/P75/P90/最大/最小/标准差/失败统计）
+# 日志：mock_client.log 含 "Perf test started/completed" 和 "已绑定到 CPU X"
+```
+
+### Q14: 性能测试遇到校验和不匹配 / -22 断链怎么排查？
+```
+1. 校验和不匹配（checksum mismatch）→ 数据竞争修复检查：
+   - 检查 single_socket_engine.cpp do_work() 末尾是否还有 link_.deal_recv()
+   - 如有则移除，让 mthread 独占驱动接收
+   - 修复前 0~69 次/轮，修复后 0 次
+
+2. -22（LBAPI_ERR_LINK_DISCONNECTED）→ 心跳超时修复检查：
+   - 检查 aio_tcp.h deal_recv() 中 heart.on_msg() 是否已启用
+   - FTE 是单向心跳（客户端→FTE），API 必须通过业务消息保持链路存活
+   - 修复前 110 次/轮，修复后 0 次
+
+3. 两个修复后 perf 结果应干净：0 校验和不匹配 / 0 断链 / 100% 成功率
+```
+
+### Q15: FTE 对象池耗尽怎么办？
+```
+1. 现象：FTE 进程存活但不再监听端口，日志含 "capacity should resize"
+2. 位置：DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp SetFTE2DSEQueue()
+3. 修复：将 create("fte_report_pool", 2000) 等改为 20000（自动向上取整到 2 的幂→32768）
+4. 涉及 7 个池：fte_report/fte_reject/sh_fte_etf_report/sz_fte_etf_report/sh_internal/sz_internal/etf_sync
+5. 编译：./compile_fte.sh -r
+6. 扩容后 500 TPS/30s（15000 笔）稳定运行，无 resize 警告
+7. 多轮测试建议重启 FTE（stop_all.sh + start_all.sh）
+```
+
+### Q16: CPU 绑定怎么用？效果如何？
+```
+1. 配置：connection_config.json perf_test.cpu_id = 0~N（绑指定核），-1（不绑定）
+2. 原理：sched_setaffinity(0, sizeof(set), &set) 绑定 mock_client 主线程
+3. 效果：P50/P90 绑核略优（~10ns），但 CPU 0 有中断干扰（最大尖峰 6.2ms vs 0.22ms）
+4. 建议：绑定到非 CPU0 的专用核，或使用 isolcpus 内核参数隔离
+5. 验证：日志输出 "已绑定到 CPU X" + "当前 CPU 亲和性: X"
+6. 多轮稳定性（3×200TPS/10s）绑核/不绑核全部通过
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -268,7 +329,7 @@ P0 优化：
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-15。知识库 v2.1 新增 Mock 组件、FTE 联调发现、性能分析章节。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-15。知识库 v2.2 新增 §26 性能测试系统 / 关键缺陷修复（数据竞争+心跳超时）/ FTE 对象池扩容 / CPU 绑定验证。
 
 ---
 

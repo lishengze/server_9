@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.1（2026-09-15，新增 §23~25 Mock 组件 / FTE 联调发现 / 性能分析）
+> **版本**：v2.2（2026-09-15，新增 §26 性能测试系统 / 关键缺陷修复 / FTE 对象池扩容 / CPU 绑定验证）
 
 ---
 
@@ -36,6 +36,7 @@
 23. [Mock 组件（mock_client / 98_counter_mock / json_utils）](#23-mock-组件mock_client--98_counter_mock--json_utils)
 24. [FTE 联调关键发现（Task 7.4~7.6）](#24-fte-联调关键发现task-74-76)
 25. [gw_counter 性能分析与优化（Task 7.8）](#25-gw_counter-性能分析与优化task-78)
+26. [性能测试系统与关键缺陷修复（Task 7.9~7.12）](#26-性能测试系统与关键缺陷修复task-79-712)
 
 ---
 
@@ -1034,3 +1035,144 @@ TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一�
 
 - mock_client 增加「性能测试」用例类型，用 `std::chrono::steady_clock` 记录单笔委托耗时。
 - 用 `perf`/`gprof` 对 `build_order_msg`、`GenerateSzCheckSum`、`GwSessionCache::get_session` 采样验证优化前后热点变化。
+
+---
+
+## 26. 性能测试系统与关键缺陷修复（Task 7.9~7.12）
+
+> **来源**：`mock/client/src/perf_runner.h/.cpp`、`mock/client/src/metric_stats.h/.cpp`、`mock/client/src/cpu_affinity.h/.cpp`
+> **测试记录**：`mock/client/mock_client_test.md` §7.4~7.12
+> **设计文档**：`mock/client/mock_client_design.md` §15
+
+### 26.1 性能测试模块设计
+
+性能测试作为 **mock_client 内置模块**（非独立程序），通过 JSON 配置开关控制。
+
+**配置文件**：`mock/client/config/connection_config.json` 新增 `perf_test` 块：
+
+```json
+{
+  "perf_test": {
+    "enable": true,
+    "duration_sec": 30,
+    "tps": 500,
+    "warmup_sec": 3,
+    "cpu_id": -1,
+    "report_file": "perf_report.txt",
+    "order": {
+      "fund_account_id": "800000000004",
+      "security_id": "000001.SZ",
+      "market_id": 2,
+      "side": 1,
+      "order_type": 2,
+      "order_qty": 100,
+      "order_price": 250200
+    }
+  }
+}
+```
+
+**模块文件**：
+
+| 文件 | 角色 |
+|------|------|
+| `mock/client/src/perf_runner.h/.cpp` | PerfConfig + PerfRunner（主控逻辑） |
+| `mock/client/src/metric_stats.h/.cpp` | 延迟统计（均值/P50/P75/P90/最大/最小/标准差） |
+| `mock/client/src/cpu_affinity.h/.cpp` | CPU 绑定（`sched_setaffinity`） |
+
+**执行流程**：
+
+1. `main.cpp` 功能测试完成后，解析 config 的 `perf_test` 节点
+2. `enable=true` 时调用 `MockClient::run_perf_test()`
+3. 绑核（`cpu_id >= 0` 时 `sched_setaffinity(0, ...)`）→ 预热（`warmup_sec`）→ 匀速发单（间隔 = 1/TPS 秒）
+4. 统计延迟 → 输出报告文件
+
+**耗时来源**：复用 `OrderReq` 的 `api_arrive_time_ns`/`api_leave_time_ns`（`api_impl::order_insert` 记录），`lat = leave - arrive`。
+失败返回码统计进报告（如 -22 = `LBAPI_ERR_LINK_DISCONNECTED`）。
+
+### 26.2 关键缺陷修复 P1：双线程并发接收数据竞争
+
+**现象**：性能测试中校验和不匹配 0~69 次/轮，仅影响 2003/2005 回报，差异值 1 或 7。
+
+**根因**：`single_socket_engine::do_work()` 末尾调用 `link_.deal_recv()`，与 mthread `recv_th_` 双线程**并发**调用 `loop_deal_recv()`，操作共享 `aio_recv_buf::curbuf` 导致数据竞争。
+
+**修复**：移除 `single_socket_engine.cpp` 中 `do_work()` 末尾的 `link_.deal_recv()`，让 mthread 独占驱动接收。
+
+**验证**：校验和不匹配从 69 次降为 0。根因确认：`multi_socket_engine` 不调 `link_.deal_recv()`，无此问题。
+
+```
+文件：trunk/NewAPI/gone/api/src/single_socket_engine.cpp
+- 移除：link_.deal_recv();  // do_work() 末尾
+```
+
+### 26.3 关键缺陷修复 P2：API 心跳超时断链
+
+**现象**：性能测试中大量返回码 -22（`LBAPI_ERR_LINK_DISCONNECTED`），每轮 110 次。
+
+**根因**：FTE 不向客户端发送心跳（单向心跳：客户端→FTE），但 API 的 `heart.on_msg()` 被注释掉。导致 `check_timeout()` 恒成立（`tcnt==0`），6 秒后超时主动断链。
+
+**修复**：在 `aio_tcp.h::deal_recv()` 中启用 `heart.on_msg()`，业务消息也保持链路存活。
+
+**验证**：perf test -22 失败从 110 次降为 0。
+
+```
+文件：trunk/NewAPI/common/include/aio_tcp.h
+- 启用：heart.on_msg();  // 在 deal_recv() 中取消注释
+```
+
+### 26.4 FTE 对象池扩容
+
+**背景**：FTE 使用对象池管理回报/拒绝消息，初始容量 2000。连续约 6000 笔订单后池空，动态分配并记 `"capacity should resize"` 警告；继续运行后 FTE 降级（进程存活但不再监听端口）。
+
+**扩容内容**（`uplink_biz_processor.cpp SetFTE2DSEQueue`）：
+
+| 对象池 | 原容量 | 新容量 | 实际（2 的幂） |
+|--------|--------|--------|----------------|
+| `fte_report_pool_` | 2000 | 20000 | 32768 |
+| `fte_reject_pool_` | 2000 | 20000 | 32768 |
+| `sh_fte_etf_report_pool_` | 2000 | 20000 | 32768 |
+| `sz_fte_etf_report_pool_` | 2000 | 20000 | 32768 |
+| `sh_internal_etf_report_pool_` | 2000 | 20000 | 32768 |
+| `sz_internal_etf_report_pool_` | 8 | 2000 | 2048 |
+| `etf_sync_order_pool_` | 1000 | 10000 | 16384 |
+
+**编译**：`./compile_fte.sh -r`（产物 `/mnt/work/gt_test/work_atp/cmake/fte/bin/ute`）。
+
+### 26.5 性能测试验证结论
+
+**两个修复后 perf 结果**：校验和不匹配 0、-22 断链 0、发单成功率 100%。
+
+| 场景 | TPS | 持续时间 | 总笔数 | 结果 |
+|------|-----|---------|--------|------|
+| 基准 | 100 | 5s | 500 | ✅ 全部通过 |
+| 中负载 | 200 | 15s | 3000 | ✅ 全部通过 |
+| 中负载 | 200 | 20s | 4000 | ✅ 全部通过 |
+| 高负载（扩容前） | 500 | 30s | 15000 | ❌ FTE 对象池耗尽崩溃 |
+| 高负载（扩容后） | 500 | 30s | 15000 | ✅ 稳定运行（0 失败，0 resize 警告） |
+
+**多轮稳定性（3 轮 × 200 TPS / 10s）**：全部通过（0 失败 / 0 校验和不匹配 / 0 断链 / EXIT=0）。
+
+| 轮次 | 样本数 | 平均延迟 | P50 | P75 | P90 | 最大 |
+|------|--------|---------|-----|-----|-----|------|
+| 1 | 1999 | 2627.42ns | 1013ns | 2176ns | 4710ns | 73842ns |
+| 2 | 1999 | 2379.57ns | 983ns | 2165ns | 4051ns | 71905ns |
+| 3 | 1999 | 2296.48ns | 962ns | 2114ns | 3789ns | 72647ns |
+
+### 26.6 CPU 绑定验证
+
+| cpu_id | TPS | 样本 | 平均 | P50 | P90 | 最大 | 标准差 |
+|--------|-----|------|------|-----|-----|------|--------|
+| 0（绑定） | 490.88 | 14727 | 1986.21ns | 832ns | 2715ns | 6228979ns | 51372ns |
+| -1（不绑定） | 499.18 | 14976 | 1635.5ns | 842ns | 2755ns | 223030ns | 3505ns |
+
+**结论**：
+- CPU 绑定功能正常（日志确认 `"已绑定到 CPU 0"`、`"当前 CPU 亲和性: 0"`）
+- P50/P90 绑核略优（~10ns），但 CPU 0 有中断干扰（最大尖峰 6.2ms）
+- **建议**：绑定到非 CPU0 的专用核，或使用 `isolcpus` 内核参数隔离
+
+### 26.7 其他发现
+
+- `simple_thread::busy_run()` 忙轮询导致进程 97% CPU 是**正常设计**（低延迟），非卡死。
+- `object_pool` 容量自动向上取整到 2 的幂：`create("name", 20000)` → 实际 32768。
+- FTE 端口在测试完成后停止监听（进程存活但降级），多轮测试需重启 FTE。
+- tgw_simulator 38140 端口进程易 defunct（僵尸），需单独重启：`tgw_simulator -p 38140 -m 7 -n TGWSimulator_Bond`。
