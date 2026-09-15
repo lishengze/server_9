@@ -18,8 +18,9 @@ TestCaseRunner::TestCaseRunner(lb_api::api_interface* api, CallbackHandler* hand
 TestCaseType TestCaseRunner::parse_type(const std::string& type_str) {
     if (type_str == "login") return TestCaseType::Login;
     if (type_str == "order_insert" || type_str == "order_rtn") return TestCaseType::OrderInsert;
-    if (type_str == "etf_order_insert" || type_str == "trade_rtn") return TestCaseType::EtfOrderInsert;
+    if (type_str == "etf_order_insert") return TestCaseType::EtfOrderInsert;
     if (type_str == "order_cancel" || type_str == "cancel_rsp") return TestCaseType::OrderCancel;
+    if (type_str == "trade_rtn") return TestCaseType::TradeRtn;
     if (type_str == "wait_heartbeat" || type_str == "heartbeat_ok") return TestCaseType::WaitHeartbeat;
     return TestCaseType::Unknown;
 }
@@ -63,16 +64,28 @@ bool TestCaseRunner::load_single_case(const JsonValue& root) {
         JsonValue exp = root["expected_response"];
         test_case.response_type = parse_type(exp["type"].as_string());
 
-        // 解析预期字段
+        // 解析预期字段（fields 对象的所有键；值为 null 表示动态字段跳过校验）
         JsonValue fields = exp["fields"];
-        JsonValue validate = exp["validate"];
-        for (size_t i = 0; i < validate.size(); i++) {
-            std::string field_name = validate[i].as_string();
-            FieldMatch fm;
-            fm.field_name = field_name;
-            fm.expected_value = fields[field_name];
-            fm.required = true;
-            test_case.expected_fields.push_back(fm);
+        if (fields.is_object()) {
+            std::vector<std::string> keys = fields.keys();
+            for (size_t i = 0; i < keys.size(); i++) {
+                FieldMatch fm;
+                fm.field_name = keys[i];
+                fm.expected_value = fields[keys[i]];
+                fm.required = !fields[keys[i]].is_null();
+                test_case.expected_fields.push_back(fm);
+            }
+        } else {
+            // 兼容旧格式：validate 数组 + fields 对象
+            JsonValue validate = exp["validate"];
+            for (size_t i = 0; i < validate.size(); i++) {
+                std::string field_name = validate[i].as_string();
+                FieldMatch fm;
+                fm.field_name = field_name;
+                fm.expected_value = fields[field_name];
+                fm.required = true;
+                test_case.expected_fields.push_back(fm);
+            }
         }
 
         test_cases_.push_back(test_case);
@@ -128,6 +141,32 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     auto start = std::chrono::steady_clock::now();
 
     // 发送请求
+    if (tc.response_type == TestCaseType::TradeRtn) {
+        // 成交回报(2005)是异步回报：无需发送新请求，等待并校验已存储的成交回报
+        std::cout << "[Runner] 等待并校验异步成交回报(2005)..." << std::endl;
+        int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
+        auto wait_start = std::chrono::steady_clock::now();
+        while (!handler_->has_trade_rtn()) {
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - wait_start).count() > timeout_ms) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (handler_->has_trade_rtn()) {
+            if (!validate_response(tc, result.match_details)) {
+                result.fail_reason = "字段验证失败";
+            } else {
+                result.passed = true;
+            }
+        } else {
+            result.fail_reason = "未收到成交回报(2005)";
+        }
+        auto end = std::chrono::steady_clock::now();
+        result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        return result;
+    }
+
     if (!send_request(tc)) {
         result.fail_reason = "发送请求失败";
         auto end = std::chrono::steady_clock::now();
@@ -152,7 +191,24 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
         result.passed = true;
         result.match_details.push_back("心跳维持正常");
     } else {
-        if (!handler_->wait_for_response(tc.timeout_ms)) {
+        if (tc.response_type == TestCaseType::OrderCancel) {
+            // 撤单应答可能被中间的其他回报(2003)干扰，需等待 cancel_rsp 特定响应
+            int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
+            auto wait_start = std::chrono::steady_clock::now();
+            while (!handler_->has_cancel_rsp()) {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - wait_start).count() > timeout_ms) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            if (!handler_->has_cancel_rsp()) {
+                result.fail_reason = "未收到撤单应答";
+                auto end = std::chrono::steady_clock::now();
+                result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                return result;
+            }
+        } else if (!handler_->wait_for_response(tc.timeout_ms)) {
             result.fail_reason = "等待回报超时 (" + std::to_string(tc.timeout_ms) + "ms)";
             auto end = std::chrono::steady_clock::now();
             result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -264,7 +320,15 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 std::memcpy(req.branch_id.data(), val.c_str(),
                             std::min(val.size(), req.branch_id.size()));
 
-                req.order_sys_no = tc.request_fields["order_sys_no"].as_int();
+                // order_sys_no 支持 "$last_order_sys_no" 动态引用上一笔委托回报的 order_sys_no
+                JsonValue osn = tc.request_fields["order_sys_no"];
+                int64_t order_sys_no = 0;
+                if (osn.is_string() && osn.as_string() == "$last_order_sys_no") {
+                    order_sys_no = handler_->last_order_rtn().order_sys_no;
+                } else {
+                    order_sys_no = osn.as_int();
+                }
+                req.order_sys_no = order_sys_no;
                 req.client_seq_id = tc.request_fields["client_seq_id"].as_int();
 
                 int32_t ret = api_->order_cancel(req);
@@ -291,84 +355,137 @@ bool TestCaseRunner::validate_response(const TestCase& tc, std::vector<std::stri
         return false;
     }
 
+    // 提取回报全部字段
+    std::map<std::string, std::string> actual;
+    extract_response_fields(tc.response_type, actual);
+
     bool all_match = true;
+    int checked = 0;
+    int skipped = 0;
     for (size_t i = 0; i < tc.expected_fields.size(); i++) {
         const FieldMatch& fm = tc.expected_fields[i];
         std::string detail;
 
-        // 根据响应类型获取字段值
-        std::string actual_value;
-        bool field_found = false;
-
-        switch (tc.response_type) {
-            case TestCaseType::Login: {
-                const auto& ans = handler_->last_login_ans();
-                if (fm.field_name == "err_code") {
-                    actual_value = std::to_string(ans.err_code);
-                    field_found = true;
-                } else if (fm.field_name == "market_type") {
-                    actual_value = std::to_string(ans.market_type);
-                    field_found = true;
-                } else if (fm.field_name == "cust_id") {
-                    actual_value = std::string(ans.cust_id.data());
-                    field_found = true;
-                } else if (fm.field_name == "fund_account_id") {
-                    actual_value = std::string(ans.fund_account_id.data());
-                    field_found = true;
-                }
-                break;
-            }
-            case TestCaseType::OrderInsert: {
-                const auto& rtn = handler_->last_order_rtn();
-                if (fm.field_name == "order_status") {
-                    actual_value = std::to_string((int)rtn.order_status);
-                    field_found = true;
-                } else if (fm.field_name == "rtn_type") {
-                    actual_value = std::to_string(rtn.rtn_type);
-                    field_found = true;
-                } else if (fm.field_name == "order_qty") {
-                    actual_value = std::to_string(rtn.order_qty);
-                    field_found = true;
-                } else if (fm.field_name == "trade_qty") {
-                    actual_value = std::to_string(rtn.trade_qty);
-                    field_found = true;
-                } else if (fm.field_name == "side") {
-                    actual_value = std::string(1, rtn.side);
-                    field_found = true;
-                } else if (fm.field_name == "order_price") {
-                    actual_value = std::to_string(rtn.order_price);
-                    field_found = true;
-                }
-                break;
-            }
-            case TestCaseType::OrderCancel: {
-                const auto& rsp = handler_->last_cancel_rsp();
-                if (fm.field_name == "err_code") {
-                    actual_value = std::to_string(rsp.err_code);
-                    field_found = true;
-                } else if (fm.field_name == "order_sys_no") {
-                    actual_value = std::to_string(rsp.order_sys_no);
-                    field_found = true;
-                } else if (fm.field_name == "client_seq_id") {
-                    actual_value = std::to_string(rsp.client_seq_id);
-                    field_found = true;
-                }
-                break;
-            }
-            default:
-                break;
+        // 值为 null 的动态字段：跳过校验
+        if (fm.expected_value.is_null()) {
+            skipped++;
+            continue;
         }
+        checked++;
 
-        if (!field_found) {
+        auto it = actual.find(fm.field_name);
+        if (it == actual.end()) {
             detail = "字段 '" + fm.field_name + "' 未找到";
             all_match = false;
         } else {
-            all_match = match_field(fm.field_name, fm.expected_value, actual_value, detail) && all_match;
+            all_match = match_field(fm.field_name, fm.expected_value, it->second, detail) && all_match;
         }
         details.push_back(detail);
     }
-
+    details.push_back("[Summary] 校验字段数=" + std::to_string(checked)
+                      + ", 跳过动态字段数=" + std::to_string(skipped));
     return all_match;
+}
+
+std::string TestCaseRunner::trim_fixed(const char* data, size_t len) {
+    std::string s(data, len);
+    // 去掉末尾的空格和 \0 填充（用 std::string 构造集合，避免 C 字符串截断）
+    size_t e = s.find_last_not_of(std::string(" \0", 2));
+    if (e == std::string::npos) return "";
+    return s.substr(0, e + 1);
+}
+
+void TestCaseRunner::extract_response_fields(TestCaseType type, std::map<std::string, std::string>& out) {
+    switch (type) {
+    case TestCaseType::Login: {
+        const auto& ans = handler_->last_login_ans();
+        out["client_req_no"] = std::to_string(ans.client_req_no);
+        out["cust_id"] = trim_fixed(ans.cust_id.data(), ans.cust_id.size());
+        out["fund_account_id"] = trim_fixed(ans.fund_account_id.data(), ans.fund_account_id.size());
+        out["account_id"] = trim_fixed(ans.account_id.data(), ans.account_id.size());
+        out["branch_id"] = trim_fixed(ans.branch_id.data(), ans.branch_id.size());
+        out["market_type"] = std::to_string(ans.market_type);
+        out["err_code"] = std::to_string(ans.err_code);
+        out["err_msg"] = trim_fixed(ans.err_msg.data(), ans.err_msg.size());
+        out["login_time"] = std::to_string(ans.login_time);
+        break;
+    }
+    case TestCaseType::OrderInsert:
+    case TestCaseType::EtfOrderInsert: {
+        const auto& rtn = handler_->last_order_rtn();
+        out["cust_id"] = trim_fixed(rtn.cust_id.data(), rtn.cust_id.size());
+        out["fund_account_id"] = trim_fixed(rtn.fund_account_id.data(), rtn.fund_account_id.size());
+        out["account_id"] = trim_fixed(rtn.account_id.data(), rtn.account_id.size());
+        out["branch_id"] = trim_fixed(rtn.branch_id.data(), rtn.branch_id.size());
+        out["side"] = std::string(1, rtn.side);
+        out["order_type"] = std::string(1, rtn.order_type);
+        out["order_status"] = std::to_string((int)rtn.order_status);
+        out["policy_id"] = std::to_string(rtn.policy_id);
+        out["market_type"] = std::to_string(rtn.market_type);
+        out["reserved"] = std::to_string(rtn.reserved);
+        out["security_id"] = trim_fixed(rtn.security_id.data(), rtn.security_id.size());
+        out["order_price"] = std::to_string(rtn.order_price);
+        out["order_qty"] = std::to_string(rtn.order_qty);
+        out["client_seq_id"] = std::to_string(rtn.client_seq_id);
+        out["rtn_type"] = std::to_string(rtn.rtn_type);
+        out["err_code"] = std::to_string(rtn.err_code);
+        out["order_sys_no"] = std::to_string(rtn.order_sys_no);
+        out["frozen_amount"] = std::to_string(rtn.frozen_amount);
+        out["fee"] = std::to_string(rtn.fee);
+        out["trade_qty"] = std::to_string(rtn.trade_qty);
+        out["cancel_qty"] = std::to_string(rtn.cancel_qty);
+        out["order_time"] = std::to_string(rtn.order_time);
+        out["update_time"] = std::to_string(rtn.update_time);
+        break;
+    }
+    case TestCaseType::OrderCancel: {
+        const auto& rsp = handler_->last_cancel_rsp();
+        out["client_req_no"] = std::to_string(rsp.client_req_no);
+        out["cust_id"] = trim_fixed(rsp.cust_id.data(), rsp.cust_id.size());
+        out["fund_account_id"] = trim_fixed(rsp.fund_account_id.data(), rsp.fund_account_id.size());
+        out["account_id"] = trim_fixed(rsp.account_id.data(), rsp.account_id.size());
+        out["branch_id"] = trim_fixed(rsp.branch_id.data(), rsp.branch_id.size());
+        out["market_type"] = std::to_string(rsp.market_type);
+        out["order_sys_no"] = std::to_string(rsp.order_sys_no);
+        out["client_seq_id"] = std::to_string(rsp.client_seq_id);
+        out["err_code"] = std::to_string(rsp.err_code);
+        out["rej_api"] = std::to_string(rsp.rej_api);
+        break;
+    }
+    case TestCaseType::TradeRtn: {
+        const auto& rtn = handler_->last_trade_rtn();
+        out["cust_id"] = trim_fixed(rtn.cust_id.data(), rtn.cust_id.size());
+        out["fund_account_id"] = trim_fixed(rtn.fund_account_id.data(), rtn.fund_account_id.size());
+        out["account_id"] = trim_fixed(rtn.account_id.data(), rtn.account_id.size());
+        out["branch_id"] = trim_fixed(rtn.branch_id.data(), rtn.branch_id.size());
+        out["side"] = std::string(1, rtn.side);
+        out["order_type"] = std::string(1, rtn.order_type);
+        out["order_status"] = std::to_string((int)rtn.order_status);
+        out["policy_id"] = std::to_string(rtn.policy_id);
+        out["market_type"] = std::to_string(rtn.market_type);
+        out["reserved"] = std::to_string(rtn.reserved);
+        out["security_id"] = trim_fixed(rtn.security_id.data(), rtn.security_id.size());
+        out["order_price"] = std::to_string(rtn.order_price);
+        out["order_qty"] = std::to_string(rtn.order_qty);
+        out["client_seq_id"] = std::to_string(rtn.client_seq_id);
+        out["order_sys_no"] = std::to_string(rtn.order_sys_no);
+        out["frozen_amount"] = std::to_string(rtn.frozen_amount);
+        out["fee"] = std::to_string(rtn.fee);
+        out["trade_qty"] = std::to_string(rtn.trade_qty);
+        out["cancel_qty"] = std::to_string(rtn.cancel_qty);
+        out["order_time"] = std::to_string(rtn.order_time);
+        // 成交特有字段
+        out["exec_time"] = std::to_string(rtn.exec_time);
+        out["exec_id"] = trim_fixed(rtn.exec_id.data(), rtn.exec_id.size());
+        out["exec_price"] = std::to_string(rtn.exec_price);
+        out["exec_qty"] = std::to_string(rtn.exec_qty);
+        out["exec_amount"] = std::to_string(rtn.exec_amount);
+        out["exec_fee"] = std::to_string(rtn.exec_fee);
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 bool TestCaseRunner::match_field(const std::string& field_name, const JsonValue& expected,

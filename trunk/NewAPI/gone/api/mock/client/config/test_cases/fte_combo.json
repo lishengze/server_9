@@ -3,9 +3,9 @@
     {
       "test_case": {
         "name": "FTE 登录测试",
-        "description": "测试 FTE 柜台登录功能，验证登录成功后 err_code 为 0",
-        "counter_type": "fte",
-        "timeout_ms": 10000
+        "description": "验证 FTE 登录应答的所有字段",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
       },
       "request": {
         "type": "login",
@@ -16,26 +16,31 @@
           "account_id": "A12345678901",
           "cust_id": "C000000000000001",
           "password": "TEST000000001",
-          "order_way_ext": "01",
-          "user_info": "test_user",
-          "client_feature_code": ""
+          "order_way_ext": "7",
+          "user_info": "mock_client"
         }
       },
       "expected_response": {
         "type": "login",
         "fields": {
+          "client_req_no": null,
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "market_type": 1,
           "err_code": 0,
-          "market_type": 1
-        },
-        "validate": ["err_code", "market_type"]
+          "err_msg": null,
+          "login_time": null
+        }
       }
     },
     {
       "test_case": {
         "name": "FTE 委托买入测试",
-        "description": "测试 FTE 柜台委托买入功能，验证委托回报的 ord_status 和 order_qty",
-        "counter_type": "fte",
-        "timeout_ms": 10000
+        "description": "验证 FTE 委托回报(2003)的所有字段",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
       },
       "request": {
         "type": "order_insert",
@@ -50,44 +55,113 @@
           "order_price": 250200,
           "order_qty": 100,
           "stop_price": 0,
-          "client_seq_id": 2001,
+          "client_seq_id": 0,
           "market_id": 1
         }
       },
       "expected_response": {
         "type": "order_rtn",
         "fields": {
+          "cust_id": "1000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
           "order_status": 0,
-          "rtn_type": 1,
+          "policy_id": 0,
+          "market_type": 1,
+          "reserved": 0,
+          "security_id": "600007",
+          "order_price": 250200,
           "order_qty": 100,
-          "side": "1"
-        },
-        "validate": ["order_status", "rtn_type", "order_qty", "side"]
+          "client_seq_id": null,
+          "rtn_type": 1,
+          "err_code": 0,
+          "order_sys_no": null,
+          "frozen_amount": null,
+          "fee": 0,
+          "trade_qty": null,
+          "cancel_qty": 0,
+          "order_time": null,
+          "update_time": null
+        }
+      }
+    },
+    {
+      "test_case": {
+        "name": "FTE 成交回报校验",
+        "description": "验证 FTE 成交回报(2005)的所有字段（异步回报，无需新请求）",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "order_insert",
+        "fields": {}
+      },
+      "expected_response": {
+        "type": "trade_rtn",
+        "fields": {
+          "cust_id": "1000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
+          "order_status": 3,
+          "policy_id": 0,
+          "market_type": 1,
+          "reserved": 0,
+          "security_id": "600007",
+          "order_price": 250200,
+          "order_qty": 100,
+          "client_seq_id": null,
+          "order_sys_no": null,
+          "frozen_amount": null,
+          "fee": null,
+          "trade_qty": 100,
+          "cancel_qty": 0,
+          "order_time": null,
+          "exec_time": null,
+          "exec_id": null,
+          "exec_price": 250200,
+          "exec_qty": 100,
+          "exec_amount": null,
+          "exec_fee": null
+        }
       }
     },
     {
       "test_case": {
         "name": "FTE 撤单测试",
-        "description": "测试 FTE 柜台撤单功能，验证撤单成功（需先有委托）",
-        "counter_type": "fte",
-        "timeout_ms": 10000
+        "description": "验证 FTE 撤单应答的所有字段（撤单上一笔已成交委托）",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
       },
       "request": {
         "type": "order_cancel",
         "fields": {
-          "client_req_no": 3001,
+          "client_req_no": 2001,
           "fund_account_id": "1000000000000001",
           "branch_id": "0001",
-          "order_sys_no": 0,
-          "client_seq_id": 2001
+          "order_sys_no": "$last_order_sys_no",
+          "client_seq_id": 0
         }
       },
       "expected_response": {
         "type": "cancel_rsp",
         "fields": {
-          "err_code": 0
-        },
-        "validate": ["err_code"]
+          "client_req_no": null,
+          "cust_id": "1000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "market_type": 1,
+          "order_sys_no": null,
+          "client_seq_id": null,
+          "err_code": 50046,
+          "rej_api": 0
+        }
       }
     }
   ]

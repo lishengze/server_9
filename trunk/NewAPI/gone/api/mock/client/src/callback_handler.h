@@ -31,6 +31,8 @@ public:
 
     // ========== 查询方法 ==========
     bool has_response() const { return response_received_; }
+    bool has_trade_rtn() const { return trade_rtn_received_; }
+    bool has_cancel_rsp() const { return cancel_rsp_received_; }
     const lb_api::LoginAns& last_login_ans() const { return last_login_ans_; }
     const lb_api::OrderRtn& last_order_rtn() const { return last_order_rtn_; }
     const lb_api::TradeRtn& last_trade_rtn() const { return last_trade_rtn_; }
@@ -44,6 +46,8 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     bool response_received_;
+    bool trade_rtn_received_;
+    bool cancel_rsp_received_;
 
     // 回报数据
     lb_api::LoginAns last_login_ans_;

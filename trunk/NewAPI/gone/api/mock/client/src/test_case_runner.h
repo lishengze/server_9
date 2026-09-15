@@ -5,6 +5,7 @@
 #include "callback_handler.h"
 #include <string>
 #include <vector>
+#include <map>
 
 // 前向声明
 namespace lb_api {
@@ -22,6 +23,7 @@ enum class TestCaseType {
     OrderInsert,
     EtfOrderInsert,
     OrderCancel,
+    TradeRtn,
     WaitHeartbeat,
     Unknown
 };
@@ -92,6 +94,12 @@ private:
     /// 字段比对
     bool match_field(const std::string& field_name, const JsonValue& expected,
                      const std::string& actual_value, std::string& detail);
+
+    /// 提取回报所有字段到 map（用于逐字段比对）
+    void extract_response_fields(TestCaseType type, std::map<std::string, std::string>& out);
+
+    /// 裁剪定长 char 数组的空格和 \0 填充
+    std::string trim_fixed(const char* data, size_t len);
 
     lb_api::api_interface* api_;
     CallbackHandler* handler_;

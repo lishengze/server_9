@@ -5,6 +5,8 @@ namespace mock {
 
 CallbackHandler::CallbackHandler()
     : response_received_(false)
+    , trade_rtn_received_(false)
+    , cancel_rsp_received_(false)
     , last_link_status_(0)
     , last_link_type_(0)
     , last_counter_type_(0)
@@ -36,6 +38,7 @@ void CallbackHandler::on_trade_rtn(const lb_api::StreamInfo& si, const lb_api::T
     std::lock_guard<std::mutex> lock(mutex_);
     last_trade_rtn_ = rtn;
     response_received_ = true;
+    trade_rtn_received_ = true;
     cv_.notify_one();
     std::cout << "[Callback] on_trade_rtn: exec_price=" << rtn.exec_price
               << ", exec_qty=" << rtn.exec_qty
@@ -46,6 +49,7 @@ void CallbackHandler::on_cancel_rsp(const lb_api::StreamInfo& si, const lb_api::
     std::lock_guard<std::mutex> lock(mutex_);
     last_cancel_rsp_ = rsp;
     response_received_ = true;
+    cancel_rsp_received_ = true;
     cv_.notify_one();
     std::cout << "[Callback] on_cancel_rsp: err_code=" << rsp.err_code
               << ", order_sys_no=" << rsp.order_sys_no << std::endl;
@@ -79,6 +83,8 @@ bool CallbackHandler::wait_for_response(int timeout_ms) {
 void CallbackHandler::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     response_received_ = false;
+    cancel_rsp_received_ = false;
+    trade_rtn_received_ = false;
 }
 
 } // namespace mock

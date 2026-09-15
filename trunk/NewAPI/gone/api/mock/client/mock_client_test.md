@@ -150,15 +150,26 @@ LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
 
 ## 三、最终测试结果（2026-09-15）
 
-### 3.1 组合测试 `fte_combo.json`（登录 + 委托 + 撤单）
+### 3.1 组合测试 `fte_combo.json`（登录 + 委托 + 成交回报 + 撤单）
 ```
-总计: 3 | 通过: 3 | 失败: 0
-[PASS] FTE 登录测试        err_code=0, market_type=1
-[PASS] FTE 委托买入测试    order_status=0, rtn_type=1, order_qty=100, side=1
-[PASS] FTE 撤单测试        err_code=0
+总计: 4 | 通过: 4 | 失败: 0
+[PASS] FTE 登录测试        (6字段校验: err_code, market_type, cust_id, fund_account_id, account_id, branch_id)
+[PASS] FTE 委托买入测试    (17字段校验: side, order_type, order_status, policy_id, market_type, reserved,
+                           security_id, order_price, order_qty, rtn_type, err_code, fee, cancel_qty,
+                           cust_id, fund_account_id, account_id, branch_id)
+[PASS] FTE 成交回报校验    (17字段校验: 同上 + trade_qty, exec_price, exec_qty)
+[PASS] FTE 撤单测试        (7字段校验: err_code=50046[订单已成交], rej_api, cust_id, fund_account_id,
+                           account_id, branch_id, market_type)
 ```
 
-### 3.2 客户端日志确认收到全部回报（含 2005 成交回报）★修复后
+### 3.2 逐字段校验机制（Task 7.5 增强）
+- **JSON 格式**：`expected_response.fields` 对象包含回报结构体的**全部字段**，值为 `null` 表示动态字段（如 `order_sys_no`、时间戳等）跳过校验，非 `null` 值进行精确比对。
+- **字段提取**：`extract_response_fields()` 自动提取回报结构体所有字段到 `map<string,string>`，支持定长 char 数组的 `\0`/空格裁剪（`trim_fixed`）。
+- **动态引用**：撤单请求的 `order_sys_no` 支持 `"$last_order_sys_no"` 特殊值，自动引用上一笔委托的 order_sys_no。
+- **异步等待**：成交回报(2005)测试使用主动轮询等待（超时 5s），不依赖同步响应机制。
+- **撤单等待**：撤单测试使用 `has_cancel_rsp()` 特定响应等待，避免被中间的其他回报(2003)干扰。
+
+### 3.3 客户端日志确认收到全部回报（含 2005 成交回报）★修复后
 ```
 gw deal_recv_msg: msg_id=2001 msg_len=78   登录应答
 gw deal_recv_msg: msg_id=2003 msg_len=324  委托回报
@@ -168,7 +179,7 @@ gw deal_recv_msg: msg_id=2005 msg_len=324  成交回报  ← 修复后新增
 ```
 修复前客户端在收到 2003 后就因 FTE 心跳超时断开（`err_code=-39`），2005 从未到达；修复后 2005 正常到达并触发 `on_trade_rtn`。
 
-### 3.3 FTE 日志确认完整成交链路（委托 → 确认 → 成交）
+### 3.4 FTE 日志确认完整成交链路（委托 → 确认 → 成交）
 ```
 DealTradeOrderReqBusi: internal_order offer_way[1] gw_index[0]  (无 offerWay 错误)
 SendTradeOrderER:  exec_type[1] ord_status[10]  委托回报

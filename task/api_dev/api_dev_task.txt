@@ -130,3 +130,9 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
             7.5 注意进行各种请求对应的回报校验对比测试时，
                 需要逐个字段进行比对， 确保回报里所有的信息都是符合预期的。
                 预期的回报的详细字段，都存储到对应的测试案例 json 文件中，方便进行解析阅读。
+
+
+            7.6 mock_client 经过这么多轮次的更新，功能完善了很多，
+                现在给它补充完善的代码说明和使用说明 到 trunk/NewAPI/gone/api/mock/client/mock_client_design.md 中。
+
+            7.7 给此次新增的 mock_client, 98_counter_mock,和 api中修改的，增加的代码，都增加详细的注释，增加其可度读性。
