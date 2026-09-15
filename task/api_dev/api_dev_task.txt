@@ -2,7 +2,7 @@ API 开发任务
 
 [NGTP-T202612257]-优化低延时API
 
-svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
+svn commit -m  "[NGTP-T202612257] API 个微相关开发测试完成"
 
 学习任务:
     当前 trunk/NewAPI 是一套新的API 框架代码，面向客户，对接三个柜台。 
