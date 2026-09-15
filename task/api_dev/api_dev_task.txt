@@ -147,3 +147,6 @@ svn commit -m  "[NGTP-T202612257] API 个微相关开发测试完成"
 
 
         9. trunk/NewAPI/gone/api/doc 中的，对于每个文件的说明文档，是旧版的，现在根据当前的代码，进行仔细的学习和详细认真的更新。
+
+        10. 一个小的数据结构属性名变动 trunk/NewAPI/gone/api/include/order_trade_type.h 
+            中的 OrderReq 的 market_id 更名为 market_type, 把当前系统所有相关的代码，都进行更新，然后进行回归功能测试。

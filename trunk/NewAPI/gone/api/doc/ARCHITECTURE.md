@@ -502,10 +502,13 @@ int32 deal_link_connect(int16 link_type, int32 have_switch);
 
 #### gw_counter_direct（独立类，非模板）
 
-- 协议待实现：build_*_msg 全部留空 + `// todo`
-- 临时替代：build_login_msg 用 g1 login_req，build_heart_msg 用 g1_msg_head
-- 接收消息：deal_recv_msg 用 g1 msg_id 分发
-- v2.1：`init_gateway` 为 no-op（个微无 GW 槽）
+- 协议：**FTE TCP Binary**（`gw_head.h` 的 `gw_message::*`），报文 `[PktNewHeader 8B | 消息体 | 校验和 4B]`
+- 已实现：`build_order_msg` / `build_etf_order_msg` / `build_cancel_msg` / `build_login_msg` / `build_heart_msg`（FTE 协议）
+- 已实现：`deal_recv_msg` 按 FTE msg_id 分发（登录应答/委托回报/成交回报/撤单应答/心跳/拒绝）
+- 会话缓存：`GwSessionCache` 全局单例（fund_account_id 主键 + order_sys_no↔{clordno,client_seq_id} 映射）
+- 状态映射：`map_ord_status` / `map_exec_type` / `map_market_id`
+- 性能优化：直接序列化 + 单趟校验和（方案 B/C/D）、原子化状态（方案 F）、日志降噪（方案 E）
+- v2.1：`init_gateway` 为 no-op（个微无 GW 槽）；个微不支持地址切换，`have_switch` 忽略
 
 ---
 
@@ -871,6 +874,7 @@ link.deal_ch_close() [aio_tcp 回调]
 ### 9.3 外部依赖（include/ + 公共库）
 
 - `g1msghead.h` / `g1trademsg.h`：FPGA g1 协议（外部定义，完整）
+- `gw_head.h`：个微 FTE TCP Binary 协议（`gw_message::*`，完整，已实现）
 - `c98msg_tmp.h`：98 协议占位（外部定义缺失，待补）
 - `lb_common`：基础库（aio_tcp / tcpdir_ch / mthread / que_mth_buf / simple_thread / log / reconnect_ctl / event_wake / hash_map_mth / str_copy_format 等）
 
@@ -1040,13 +1044,13 @@ link.deal_ch_close() [aio_tcp 回调]
 ### 12.1 协议实现
 
 - 98 协议真实字段（c98_*_req / c98_*_ans 完整定义）
-- 个微协议真实字段（gw_order_req / gw_cancel_req / gw_query_req）
+- 个微协议：**已完成**（FTE TCP Binary，`gw_head.h` 的 `gw_message::*`）
 - 6 类查询的 98 应答解析
 
 ### 12.2 业务补全
 
-- `build_order_msg` / `build_etf_order_msg` / `build_cancel_msg` 等留空实现
-- `deal_recv_msg` 中 6 类查询应答分发
+- `counter98` 的 `build_order_msg` / `build_etf_order_msg` / `build_cancel_msg` 等留空实现
+- `counter98::deal_recv_msg` 中 6 类查询应答分发
 - `deal_send_error` 完整 OrderRtn/CancelRsp 构造
 
 ### 12.3 FPGA 柜台地址切换自愈

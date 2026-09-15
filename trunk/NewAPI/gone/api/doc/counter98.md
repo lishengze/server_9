@@ -114,11 +114,15 @@ gw_eng_op_->trigger_send();
 ```
 
 ## 待完成任务
-1. **所有 build_*_msg 留空**：需依据 98 正式协议实现。
-2. **deal_recv_msg 只分发 3 类**：AGW登录/账户登录/心跳，查询应答等未接入。
+1. **所有 build_*_msg 留空**：需依据 98 正式协议实现（委托/撤单/查询消息构建为 todo）。
+2. **deal_recv_msg 只分发 3 类**：AGW登录/账户登录/心跳，查询应答等未接入分发。
 3. **缓存结构未定义**：`counter98.h:222` 有 `//todo`。
-4. **登录状态管理**：`cust_need_login` 硬编码 false、超时处理、已登录用户管理待完善。
+4. **登录状态管理**：`cust_need_login` 已默认 `true`（账户需登录）；超时处理、已登录用户管理待完善。
 5. **deal_send_error 留空**：需构造 OrderRtn/CancelRsp 回调客户。
+
+## 近期修复记录
+- **`cust_need_login` 默认 true**（`counter98.cpp`）：此前硬编码 `false` 跳过 98 账户登录，已修正为 `true` 使账户登录正常发起。
+- **移除重复的 `memcpy(body->session, ...)`**（`counter98.cpp`）：登录应答构建中重复拷贝 session 字段，已清理。
 
 ## 设计要点
 1. 柜台对上层只暴露业务 API 接口，隐藏组包细节。

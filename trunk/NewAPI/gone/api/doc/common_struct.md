@@ -127,6 +127,6 @@ class AgwMsgConstituentStockUnit {
 
 ## 设计要点
 1. 本文件定义的是 **个微柜台协议消息体**（GW 协议），与 g1 协议（fpga 使用）和 c98 协议（98 柜台使用）不同。
-2. 当前 `gw_counter_direct` 的 `build_*_msg` 和回报解析全部留空，待依据本文件中的正式结构体实现。
+2. **注意**：当前 `gw_counter_direct` 已完整实现 **FTE TCP Binary 协议**（`gw_head.h` 的 `gw_message::*` 结构体，见 [gw_counter_direct.md](gw_counter_direct.md)），本文件描述的 GW 协议结构体为历史/备用定义，**未在 FTE 链路中使用**。FTE 链路消息体以 `gw_head.h` 为准。
 3. 部分字段使用了 `std::string` / `std::vector`（如 `client_feature_code`、`constituent_stock`），序列化时需注意处理动态长度。
 4. 消息 ID 注释标注了对应的业务代码（如 `100101` 为现货委托）。

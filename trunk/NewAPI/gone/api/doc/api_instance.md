@@ -10,7 +10,7 @@
 ## 模板参数
 
 - `TFastCounter`：极速柜台类（`gw_counter_direct` / `fpga_counter_direct` / `fpga_counter_gateway`）
-- `TEngine`：极速引擎类型（`tcpdirect_engine` / `single_socket_engine` / shared_engine）
+- `TEngine`：极速引擎类型（`tcpdirect_engine` / `single_socket_engine` / `idle_engine`）
 
 ## 类成员
 
