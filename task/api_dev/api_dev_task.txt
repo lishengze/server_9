@@ -139,3 +139,9 @@ svn commit -m  "[NGTP-T202612257] API CMakeLists.txt 优化完成"
 
             7.8 分析当前 gw_counter 模块整个处理流程中的性能瓶颈，分析从请求到api,再到发送给 柜台，哪些操作耗时较多，然后给出优化方案。
                 将其补充到 trunk/NewAPI/gone/api/mock/client/mock_client_design.md 中。
+
+        8. 任务：api 性能优化
+            1. 先按照 trunk/NewAPI/gone/api/mock/client/mock_client_design.md 中的 14.3 章节的 b,c,d,e,f 步骤进行代码
+                的优化，优化完成后，进行当前功能的回归测试。
+            2. 将优化过程中遇到的问题，修改的代码，增删的数据，解决的方案， 实际的结果 等，详细的记录到 mock/client/mock_client_test.md 中。
+

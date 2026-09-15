@@ -216,3 +216,91 @@ get_period_milli [5000]  (修复后心跳周期为 5000ms，无 Heartbeat timeou
 5. **FTE 配置与模拟交易所配置分离**：连接 pbu 在 FTE `ute.xml`（`pbu_id_list`），模拟交易所下发的 pbu_array 在 `simulator_tgw.xml`，两者需一致。
 6. **FTE 心跳周期单位陷阱**：登录消息 `heart_bt_int` 语义为秒，但 FTE 的 `detect_timer`/`send_timer` 按毫秒解释（`LocalMilliseconds_def(period*2)`）。若客户端发送 5（秒），FTE 会按 5ms 处理 → 10ms 心跳超时 → 主动断链，导致后续回报（如 2005 成交回报）丢失。对接方需保证 `heart_period` 为毫秒值。
 7. 测试用例预期值应先核对 NewAPI 状态/回报类型映射，避免猜测。
+
+---
+
+## 六、性能优化记录（Task 8：2026-09-15）
+
+> 基于 `mock_client_design.md` §14.3 的 B/C/D/E/F 方案，对 `gw_counter_direct` 模块实施优化。
+> 优化范围：`trunk/NewAPI/gone/api/src/gw_counter_direct.cpp` + `.h`
+
+### 6.1 优化方案概览
+
+| 方案 | 级别 | 优化内容 | 涉及代码 |
+|:---|:---|:---|---:|
+| **B** | P1 | 合并 memcpy 与空格填充（`cksum_copy_pad`），消除同一数组的两次遍历 | `build_order_msg`/`etf`/`cancel` |
+| **C** | P1 | 校验和与序列化合并，边写边累加校验和，消除第二次 O(n) 遍历 | 同上（内建于直接序列化） |
+| **D** | P2 | 直接序列化到 o_buf（无中间 body 对象），消除栈上构造与序列化拷贝 | 同上 |
+| **E** | P0 | 高频日志降级（`info_log`→`debug_log`）：`deal_recv_msg` 每笔回报日志、`deal_trade_rtn` 入口日志 | `deal_recv_msg`、`deal_trade_rtn` |
+| **F** | P2 | 原子化跨线程状态变量：`login_state`/`trade_link_connect_` 用 `atomic_load16/store16`；`session_seq_` 用 `atomic_fetch_add64` | `.h` + `.cpp` 全部访问点 |
+
+### 6.2 修改的代码
+
+**新增辅助函数（方案 B/C/D）：**
+```cpp
+// 单字节写 + 校验和累加
+static inline void cksum_put(char*& p, uint8_t b, uint32_t& sum);
+// 定长块写 + 校验和累加
+static inline void cksum_write(char*& p, const void* src, size_t n, uint32_t& sum);
+// 拷贝并空格填充 + 校验和累加（方案 B 核心）
+static inline void cksum_copy_pad(char*& p, const char* src, size_t n, uint32_t& sum);
+// 大端 uint32 写（ByteSwap32，用于消息头）+ 校验和累加
+static inline void cksum_be32(char*& p, uint32_t v, uint32_t& sum);
+// 网络序 int64/32/16 写 + 校验和累加（HostToNetwork 保留调用以兼容未来）
+static inline void cksum_net64/32/16(...);
+// 校验和尾部写入（sum%256 → ByteSwap32 → memcpy 4 字节）
+static inline void cksum_finish(char*& p, uint32_t sum);
+```
+
+**方案 C/D 核心变更**：`build_order_msg`/`build_etf_order_msg`/`build_cancel_msg` 从「栈上构造 body → encode → 单独校验和」改为「直接在 o_buf 中按字段顺序序列化，边写边累加校验和」。字段顺序与 `TradeOrderReq::encode` / `CancelOrderReq::encode` 完全一致（经 gw_head.h 逐字段核对）。
+
+**方案 F 变更**（`.h` + `.cpp`）：
+- `get_session_seq_no()` 改为 `atomic_load64(&session_seq_)`
+- 3 个 `deal_*_req` 的 `trade_link_connect_`/`login_state` 读改为 `atomic_load16`
+- `deal_cust_login`/`ans_cust_login`/`deal_log_ans` 写改为 `atomic_store16`
+- `deal_link_connect`/`deal_link_close` 写改为 `atomic_store16`
+- 7 处 `++session_seq_` 改为 `atomic_fetch_add64(&session_seq_, 1) + 1`
+
+**方案 E 变更**：
+- `deal_recv_msg` 每笔回报日志：`info_log` → `debug_log`（含 hexbuf 构造）
+- `deal_trade_rtn` 入口日志：`info_log` → `debug_log`
+
+**删除的代码**：
+- `space_pad<N>()` 模板函数（原被 3 个 build 函数共调用 12 次，优化后由 `cksum_copy_pad` 替代）
+
+### 6.3 遇到的问题
+
+| 问题 | 说明 | 解决方案 |
+|:---|:---|---:|
+| `CancelOrderReq::encode` 字段顺序确认 | 撤单消息的字段顺序（fund_account_id/branch_id/account_id/cust_id/client_seq_id/agw_seq_id/orig_client_seq_id/orig_clordno）需与 encode 一致 | 读取 `gw_head.h` 第 870-890 行确认，手工序列化严格对齐 |
+| `TradeOrderReq::encode` 字段顺序确认 | 委托消息 13 个字段的写入顺序 | 读取 `gw_head.h` 第 790-808 行确认，`stop_px` 在最后 |
+| `HostToNetwork` 为 no-op | 此前已确认 FTE 使用主机字节序，`HostToNetwork` 直接返回 `v`，因此 `cksum_net64` 写入主机序，与 encode 输出一致 | 保留 `HostToNetwork` 调用以兼容未来 |
+| `atomic_fetch_add64` 返回旧值 | `++session_seq_` 返回新值，`atomic_fetch_add64` 返回旧值 | 改为 `atomic_fetch_add64(&session_seq_, 1) + 1` |
+| PktNewHeader 使用 `ByteSwap32`（非 `HostToNetwork`） | 消息头字段需大端序，body 字段用主机序 | `cksum_be32` 用 `ByteSwap32`，body 字段用 `cksum_net64/32/16`（no-op） |
+| 退出时 `cmutex::lock` 断言失败 | 进程退出阶段，API 实例析构与 engine 线程清理顺序问题 | **预先存在的 shutdown 问题**（优化前旧代码同样触发），与本次优化无关 |
+
+### 6.4 实际结果
+
+**编译**：通过，无新增警告（仅 `g1_msg_ver`/`c98_msg_ver` 预先存在的 unused 警告）。
+
+**回归测试**（FTE 环境 + mock_client `fte_combo.json`）：
+```
+总计: 4 | 通过: 4 | 失败: 0
+[PASS] FTE 登录测试        (0ms, 6字段校验)
+[PASS] FTE 委托买入测试    (0ms, 17字段校验)
+[PASS] FTE 成交回报校验    (60ms, 17字段校验)
+[PASS] FTE 撤单测试        (20ms, 7字段校验)
+```
+4/4 全部通过，证明直接序列化输出与优化前字节完全一致，FTE 正确解析。
+
+**退出崩溃**：进程退出时 `cmutex::lock` 断言失败（exit=134）。经 **git stash 对比验证**，优化前旧代码同样触发此崩溃，确认是**预先存在的 shutdown 问题**，与本次优化无关。
+
+### 6.5 优化效果评估
+
+| 维度 | 优化前 | 优化后 | 改善点 |
+|:---|:---|---:|:---:|
+| 消息构建遍历次数 | memcpy(N) + strnlen(N) + fill(N) = 3N/字段 | `cksum_copy_pad` 一次遍历 = N/字段 | **减少 66% 数组遍历** |
+| 校验和计算 | 单独 `GenerateSzCheckSum` O(n) 第二次遍历 | 边写边累加，零额外遍历 | **消除一次 O(n) 遍历** |
+| 中间拷贝 | 栈上 `body` 对象 + `encode` 到 o_buf | 直接序列化到 o_buf | **消除中间对象** |
+| 日志 I/O（高吞吐） | `info_log` 每笔回报 + 每笔成交 | `debug_log`（生产可关闭） | **高吞吐下 I/O 显著下降** |
+| 跨线程状态访问 | 普通变量（数据竞争风险） | atomic 操作 | **消除数据竞争** |

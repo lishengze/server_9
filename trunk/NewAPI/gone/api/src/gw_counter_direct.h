@@ -47,8 +47,8 @@ using lb_common::uint8;
 class gw_counter_direct {
 public:
   FORCE_INLINE int32 get_counter_type() const { return static_cast<int32_t>(counter_type::gw_direct); }
-  /// 原子读取会话消息序号
-  FORCE_INLINE int64 get_session_seq_no() const { return session_seq_; }
+  /// 原子读取会话消息序号（方案 F：session_seq_ 在引擎线程自增、外部线程读取，须原子访问）
+  FORCE_INLINE int64 get_session_seq_no() const { return lb_common::atomic_load64(&session_seq_); }
 
   /// api instance 调用，init 中
   int32 init(const api_config_impl &cfg, callback_manager *cb, lb_common::lb_log *log);
@@ -185,14 +185,14 @@ protected:
   void build_api_cancel_rej(const gw_message::CancelOrderReq *req, int32 err_code, CancelRsp &o_rtn, StreamInfo &o_stream);
 
 private:
-  int16 trade_link_connect_ = 0; ///< 极速链接状态:0-未链接/断开, 1-已链接
-  int16 login_state = 0;         ///< 用户登陆状态:0-未登陆，1-登陆中，2-登陆成功
+  int16 trade_link_connect_ = 0; ///< 极速链接状态:0-未链接/断开, 1-已链接（跨线程，用 atomic_load16/store16 访问）
+  int16 login_state = 0;         ///< 用户登陆状态:0-未登陆，1-登陆中，2-登陆成功（跨线程，用 atomic_load16/store16 访问）
   int16 market_type = 0;         ///< 市场
   int16 heart_interval = 5;      ///< 心跳间隔
   lb_common::que_mth_buf *trade_send_queue_ = nullptr; ///< 极速柜台发送队列
 
   callback_manager *cb_mgr_ = nullptr;
-  int64 session_seq_ = 0;
+  int64 session_seq_ = 0;        ///< 会话消息序号（引擎线程自增、外部线程读取，用 atomic_fetch_add64/atomic_load64 访问）
   lb_common::lb_log *log_ = nullptr;
   link_engine_outop *trade_eng_op_ = nullptr; ///< 极速引擎导出的链接相关操作
 };
