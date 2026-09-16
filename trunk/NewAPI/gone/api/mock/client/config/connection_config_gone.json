@@ -19,10 +19,10 @@
   "log_output_dir": "./api_log",
 
   "perf_test": {
-    "enable": false,
-    "duration_sec": 5,
-    "tps": 100,
-    "warmup_sec": 1,
+    "enable": true,
+    "duration_sec": 10,
+    "tps": 10000,
+    "warmup_sec": 3,
     "cpu_id": -1,
     "report_file": "perf_report_gone.txt",
     "order": {

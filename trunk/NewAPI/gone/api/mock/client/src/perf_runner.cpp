@@ -198,7 +198,7 @@ bool PerfRunner::run() {
 
 std::string PerfRunner::report_text() const {
     std::ostringstream oss;
-    oss << "\n========== FTE 委托通路性能测试报告 ==========\n"
+    oss << "\n========== " << cfg_.counter_name << " 委托通路性能测试报告 ==========\n"
         << "测试时间 : " << test_time_sec_ << " 秒\n"
         << "目标 TPS : " << cfg_.tps << "\n"
         << "实际 TPS : " << actual_tps_ << "\n"

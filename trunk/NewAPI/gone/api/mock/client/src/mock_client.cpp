@@ -129,6 +129,16 @@ bool MockClient::init(const std::string& config_path) {
         // 创建性能测试执行器
         perf_runner_ = new PerfRunner(api_);
 
+        // 根据柜台类型设置性能测试报告标题名称
+        int32_t fct = static_cast<int32_t>(config["fast_counter_type"].as_int());
+        std::string counter_name = "FTE"; // 默认 gw counter
+        if (fct == 2) {
+            counter_name = "GOne";        // fpga_direct
+        } else if (fct == 3) {
+            counter_name = "GOne-GW";     // fpga_gateway
+        }
+        perf_runner_->set_counter_name(counter_name);
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[MockClient] 初始化异常: " << e.what() << std::endl;

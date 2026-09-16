@@ -34,6 +34,7 @@ struct PerfConfig {
     int32_t warmup_sec = 3;     ///< 预热/绑核等待时间（秒），确保绑核生效后再发单
     int32_t cpu_id = -1;        ///< CPU 绑定目标，-1 表示不绑定
     std::string report_file = "perf_report.txt"; ///< 报告输出文件
+    std::string counter_name = "FTE"; ///< 柜台名称（用于报告标题，FTE/GOne 等）
 
     // 委托模板（用于构造性能测试的委托请求）
     std::string fund_account_id;
@@ -61,6 +62,9 @@ public:
 
     /// 是否开启性能测试
     bool enabled() const { return cfg_.enable; }
+
+    /// 设置柜台名称（用于报告标题，如 FTE/GOne）
+    void set_counter_name(const std::string& name) { cfg_.counter_name = name; }
 
     /// 执行性能测试（须在登录成功后调用，复用当前已登录的 api 实例）
     /// @return 是否成功完成

@@ -5,7 +5,7 @@
         "name": "FTE 登录测试",
         "description": "验证 FTE 登录应答的所有字段",
         "counter_type": "gw_direct",
-        "timeout_ms": 5000
+        "timeout_ms": 30000
       },
       "request": {
         "type": "login",

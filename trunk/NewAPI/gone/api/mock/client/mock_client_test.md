@@ -796,3 +796,119 @@ LD_LIBRARY_PATH=/mnt/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
 2. ✅ **委托/成交/撤单全链路**：委托应答（order_rtn, rtn_type=0）→ 成交回报（trade_rtn, order_status=3）→ 撤单应答（cancel_rsp, err_code=0）均正常。
 3. ✅ **心跳维持**：GW/Core 双链路 30s 心跳不断链。
 4. ✅ **字段完整性**：登录/委托/成交/撤单所有定长字段校验通过（含 16 字节 `cust_id`/`fund_account_id` 满字段）。
+
+---
+
+## 四、GOne 性能测试与 FTE 对比（2026-09-16）
+
+### 4.1 GOne 性能测试功能
+
+**实现方式**：复用 mock_client 内置的 `PerfRunner` 模块（与 FTE 一致），通过 `set_counter_name()` 动态化报告标题。
+
+**修改内容**：
+
+| 文件 | 修改 |
+|:---|:---|
+| `perf_runner.h` | `PerfConfig` 新增 `counter_name` 字段（默认 "FTE"），`PerfRunner` 新增 `set_counter_name()` |
+| `perf_runner.cpp` | 报告标题从写死 "FTE" 改为动态 `cfg_.counter_name` |
+| `mock_client.cpp` | `init()` 中根据 `fast_counter_type` 设置 counter_name（1=FTE, 2=GOne, 3=GOne-GW） |
+| `connection_config_gone.json` | perf_test: enable=true, duration_sec=10, tps=10000, report_file="perf_report_gone.txt" |
+| `connection_config.json` | perf_test: enable=true, duration_sec=10, tps=10000, report_file="perf_report_fte.txt" |
+| `run_perf_compare.sh` | 新建，顺序执行 FTE → GOne 性能测试 |
+
+### 4.2 GOne 性能测试结果（10000 TPS / 10 秒）
+
+**测试配置**：`connection_config_gone.json`（fast_counter_type=2, speed_counter_addr=127.0.0.1:44001, counter98_addr=127.0.0.1:9003）
+
+**环境**：gone_counter_mock（44001/44002）+ counter98_mock（9003）
+
+```
+========== GOne 委托通路性能测试报告 ==========
+测试时间 : 10.0001 秒
+目标 TPS : 10000
+实际 TPS : 9207.18
+样本数   : 92073
+CPU 绑定 : 不绑定
+
+------- API 内处理耗时（纳秒）-------
+样本数    : 92073
+总耗时    : 39956734 ns
+平均值    : 433.968 ns
+P50 (50%) : 333 ns
+P75 (75%) : 431 ns
+P90 (90%) : 522 ns
+最大值    : 646667 ns
+最小值    : 111 ns
+标准差    : 2541.83 ns
+============================================
+```
+
+**关键指标**：
+
+| 指标 | GOne (fpga_direct) | 说明 |
+|:---|---:|:---|
+| 发送笔数 | 92,073 | 目标 100,000（10s×10,000 TPS） |
+| 成功笔数 | **92,073** | **100% 成功 ✅** |
+| 失败笔数 | **0** | 无 -22 断链、无 -25 队列满 |
+| 实际 TPS | 9,207 | 目标 10,000（~92%达成，受 sleep 精度限制） |
+| 平均延迟 | **434 ns** | API 内处理耗时 |
+| P50 | **333 ns** | 中位数延迟 |
+| P90 | **522 ns** | 90% 延迟 |
+| 最大值 | 646,667 ns | 单次尖峰（系统调度） |
+
+### 4.3 FTE 性能测试状态
+
+**当前问题**：FTE 环境重启后，快速链路（33001）登录失败。
+
+**日志分析**（`fte_test_client_0_10.log`）：
+```
+09:04:40  socket link connected to 33001 (link_type=1)    ← TCP 连接成功
+09:04:40  fast socket link send cust login ok              ← 发送登录
+09:04:46  socket link is closing, link_type=1              ← 6 秒后链接关闭
+09:04:46  socket link closed end                           ← API 主动关闭（心跳超时）
+09:04:48+ connect_ch ret=-1 ip=127.0.0.1 port=33001        ← 后续重连全部失败
+```
+
+**根因**：FTE 未返回快速链路登录应答（msg_id=2001），API 在 6 秒心跳超时后主动关闭链接。FTE ute 进程（PID 482022/482084）持续占用 92-99% CPU，但快速链路不响应新登录。
+
+**影响**：FTE 功能测试 5/5 失败，性能测试 91,886 笔全部返回 -22（`LBAPI_ERR_LINK_DISCONNECTED`）。
+
+**限制**：FTE 环境运行在独立命名空间/容器中（`/mnt/work/gt_test/` 不可访问），FTE 进程为 root 用户，无法查看 FTE 日志或重启环境。
+
+### 4.4 FTE vs GOne 对比（预期 vs 实际）
+
+| 对比维度 | FTE（gw counter） | GOne（fpga_direct） | 说明 |
+|:---|---:|:---:|:---|
+| 功能测试 | 5/5 PASS ✅（历史记录） | 5/5 PASS ✅ | 两者功能均完整 |
+| 性能测试 | ❌ 环境不可用 | ✅ **100% 成功** | FTE 重启后登录失败 |
+| 平均延迟 | ~2,523 ns（历史 500 TPS） | **434 ns** | GOne 延迟约为 FTE 的 **1/6** |
+| P50 | ~2,052 ns（历史 500 TPS） | **333 ns** | GOne 中位延迟约为 FTE 的 **1/6** |
+| P90 | ~4,290 ns（历史 500 TPS） | **522 ns** | GOne P90 约为 FTE 的 **1/8** |
+| 10000 TPS 稳定性 | 未知（环境不可用） | ✅ 92,073/92,073 成功 | GOne 稳定 |
+
+> **注**：FTE 历史数据为 500 TPS / 30 秒场景（2026-09-16 04:39 复测记录），非 10000 TPS。高负载下 FTE 延迟可能进一步劣化（FTE 对象池/心跳/CPU 瓶颈）。
+
+### 4.5 运行命令
+
+**GOne 性能测试**：
+```bash
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/client
+LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
+  /home/lsz/code/work/api_trunk/build_cmake/bin/mock_client \
+  --config config/connection_config_gone.json \
+  --testcase config/test_cases/gone_combo.json \
+  --report test_report_gone.txt
+```
+
+**顺序对比**（FTE + GOne）：
+```bash
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/client
+bash run_perf_compare.sh
+```
+
+### 4.6 结论
+
+1. ✅ **GOne 性能测试功能完整实现**：指标、配置、分析、报告格式与 FTE 完全一致，报告标题动态化。
+2. ✅ **GOne 性能表现优异**：10000 TPS 下 100% 成功，平均延迟 434ns，P50=333ns，P90=522ns。
+3. ❌ **FTE 对比数据缺失**：FTE 环境重启后快速链路登录失败，无法在相同场景下对比。
+4. ⚠️ **建议**：待 FTE 环境修复后，重新运行 `run_perf_compare.sh` 获取完整对比数据。
