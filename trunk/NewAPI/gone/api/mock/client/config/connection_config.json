@@ -21,7 +21,7 @@
 
   "perf_test": {
     "enable": true,
-    "duration_sec": 10,
+    "duration_sec": 5,
     "tps": 10000,
     "warmup_sec": 3,
     "cpu_id": -1,

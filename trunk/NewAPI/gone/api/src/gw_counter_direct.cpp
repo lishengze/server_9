@@ -51,12 +51,31 @@ int32 gw_counter_direct::init(const api_config_impl &cfg, callback_manager *cb, 
 // FTE 校验和计算（保留供非热路径使用）
 // ============================================================
 
-uint32_t gw_counter_direct::GenerateSzCheckSum(const char *buf, uint32_t len) {
-  uint32_t sum = 0;
-  for (uint32_t i = 0; i < len; ++i) {
-    sum += static_cast<uint8_t>(buf[i]);
+// 宽累加校验和（一次 8 字节拆字节求和，循环次数降为 ~len/8，编译器易向量化）
+static inline uint32_t checksum_bytes(const char* buf, uint32_t len) {
+  uint64_t sum = 0;
+  uint32_t i = 0;
+  for (; i + 8 <= len; i += 8) {
+    uint64_t v;
+    memcpy(&v, buf + i, 8);
+    sum += (v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF) + ((v >> 24) & 0xFF)
+         + ((v >> 32) & 0xFF) + ((v >> 40) & 0xFF) + ((v >> 48) & 0xFF) + ((v >> 56) & 0xFF);
   }
-  return sum % 256;
+  for (; i < len; ++i) sum += static_cast<uint8_t>(buf[i]);
+  return static_cast<uint32_t>(sum);
+}
+
+// 空格填充到定长 n（源 \0 结尾，截断到 n），返回写后指针
+// 使用 memset 整块填空格 + memcpy 拷贝实际内容，替代逐字节 copy_pad
+static inline char* pad_copy(char* p, const char* src, size_t n) {
+  size_t slen = strnlen(src, n);
+  memset(p, ' ', n);
+  memcpy(p, src, slen);
+  return p + n;
+}
+
+uint32_t gw_counter_direct::GenerateSzCheckSum(const char *buf, uint32_t len) {
+  return checksum_bytes(buf, len) % 256;
 }
 
 // ============================================================
@@ -235,33 +254,40 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
   fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
+  // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
-  uint32_t sum = 0;
   // PktNewHeader（ByteSwap32 大端）
-  cksum_be32(p, gw_message::kPktOrderReq, sum);
-  cksum_be32(p, sizeof(gw_message::TradeOrderReq), sum);
-  // TradeOrderUser：fund_account_id / branch_id / account_id / cust_id（拷贝+空格填充+校验和）
-  cksum_copy_pad(p, req.fund_account_id.data(), sizeof(gw_message::TradeOrderReq::fund_account_id), sum);
-  cksum_copy_pad(p, req.branch_id.data(), sizeof(gw_message::TradeOrderReq::branch_id), sum);
+  uint32_t be = gw_message::detail::ByteSwap32(gw_message::kPktOrderReq);
+  memcpy(p, &be, 4); p += 4;
+  be = gw_message::detail::ByteSwap32(sizeof(gw_message::TradeOrderReq));
+  memcpy(p, &be, 4); p += 4;
+  // TradeOrderUser：整块拷贝 + 空格填充
+  p = pad_copy(p, req.fund_account_id.data(), sizeof(gw_message::TradeOrderReq::fund_account_id));
+  p = pad_copy(p, req.branch_id.data(), sizeof(gw_message::TradeOrderReq::branch_id));
+  // session 字段已定长空格填充，直接 memcpy 整块（消除逐字节 pad 判断）
   if (session) {
-    cksum_copy_pad(p, session->account_id.data(), sizeof(gw_message::TradeOrderReq::account_id), sum);
-    cksum_copy_pad(p, session->cust_id.data(), sizeof(gw_message::TradeOrderReq::cust_id), sum);
+    memcpy(p, session->account_id.data(), sizeof(gw_message::TradeOrderReq::account_id)); p += sizeof(gw_message::TradeOrderReq::account_id);
+    memcpy(p, session->cust_id.data(), sizeof(gw_message::TradeOrderReq::cust_id)); p += sizeof(gw_message::TradeOrderReq::cust_id);
   } else {
-    for (size_t i = 0; i < sizeof(gw_message::TradeOrderReq::account_id); ++i) cksum_put(p, ' ', sum);
-    for (size_t i = 0; i < sizeof(gw_message::TradeOrderReq::cust_id); ++i) cksum_put(p, ' ', sum);
+    memset(p, ' ', sizeof(gw_message::TradeOrderReq::account_id)); p += sizeof(gw_message::TradeOrderReq::account_id);
+    memset(p, ' ', sizeof(gw_message::TradeOrderReq::cust_id)); p += sizeof(gw_message::TradeOrderReq::cust_id);
   }
-  cksum_net64(p, req.client_seq_id, sum);
-  cksum_net64(p, 0, sum);  // agw_seq_id
+  // 主机序直通（HostToNetwork 为 no-op，小端）
+  memcpy(p, &req.client_seq_id, 8); p += 8;
+  memset(p, 0, 8); p += 8;  // agw_seq_id = 0
   // TradeOrderInfo
-  cksum_copy_pad(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id), sum);
-  cksum_net16(p, map_api_market_id_to_fte(req.market_type), sum);
-  cksum_put(p, static_cast<uint8_t>(req.side), sum);
-  cksum_put(p, static_cast<uint8_t>(req.order_type), sum);
-  cksum_net64(p, req.order_qty, sum);
-  cksum_net64(p, req.order_price, sum);
-  cksum_net64(p, req.stop_price, sum);
-  // 校验和
-  cksum_finish(p, sum);
+  p = pad_copy(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id));
+  uint16_t m = map_api_market_id_to_fte(req.market_type);
+  memcpy(p, &m, 2); p += 2;
+  *p++ = static_cast<char>(req.side);
+  *p++ = static_cast<char>(req.order_type);
+  memcpy(p, &req.order_qty, 8); p += 8;
+  memcpy(p, &req.order_price, 8); p += 8;
+  memcpy(p, &req.stop_price, 8); p += 8;
+  // 校验和（对 [头+体] 求和 %256，转大端追加）
+  uint32_t cks = checksum_bytes(o_buf, static_cast<uint32_t>(p - o_buf)) % 256;
+  uint32_t cbe = gw_message::detail::ByteSwap32(cks);
+  memcpy(p, &cbe, 4);
 }
 
 // build_etf_order_msg: 构造 FTE ETF 委托消息 (PktNewHeader + TradeOrderReq + 校验和, msg_id=1010)
@@ -270,33 +296,37 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
   fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
+  // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
-  uint32_t sum = 0;
-  // PktNewHeader（ByteSwap32 大端）
-  cksum_be32(p, gw_message::kPktETFReq, sum);
-  cksum_be32(p, sizeof(gw_message::TradeOrderReq), sum);
+  uint32_t be = gw_message::detail::ByteSwap32(gw_message::kPktETFReq);
+  memcpy(p, &be, 4); p += 4;
+  be = gw_message::detail::ByteSwap32(sizeof(gw_message::TradeOrderReq));
+  memcpy(p, &be, 4); p += 4;
   // TradeOrderUser
-  cksum_copy_pad(p, req.fund_account_id.data(), sizeof(gw_message::TradeOrderReq::fund_account_id), sum);
-  cksum_copy_pad(p, req.branch_id.data(), sizeof(gw_message::TradeOrderReq::branch_id), sum);
+  p = pad_copy(p, req.fund_account_id.data(), sizeof(gw_message::TradeOrderReq::fund_account_id));
+  p = pad_copy(p, req.branch_id.data(), sizeof(gw_message::TradeOrderReq::branch_id));
   if (session) {
-    cksum_copy_pad(p, session->account_id.data(), sizeof(gw_message::TradeOrderReq::account_id), sum);
-    cksum_copy_pad(p, session->cust_id.data(), sizeof(gw_message::TradeOrderReq::cust_id), sum);
+    memcpy(p, session->account_id.data(), sizeof(gw_message::TradeOrderReq::account_id)); p += sizeof(gw_message::TradeOrderReq::account_id);
+    memcpy(p, session->cust_id.data(), sizeof(gw_message::TradeOrderReq::cust_id)); p += sizeof(gw_message::TradeOrderReq::cust_id);
   } else {
-    for (size_t i = 0; i < sizeof(gw_message::TradeOrderReq::account_id); ++i) cksum_put(p, ' ', sum);
-    for (size_t i = 0; i < sizeof(gw_message::TradeOrderReq::cust_id); ++i) cksum_put(p, ' ', sum);
+    memset(p, ' ', sizeof(gw_message::TradeOrderReq::account_id)); p += sizeof(gw_message::TradeOrderReq::account_id);
+    memset(p, ' ', sizeof(gw_message::TradeOrderReq::cust_id)); p += sizeof(gw_message::TradeOrderReq::cust_id);
   }
-  cksum_net64(p, req.client_seq_id, sum);
-  cksum_net64(p, 0, sum);  // agw_seq_id
+  memcpy(p, &req.client_seq_id, 8); p += 8;
+  memset(p, 0, 8); p += 8;  // agw_seq_id
   // TradeOrderInfo
-  cksum_copy_pad(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id), sum);
-  cksum_net16(p, map_api_market_id_to_fte(req.market_type), sum);
-  cksum_put(p, static_cast<uint8_t>(req.side), sum);
-  cksum_put(p, static_cast<uint8_t>(req.order_type), sum);
-  cksum_net64(p, req.order_qty, sum);
-  cksum_net64(p, req.order_price, sum);
-  cksum_net64(p, req.stop_price, sum);
+  p = pad_copy(p, req.security_id.data(), sizeof(gw_message::TradeOrderReq::security_id));
+  uint16_t m = map_api_market_id_to_fte(req.market_type);
+  memcpy(p, &m, 2); p += 2;
+  *p++ = static_cast<char>(req.side);
+  *p++ = static_cast<char>(req.order_type);
+  memcpy(p, &req.order_qty, 8); p += 8;
+  memcpy(p, &req.order_price, 8); p += 8;
+  memcpy(p, &req.stop_price, 8); p += 8;
   // 校验和
-  cksum_finish(p, sum);
+  uint32_t cks = checksum_bytes(o_buf, static_cast<uint32_t>(p - o_buf)) % 256;
+  uint32_t cbe = gw_message::detail::ByteSwap32(cks);
+  memcpy(p, &cbe, 4);
 }
 
 // build_cancel_msg: 构造 FTE 撤单消息 (PktNewHeader + CancelOrderReq + 校验和)
@@ -305,29 +335,34 @@ void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
   fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
+  // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
-  uint32_t sum = 0;
-  // PktNewHeader（ByteSwap32 大端）
-  cksum_be32(p, gw_message::kPktCancelOrderReq, sum);
-  cksum_be32(p, sizeof(gw_message::CancelOrderReq), sum);
+  uint32_t be = gw_message::detail::ByteSwap32(gw_message::kPktCancelOrderReq);
+  memcpy(p, &be, 4); p += 4;
+  be = gw_message::detail::ByteSwap32(sizeof(gw_message::CancelOrderReq));
+  memcpy(p, &be, 4); p += 4;
   // TradeOrderUser
-  cksum_copy_pad(p, req.fund_account_id.data(), sizeof(gw_message::CancelOrderReq::fund_account_id), sum);
-  cksum_copy_pad(p, req.branch_id.data(), sizeof(gw_message::CancelOrderReq::branch_id), sum);
+  p = pad_copy(p, req.fund_account_id.data(), sizeof(gw_message::CancelOrderReq::fund_account_id));
+  p = pad_copy(p, req.branch_id.data(), sizeof(gw_message::CancelOrderReq::branch_id));
   if (session) {
-    cksum_copy_pad(p, session->account_id.data(), sizeof(gw_message::CancelOrderReq::account_id), sum);
-    cksum_copy_pad(p, session->cust_id.data(), sizeof(gw_message::CancelOrderReq::cust_id), sum);
+    memcpy(p, session->account_id.data(), sizeof(gw_message::CancelOrderReq::account_id)); p += sizeof(gw_message::CancelOrderReq::account_id);
+    memcpy(p, session->cust_id.data(), sizeof(gw_message::CancelOrderReq::cust_id)); p += sizeof(gw_message::CancelOrderReq::cust_id);
   } else {
-    for (size_t i = 0; i < sizeof(gw_message::CancelOrderReq::account_id); ++i) cksum_put(p, ' ', sum);
-    for (size_t i = 0; i < sizeof(gw_message::CancelOrderReq::cust_id); ++i) cksum_put(p, ' ', sum);
+    memset(p, ' ', sizeof(gw_message::CancelOrderReq::account_id)); p += sizeof(gw_message::CancelOrderReq::account_id);
+    memset(p, ' ', sizeof(gw_message::CancelOrderReq::cust_id)); p += sizeof(gw_message::CancelOrderReq::cust_id);
   }
-  cksum_net64(p, req.client_req_no, sum);
-  cksum_net64(p, 0, sum);  // agw_seq_id
+  memcpy(p, &req.client_req_no, 8); p += 8;
+  memset(p, 0, 8); p += 8;  // agw_seq_id
 
   // 撤单定位原单：从 GwSessionCache 映射表反查
-  cksum_net64(p, GwSessionCache::instance().get_orig_client_seq_id(fa_key_cache_, req.order_sys_no), sum);
-  cksum_net64(p, GwSessionCache::instance().get_clordno(fa_key_cache_, req.order_sys_no), sum);
+  int64_t orig_seq = GwSessionCache::instance().get_orig_client_seq_id(fa_key_cache_, req.order_sys_no);
+  memcpy(p, &orig_seq, 8); p += 8;
+  int64_t clordno = GwSessionCache::instance().get_clordno(fa_key_cache_, req.order_sys_no);
+  memcpy(p, &clordno, 8); p += 8;
   // 校验和
-  cksum_finish(p, sum);
+  uint32_t cks = checksum_bytes(o_buf, static_cast<uint32_t>(p - o_buf)) % 256;
+  uint32_t cbe = gw_message::detail::ByteSwap32(cks);
+  memcpy(p, &cbe, 4);
 }
 
 // build_login_msg: 构造 FTE 登录消息 (PktNewHeader + LogOnReq + 校验和)
