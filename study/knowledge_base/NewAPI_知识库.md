@@ -1176,3 +1176,125 @@ TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一�
 - `object_pool` 容量自动向上取整到 2 的幂：`create("name", 20000)` → 实际 32768。
 - FTE 端口在测试完成后停止监听（进程存活但降级），多轮测试需重启 FTE。
 - tgw_simulator 38140 端口进程易 defunct（僵尸），需单独重启：`tgw_simulator -p 38140 -m 7 -n TGWSimulator_Bond`。
+
+---
+
+## 27. GOne（fpga_direct）双链路架构与模拟柜台开发（2026-09-16）
+
+### 27.1 GOne 双链路架构
+
+GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链路：
+
+| 链路 | 端口 | 引擎 | 职责 |
+|:---|:---:|:---|:---|
+| **GW 链路** | 44001 | `multi_socket_engine` 的 `fast_gw_link_` | 证券信息查询、客户登录、心跳 |
+| **Core 链路** | 44002 | `single_socket_engine` 的 `link_` | 委托、撤单、心跳 |
+
+**登录流程**：
+1. API 连接 GW 链路（44001）→ 发送 `sec_info_req` → 收 `sec_info_ans`
+2. API 发送 `login_req` → 收 `login_ans`（含 `trade_port=44002`）
+3. API 从 `login_ans` 提取 `trade_port`，连接 Core 链路（44002）
+4. Core 链路建立后，API 在 Core 链路发送委托/撤单
+
+### 27.2 3 种 fast_counter_type
+
+| 枚举值 | 宏 | 柜台类型 | 说明 |
+|:---:|:---|---|:---|
+| 1 | `FAST_COUNTER_TYPE_GW` | gw_counter_direct | 个微软件极速（FTE） |
+| 2 | `FAST_COUNTER_TYPE_FPGA_DIRECT` | fpga_counter_direct | FPGA 直连（GOne） |
+| 3 | `FAST_COUNTER_TYPE_FPGA_GATEWAY` | fpga_counter_gateway | FPGA 网关（GOne-GW） |
+
+### 27.3 模拟柜台 gone_counter_mock
+
+**位置**：`trunk/NewAPI/gone/api/mock/gone_counter/`
+
+**核心组件**：
+- `gone_counter_server`：监听 GW/Core 双端口，accept 后创建 `client_session`
+- `client_session`：单链路会话，处理消息并回应答
+- `session_registry`：GW/Core 会话共享登录信息（双链路关联）
+- `account_manager`：账户配置校验
+- `message_parser`：g1 协议消息编解码
+
+**配置**：`config/server_config.json`（端口、账户、超时、日志）
+
+### 27.4 关键修复
+
+#### 修复 1：字段截断
+**现象**：登录测试字段校验失败，`cust_id`/`fund_account_id`/`account_id` 比预期少 1 个字符。
+
+**根因**：`fpga_counter_base.cpp` 的 `build_login_rtn()` 和 `save_client_info()` 使用 `str_copy_format`（最多拷贝 `dst_size-1` 字节），占满 16 字节的定长字段被截断。
+
+**修复**：改用 `memcpy` 完整拷贝（参照 `counter98.cpp` 已有修复模式）。
+
+#### 修复 2：Core 链路端口错误
+**现象**：登录成功后 Core 链路连接到 GW 端口（44001）而非 Core 端口（44002）。
+
+**根因**：`single_socket_engine::deal_fpga_core_connect()` 使用 `set_remote()` 设置 Core 地址，但 `aio_socket_link::set_remote()` 最多允许 2 个地址，且 `connect(need_switch=0)` 不切换地址，导致仍连主地址 44001。
+
+**修复**：
+1. `aio_socket_link.h` 新增 `reset_remote()` 方法（清空主备地址，仅设一个地址）
+2. `deal_fpga_core_connect()` 改用 `reset_remote(trade_port)` 覆盖地址后连接
+
+#### 修复 3：mock 未推送成交回报
+**现象**：成交回报测试超时。
+
+**根因**：mock 委托处理后只回委托回报（order_rtn），未推送成交回报（trade_rtn）。
+
+**修复**：新增 `send_trade_rtn()`，委托应答后主动推送成交回报（order_status=3, exec_qty=100）。
+
+### 27.5 GOne 功能测试结果
+
+**测试配置**：`connection_config_gone.json`（fast_counter_type=2, speed_link_type=1, counter98_addr=127.0.0.1:9003）
+
+**测试用例**：`gone_combo.json`（5 个用例：登录/委托/成交/撤单/心跳）
+
+**结果**：**5/5 PASS ✅**
+
+| 测试用例 | 耗时 | 校验字段 | 结果 |
+|:---|---:|:---:|:---:|
+| GOne 登录测试 | 4ms | 6/6 ✓ | ✅ |
+| GOne 委托买入测试 | 4ms | 17/17 ✓（rtn_type=0 委托应答） | ✅ |
+| GOne 成交回报校验 | 0ms | 17/17 ✓（order_status=3, exec_price=250200, exec_qty=100） | ✅ |
+| GOne 撤单测试 | 20ms | 7/7 ✓（err_code=0） | ✅ |
+| GOne 心跳维持测试 | 30001ms | 双链路 30s 不断链 | ✅ |
+
+### 27.6 GOne 性能测试
+
+**实现方式**：复用 mock_client 内置 `PerfRunner`，通过 `set_counter_name()` 动态化报告标题。
+
+**修改点**：
+- `perf_runner.h`：`PerfConfig` 新增 `counter_name` 字段
+- `perf_runner.cpp`：报告标题从写死 "FTE" 改为动态 `cfg_.counter_name`
+- `mock_client.cpp`：`init()` 中按 `fast_counter_type` 设置 counter_name（1=FTE, 2=GOne, 3=GOne-GW）
+- `connection_config_gone.json`：perf_test enable=true, duration_sec=10, tps=10000
+- `run_perf_compare.sh`：顺序执行 FTE → GOne 性能测试
+
+**结果**（10000 TPS / 10 秒）：
+
+| 指标 | 值 |
+|:---|---:|
+| 发送/成功/失败 | **92,073 / 92,073 / 0**（100%） |
+| 实际 TPS | 9,207（目标 10,000） |
+| 平均延迟 | **434 ns** |
+| P50 | **333 ns** |
+| P75 | **431 ns** |
+| P90 | **522 ns** |
+| 最大值 | 646,667 ns |
+| 最小值 | 111 ns |
+
+### 27.7 FTE 对比阻塞
+
+FTE 环境重启后快速链路（33001）登录失败，无法在相同场景下对比。
+
+**日志分析**：
+```
+09:04:40  connect to 33001 OK → send cust login
+09:04:46  link closing（6s 心跳超时）→ FTE 未回 login_ans
+09:04:48+ connect ret=-1（重连持续失败）
+```
+
+**限制**：FTE 运行在独立命名空间（`/mnt/work/gt_test/` 不可访问），进程为 root，无法查看 FTE 日志或重启。
+
+**FTE 历史基准**（500 TPS / 30s 场景，2026-09-16 04:39）：
+- 平均 2,523ns，P50 2,052ns，P90 4,290ns
+- GOne 延迟约为 FTE 的 **1/6**（同等配置下）

@@ -33,6 +33,10 @@
 18. **关键缺陷修复**：P1 双线程并发接收数据竞争（移除 `single_socket_engine::do_work()` 末尾 `link_.deal_recv()`，校验和不匹配 69→0）；P2 心跳超时断链（启用 `aio_tcp.h::deal_recv()` 的 `heart.on_msg()`，-22 失败 110→0）
 19. **FTE 对象池扩容**：7 个回报/拒绝对象池 2000→32768（etf_sync 1000→16384，sz_internal 8→2048），支撑 500 TPS/30s/15000 笔稳定运行
 20. **CPU 绑定验证**：绑核功能正常（P50/P90 略优 ~10ns），建议绑非 CPU0 专用核或 isolcpus；多轮稳定性（3×200TPS/10s）全部通过
+21. **GOne 双链路架构**：GW 链路（44001，multi_socket_engine 管理）处理登录/证券信息，Core 链路（44002，single_socket_engine 管理）处理委托/撤单；3 种 fast_counter_type（1=gw/FTE, 2=fpga_direct/GOne, 3=fpga_gateway/GOne-GW）
+22. **GOne 模拟柜台 gone_counter_mock** ✅：独立 CMake 构建，监听双端口，支持登录/委托/成交/撤单/心跳全链路；关键修复（字段截断 memcpy、Core 链路端口 reset_remote、mock 推送成交回报）
+23. **GOne 性能测试** ✅：复用 PerfRunner，set_counter_name() 动态化报告标题（FTE/GOne/GOne-GW）；10000 TPS/10s 测试结果：92,073 笔 100% 成功，平均 434ns，P50=333ns，P90=522ns
+24. **FTE 对比阻塞**：FTE 环境重启后快速链路登录失败（FTE 未回 login_ans，6s 心跳超时断链），无法在相同场景对比；FTE 历史基准（500 TPS）：平均 2523ns，P50 2052ns，P90 4290ns（GOne 约为其 1/6）
 
 ## 三、分析框架
 
@@ -141,6 +145,12 @@
 | **业务引擎（数据竞争修复）** | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp`（do_work 移除 deal_recv） |
 | **TCP 心跳（超时修复）** | `trunk/NewAPI/common/include/aio_tcp.h`（deal_recv 启用 heart.on_msg） |
 | **FTE 对象池** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp`（SetFTE2DSEQueue） |
+| **GOne 模拟柜台** | `trunk/NewAPI/gone/api/mock/gone_counter/`（gone_counter_server/client_session/session_registry/account_manager/message_parser） |
+| **GOne 分析文档** | `study/gone_counter.md`（GOne 双链路架构分析） |
+| **GOne 测试记录** | `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` §四（GOne 性能测试与 FTE 对比） |
+| **GOne 测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json`（fast_counter_type=2） |
+| **GOne 测试用例** | `trunk/NewAPI/gone/api/mock/client/config/test_cases/gone_combo.json` |
+| **性能对比脚本** | `trunk/NewAPI/gone/api/mock/client/run_perf_compare.sh`（顺序 FTE → GOne） |
 
 ## 五、常见问答模板
 
@@ -173,12 +183,15 @@
 ### Q4: 当前哪些是 todo？
 ```
 gw 柜台：✅ 已完成（FTE TCP Binary 协议全部实现，编译通过）
-Mock 组件：✅ 已完成（mock_client + 98_counter_mock + json_utils，FTE 联调 4/4 通过）
+GOne 模拟柜台：✅ 已完成（gone_counter_mock，双链路登录/委托/成交/撤单/心跳全链路）
+GOne 性能测试：✅ 已完成（PerfRunner 复用，10000 TPS 100% 成功，平均 434ns）
+Mock 组件：✅ 已完成（mock_client + 98_counter_mock + json_utils，FTE 联调 5/5、GOne 联调 5/5 通过）
 counter98：所有 build_*_msg 留空，查询应答未接入分发，deal_send_error 留空
 框架：断线重登/login_state 重置被注释、登录异常重试未实现、缓存结构未定义
 非加速消息接口：struct_req.h/struct_ans.h 待完善
 CMakeLists 优化：支持独立编译+父模块编译（参考 grc_trunk）
 gw_counter 性能优化：会话缓存到实例 + 日志降噪（P0），见知识库 §25
+FTE vs GOne 对比：待 FTE 环境修复后重跑 run_perf_compare.sh 获取完整对比
 ```
 
 ### Q5: gw_counter 如何向 FTE 发送委托？
@@ -315,6 +328,66 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/clie
 6. 多轮稳定性（3×200TPS/10s）绑核/不绑核全部通过
 ```
 
+### Q17: GOne 双链路架构是怎样的？
+```
+GOne（fpga_direct）采用双链路架构：
+- GW 链路（44001）：由 multi_socket_engine 的 fast_gw_link_ 管理
+  → 处理 sec_info_req / login_req / heart_req
+- Core 链路（44002）：由 single_socket_engine 的 link_ 管理
+  → 处理 order_req / cancel_req / heart_req
+
+登录流程：
+1. API 连接 GW 链路（44001）→ sec_info_req/ans → login_req/ans
+2. login_ans 中 trade_port=44002 → API 连接 Core 链路
+3. Core 链路建立后发送委托/撤单
+
+双链路通过 session_registry 共享登录信息（GW 登录后 Core 复用）。
+```
+
+### Q18: GOne 模拟柜台（gone_counter_mock）如何构建和运行？
+```
+# 编译（宿主机）
+cd /home/lsz/code/work/api_trunk
+./build.sh rebuild -DBUILD_MOCK=ON
+
+# 运行 gone_counter_mock（监听 44001 GW + 44002 Core）
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/gone_counter
+./build/bin/gone_counter_mock --config ./config/server_config.json &
+
+# 运行 counter98_mock（GOne 的 AGW，端口 9003）
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/98_counter
+./build/bin/counter98_mock --port 9003 &
+
+# 运行 mock_client（GOne 测试）
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/client
+LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
+  /home/lsz/code/work/api_trunk/build_cmake/bin/mock_client \
+  --config config/connection_config_gone.json \
+  --testcase config/test_cases/gone_combo.json \
+  --report test_report_gone.txt
+```
+
+### Q19: GOne 性能测试结果如何？与 FTE 对比？
+```
+GOne（10000 TPS / 10s）：平均 434ns, P50=333ns, P90=522ns, 100% 成功
+FTE 历史基准（500 TPS / 30s）：平均 2523ns, P50=2052ns, P90=4290ns
+GOne 延迟约为 FTE 的 1/6（同配置下）
+
+注意：FTE 基准为 500 TPS 非 10000 TPS，高负载下 FTE 延迟可能进一步劣化。
+FTE 环境当前因快速链路登录失败无法进行同场景对比。
+```
+
+### Q20: GOne 性能测试报告标题如何动态化？
+```
+mock_client.cpp init() 中根据 fast_counter_type 自动设置：
+- fct == 1 → "FTE"（gw counter）
+- fct == 2 → "GOne"（fpga_direct）
+- fct == 3 → "GOne-GW"（fpga_gateway）
+
+通过 PerfRunner::set_counter_name() 设置，report_text() 输出：
+"========== {counter_name} 委托通路性能测试报告 =========="
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -329,7 +402,7 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/clie
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-15。知识库 v2.2 新增 §26 性能测试系统 / 关键缺陷修复（数据竞争+心跳超时）/ FTE 对象池扩容 / CPU 绑定验证。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-16。知识库 v2.3 新增 §27 GOne 双链路架构与模拟柜台开发 / GOne 性能测试（10000 TPS 100% 成功，平均 434ns）/ FTE vs GOne 对比（FTE 环境不可用，历史基准 GOne 约为其 1/6）。
 
 ---
 
