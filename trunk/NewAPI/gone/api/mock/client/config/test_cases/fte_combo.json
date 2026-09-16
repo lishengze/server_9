@@ -163,6 +163,27 @@
           "rej_api": 0
         }
       }
+    },
+    {
+      "test_case": {
+        "name": "FTE 心跳维持测试",
+        "description": "等待 30 秒，验证心跳正常维持，无断线回调",
+        "counter_type": "fte",
+        "timeout_ms": 35000
+      },
+      "request": {
+        "type": "wait_heartbeat",
+        "fields": {
+          "wait_seconds": 30
+        }
+      },
+      "expected_response": {
+        "type": "heartbeat_ok",
+        "fields": {
+          "link_connected": true
+        },
+        "validate": ["link_connected"]
+      }
     }
   ]
 }

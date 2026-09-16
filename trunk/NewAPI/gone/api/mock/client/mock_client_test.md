@@ -21,7 +21,7 @@
 | tgw_simulator (Stock) | 38141 | 模拟上海竞价 |
 | tgw_simulator (Bond) | 38140 | 模拟上海债券 |
 | tgw_simulator (ETF) | 39142 | 模拟深圳 |
-| counter98_mock | 9001 | 模拟 98 柜台（AGW/账户登录） |
+| counter98_mock | 9002 | 模拟 98 柜台（AGW/账户登录）；原 9001 被宿主机 root 进程占用，改用 9002（见 4.2 问题 B） |
 
 ### 1.3 启动/停止脚本（docker 容器内）
 ```bash
@@ -46,6 +46,8 @@ LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
   --lib /home/lsz/code/work/api_trunk/build_cmake/lib/liblbapi.so \
   --testcase config/test_cases/fte_combo.json --report test_report.txt
 ```
+
+> **注**：2026-09-16 复测起，mock_client 在 docker 容器 otc 内运行（`/mnt/work/api_trunk` 为宿主机 `api_trunk` 挂载），完整命令见 4.4。
 
 ---
 
@@ -557,3 +559,149 @@ P90 (90%) : 5630 ns
 - ✅ 绑核后 P50/P90 略优（~10ns 提升），证明绑核降低延迟抖动
 - ⚠️ 绑到 CPU 0 引入了较大尖峰（最大值 6.2ms），因 CPU 0 通常处理系统中断/内核任务。**建议绑到专用、无中断的核**（如高编号核），或结合 CPU 隔离（isolcpus）使用
 - 绑核价值：隔离调度、降低 cache miss、避免核间迁移；适合低延迟交易场景
+
+---
+
+## 四、学习掌握阶段复测记录（2026-09-16）
+
+> 本阶段目标：根据知识库内容，在本机（docker 环境）重跑一遍完整测试流程，确保功能 + 性能测试均无问题。
+
+### 4.1 复测环境准备
+
+| 步骤 | 操作 | 说明 |
+|:---|:---|:---|
+| 1 | `./build.sh rebuild -DBUILD_MOCK=ON`（宿主机 api_trunk 根目录） | 编译 mock_client / counter98_mock / perf_client，产物在 `build_cmake/bin` |
+| 2 | `docker exec otc zsh -c "cd /mnt/work/gt_trunk && ./compile_fte.sh -r"` | 编译 FTE（约 2.5 分钟），产物安装到 `/mnt/work/gt_test/work_atp/cmake/fte/bin/ute` |
+| 3 | `cd /mnt/work/gt_trunk/DYS-FRAMEWORK/fte/test_all && ./stop_all.sh && ./start_all.sh` | 启动模拟交易所(38140/38141/39142) + 上海FTE(33001) + 深圳FTE(33002) |
+| 4 | 宿主机启动 counter98_mock（9002） | `cd trunk/NewAPI/gone/api/mock/98_counter && build_cmake/bin/counter98_mock --config config/server_config.json &` |
+| 5 | docker 容器内运行 mock_client | 见 4.4 运行命令 |
+
+**注意**：测试全程在 docker 容器 `otc` 内进行（FTE、模拟交易所、mock_client 均在容器内；counter98_mock 在宿主机，容器为 host 网络，`127.0.0.1:9002` 容器内可达）。
+
+### 4.2 复测遇到的问题与解决
+
+#### 问题 A：build_cmake CMakeCache 路径不一致，编译失败
+- **现象**：`./build.sh -DBUILD_MOCK=ON` 报 CMake 错误。
+- **根因**：`build_cmake/CMakeCache.txt` 由宿主机路径（`/home/lsz/code/work/api_trunk`）生成，而 `build.sh` 实际在容器内 `/mnt/work/api_trunk` 路径编译，缓存路径不匹配。
+- **解决**：`./build.sh rebuild -DBUILD_MOCK=ON` 清理缓存重建。
+- **效果**：mock_client / counter98_mock / perf_client 编译成功。
+
+#### 问题 B：9001 端口被 root 进程占用，counter98_mock 启动失败
+- **现象**：counter98_mock bind 9001 失败。
+- **根因**：宿主机存在 root 进程监听 tcp6 `:9001`（inode 17821，无权限定位/关闭）。
+- **解决**：counter98_mock 改用 **9002** 端口（`mock/98_counter/config/server_config.json` 与 `mock/client/config/connection_config.json` 同步修改）。
+- **效果**：counter98_mock 正常启动，后续测试链路完整。
+
+#### 问题 C：委托被拒 offerWay 1 is invalid or no gw（知识库问题 9 复现）
+- **现象**：首次复测委托测试超时，FTE 日志 `SendOrderToExch 1115 | offerWay 1 is invalid or no gw`。
+- **根因**：`etf_test_sh/account_ute_61.bin` 中 fund `1000000000000001` 的 `trade_pbu`/`offer_pbu` 未按空格填充（应为 `"21085 "` 6 字节，与 `simulator_tgw.xml` 的 `<pbu_id>21085</pbu_id>` 三方一致）。
+- **解决**：用户更新 `account_ute_61.bin`（2026-09-16 02:03），`trade_pbu`/`offer_pbu` 改为空格填充 `"21085 "`；重启 FTE 加载新数据（bin 文件为启动时加载）。
+- **效果**：委托买入测试 PASS，17 字段校验全部 ✓（order_price=250200, order_qty=100, security_id=600007 等）。
+
+#### 问题 D：心跳超时断链 Heartbeat timeout → DoLogOut → Passive close（知识库问题 11 复现）
+- **现象**：首次复测委托 PASS 后，成交回报校验超时（未收到 2005）、撤单 -22 断链、性能测试全部 -22；FTE 日志显示客户端连接 `get_period_milli [5]`，登录后 **10ms** 即 `Heartbeat timeout`。
+- **根因**：客户端登录 `heart_bt_int=5`（秒），FTE `uplink_biz_processor.cpp:207`（tcp_direct 分支）原为 `output = logon_req.heart_bt_int;`，心跳周期被按毫秒解释为 5ms，超时阈值 `5*2=10ms`，登录后立即断链。
+- **关键点**：用户已在源码 207/371 行补上 `* 1000` 修复（`heart_bt_int(秒) -> heart_period(毫秒)`），但 **FTE 二进制未重新编译**（旧二进制 01:57 编译，源码 02:03 修改），导致修复未生效。
+- **解决**：重新编译 FTE（`./compile_fte.sh -r`，2 分 31 秒）+ 重启 FTE 环境（`stop_all.sh` + `start_all.sh`）。
+- **效果**：心跳周期恢复正常（FTE 与模拟交易所 `get_period_milli [10000]`），性能测试 30 秒全程不断链。
+
+### 4.3 复测最终结果（全部通过 ✅）
+
+**功能测试**（`test_report.txt`，总计 4 通过 4 失败 0）：
+
+| 用例 | 耗时 | 校验字段 | 结果 |
+|:---|---:|:---:|:---:|
+| FTE 登录测试 | 0ms | 6/6 ✓ | ✅ PASS |
+| FTE 委托买入测试 | 0ms | 17/17 ✓ | ✅ PASS |
+| FTE 成交回报校验 | 40ms | 17/17 ✓（order_status=3, exec_price=250200, exec_qty=100, trade_qty=100） | ✅ PASS |
+| FTE 撤单测试 | 20ms | 7/7 ✓（err_code=50046） | ✅ PASS |
+
+**性能测试**（`perf_report.txt`，500 TPS / 30s / 14998 笔）：
+
+| 指标 | 结果 |
+|:---|---:|
+| 发送/成功/失败 | **14998 / 14998 / 0**（100%）✅ |
+| 实际 TPS | 499.924（目标 500） |
+| 平均值 | 2557.76 ns |
+| P50 | 1967 ns |
+| P75 | 2783 ns |
+| P90 | 5011 ns |
+| 最大值 | 25550 ns |
+| 最小值 | 1017 ns |
+| 标准差 | 1565.11 ns |
+
+### 4.4 复测运行命令（docker 容器内）
+
+```bash
+# 1) 编译 mock 组件（宿主机 api_trunk 根目录）
+./build.sh rebuild -DBUILD_MOCK=ON
+
+# 2) 编译 FTE（docker 容器内）
+docker exec otc zsh -c "cd /mnt/work/gt_trunk && source ~/.zshrc && ./compile_fte.sh -r"
+
+# 3) 启动 FTE 环境（docker 容器内）
+docker exec otc zsh -c "cd /mnt/work/gt_trunk/DYS-FRAMEWORK/fte/test_all && ./stop_all.sh && ./start_all.sh"
+
+# 4) 启动 counter98_mock（宿主机）
+cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/98_counter
+/home/lsz/code/work/api_trunk/build_cmake/bin/counter98_mock --config config/server_config.json &
+
+# 5) 运行 mock_client（docker 容器内，/mnt/work/api_trunk 为宿主机 api_trunk 挂载）
+docker exec otc zsh -c "cd /mnt/work/api_trunk/trunk/NewAPI/gone/api/mock/client && \
+  LD_LIBRARY_PATH=/mnt/work/api_trunk/build_cmake/lib \
+  /mnt/work/api_trunk/build_cmake/bin/mock_client \
+  --config config/connection_config.json \
+  --lib /mnt/work/api_trunk/build_cmake/lib/liblbapi.so \
+  --testcase config/test_cases/fte_combo.json --report test_report.txt"
+```
+
+### 4.5 经验与教训
+
+1. **改 FTE 源码后必须重新编译**：源码修改（如 `* 1000` 心跳修复）不会自动生效，需 `./compile_fte.sh -r` 重新编译并重启 FTE。本次"修复未生效"的根因就是二进制早于源码修改。
+2. **FTE 数据文件（account_ute_*.bin）为启动时加载**：修改 bin/xml 数据后必须重启 FTE 环境才生效。
+3. **9001 端口冲突**：宿主机存在 root 进程占用 tcp6 9001，无法定位/杀掉；counter98_mock 改用 9002 端口规避（配置文件同步修改）。
+4. **docker 环境测试链路**：FTE/模拟交易所/mock_client 在容器 otc 内（host 网络），counter98_mock 在宿主机；容器内 `127.0.0.1:9002` 可直接访问宿主机 counter98_mock。
+
+### 4.6 复测记录 2（2026-09-16 第 2 轮，用户更新 FTE 数据后）
+
+> 用户在 4.3 首轮复测后更新了 FTE 相关数据，要求重启环境并再次完整复测（docker 环境），并将过程中遇到的问题、方案、效果记录于此。
+
+#### 问题 E：FTE 卡死（perf 高负载后无响应，33001 Recv-Q=1）
+- **现象**：首轮复测结束后，上海 FTE（PID 3450）CPU 95-99%、深圳 FTE（PID 3470）CPU 99.9%，FTE 日志停在 02:19:27 不再输出；`netstat` 显示 33001 `Recv-Q=1`（有连接在 accept 队列等待，但 FTE 不再 accept/处理）。期间客户端 perf 连接 `aio_socket_link.connect: connect_ch ret=-1 ip=127.0.0.1 port=33001` 反复失败。
+- **根因**：perf 高负载（500 TPS）后 FTE 进入卡死状态，不再处理新连接；日志显示 perf 期间存在大量异常频繁的 `register_detect_timer` 调用（每 2ms 一次，针对客户端连接 127.0.0.1:55682），疑似该路径在高负载下存在死循环/资源问题（**待进一步分析确认**）。
+- **解决**：`cd /mnt/work/gt_trunk/DYS-FRAMEWORK/fte/test_all && ./stop_all.sh && ./start_all.sh` 重启 FTE + 模拟交易所环境（新 PID：上海 4216 / 深圳 4236 / tgw 4182/4193/4204），同时加载用户更新的 FTE 数据。
+- **效果**：FTE 正常启动（33001/33002 `Recv-Q=0`，日志持续心跳 `get_period_milli [10000]`）；本轮 perf 结束后上海 FTE CPU 回落至 43.5%，**未再卡死**。
+
+#### 复测结果 2（全部通过 ✅，5 用例 + perf）
+
+**功能测试**（`test_report.txt`，总计 5 通过 5 失败 0）：
+
+| 用例 | 耗时 | 校验字段 | 结果 |
+|:---|---:|:---:|:---:|
+| FTE 登录测试 | 0ms | 6/6 ✓ | ✅ PASS |
+| FTE 委托买入测试 | 0ms | 17/17 ✓ | ✅ PASS |
+| FTE 成交回报校验 | 61ms | 17/17 ✓（order_status=3, exec_price=250200, exec_qty=100, trade_qty=100） | ✅ PASS |
+| FTE 撤单测试 | 20ms | 7/7 ✓（err_code=50046） | ✅ PASS |
+| FTE 心跳维持测试 | 30001ms | 心跳维持正常（30s 不断链） | ✅ PASS |
+
+> 心跳用例为新增（`fte_combo.json` 第 5 个用例，`wait_heartbeat` 30s），用于验证**订单活动期间心跳不断链**——直接覆盖首轮 02:08 遇到的问题（当时委托/成交活动期间客户端连接被 FTE 心跳超时关闭，导致成交/撤单/ perf 失败）。
+
+**性能测试**（`perf_report.txt`，500 TPS / 30s / 14994 笔）：
+
+| 指标 | 结果 |
+|:---|---:|
+| 发送/成功/失败 | **14994 / 14994 / 0**（100%）✅ |
+| 实际 TPS | 499.787（目标 500） |
+| 平均值 | 2522.99 ns |
+| P50 | 2052 ns |
+| P75 | 2609 ns |
+| P90 | 4290 ns |
+| 最大值 | 25696 ns |
+| 最小值 | 1091 ns |
+| 标准差 | 1397.55 ns |
+
+#### 本轮验证的关键结论
+1. ✅ **心跳问题已解决**：心跳 30s 全程维持、perf 14994 笔全程无断链、无失败（首轮 02:08 的 `Heartbeat timeout → DoLogOut → Passive close` 与 perf 全 -22 未再出现）。
+2. ✅ **FTE 卡死未复现**：perf 500 TPS / 30s 后上海 FTE 正常（CPU 回落、日志持续输出、Recv-Q=0）。
+3. ✅ **完整链路稳定**：功能 5/5 + perf 100% 成功，docker 环境（FTE/模拟交易所/mock_client 在容器内，counter98_mock 在宿主机 9002）全流程可复现。
+4. ⚠️ **遗留观察项**：深圳 FTE（4236）CPU 常态 100%（处理模拟交易所 ETF 数据，日志持续正常，非卡死）；容器时钟较宿主机慢约 8 小时（不影响测试，日志时间戳以容器为准）。

@@ -1,6 +1,6 @@
 {
   "server": {
-    "listen_port": 9001,
+    "listen_port": 9002,
     "heartbeat_timeout": 30,
     "log_file": "./counter98_mock.log",
     "log_level": "info"
