@@ -94,6 +94,7 @@ protected:
 
   void deal_cust_login(const acc_login_event_info &pmlog);
   void deal_cust98_login(const acc_login_event_info &pmlog);
+  void deal_fpga_core_connect(const fpga_core_connect_info &pmlog);
 
   void deal_agw98_login();
 
@@ -113,6 +114,11 @@ protected:
   /// 语义：fpga_direct 模式 = fpga GW；fpga_gateway 模式 = fpga GW（业务也走此）；个微模式 = 闲置
   aio_socket_link<TFastCounter> fast_gw_link_;
   link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_gw_link_timer_;
+
+  /// 极速柜台 Core 链接（fast_core_link，仅 fpga_direct 模式）
+  /// 语义：fpga_direct 模式 = fpga Core（委托/撤单/心跳）
+  aio_socket_link<TFastCounter> fast_core_link_;
+  link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_core_link_timer_;
 
   TFastCounter *counter_;       ///< 极速柜台指针 (init 阶段注入)
   counter98 *counter98_;        ///< 98 柜台指针 (init_98_counter 注入)

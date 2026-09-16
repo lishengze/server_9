@@ -98,8 +98,6 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
   /// 语义：fpga_direct 模式 = fpga GW；fpga_gateway 模式 = fpga GW（业务也走此）；个微模式 = 闲置
   counter_type t_fast_counter = cfg.get_fast_counter_type();
   if (t_fast_counter == counter_type::fpga_direct || t_fast_counter == counter_type::fpga_gateway) {
-    aio_socket_link<TFastCounter> fast_gw_link_;
-    link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_gw_link_timer_;
     once_recv_len = 2048;
     ret = fast_gw_link_.init(log, counter_, LINK_TYPE_SPEED_GW, once_recv_len, check_interval, max_fails);
     if (ret < 0) {
@@ -121,6 +119,22 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
     ret = fast_gw_link_timer_.init_timer(&fast_gw_link_, this, check_interval);
     if (ret < 0) {
       error_log(tlh) << "init multi socket engine fast gateway timer error,interval=" << check_interval
+                     << ",ret=" << ret << end_log;
+      return ret;
+    }
+  }
+
+  /// 槽 2: 极速柜台 Core 链接（fast_core_link，仅 fpga_direct 模式）
+  /// 语义：fpga_direct 模式 = fpga Core（委托/撤单/心跳）；fpga_gateway 模式 = 闲置
+  if (t_fast_counter == counter_type::fpga_direct) {
+    once_recv_len = sizeof(trade_rtn) * 4;
+    ret = fast_core_link_.init(log, counter_, LINK_TYPE_SPEED_TRADE, once_recv_len, check_interval, max_fails);
+    if (ret < 0) {
+      return ret;
+    }
+    ret = fast_core_link_timer_.init_timer(&fast_core_link_, this, check_interval);
+    if (ret < 0) {
+      error_log(tlh) << "init multi socket engine fast core timer error,interval=" << check_interval
                      << ",ret=" << ret << end_log;
       return ret;
     }
@@ -187,6 +201,14 @@ template <class TFastCounter> int32 multi_socket_engine<TFastCounter>::start() {
     }
   }
 
+  if (t_fast_counter == static_cast<int32_t>(counter_type::fpga_direct)) {
+    ret = fast_core_link_timer_.add_timer_poll(&epoll_th_);
+    if (ret < 0) {
+      error_log(tlh) << "add fast core timer to thread epoll error,ret=" << ret << end_log;
+      return LBAPI_ERR_ADD_TIMER;
+    }
+  }
+
   ret = epoll_th_.run();
   if (ret < 0) {
     error_log(tlh) << "start multi socket engine thread error,ret=" << ret << end_log;
@@ -207,9 +229,11 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::stop() {
 
   g98_link_.close_ch();
   fast_gw_link_.close_ch();
+  fast_core_link_.close_ch();
   epoll_th_.join();
   g98_link_timer_.close();
   fast_gw_link_timer_.close();
+  fast_core_link_timer_.close();
   send_queue_.close();
 
   lb_common::lb_log_hand tlh(log_);
@@ -242,6 +266,13 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
           error_log(tlh) << "fast gateway link send msg error,ret=" << ret << end_log;
           counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
         }
+      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
+        ret = fast_core_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
+        if (unlikely(ret < 0)) {
+          lb_common::lb_log_hand tlh(log_);
+          error_log(tlh) << "fast core link send msg error,ret=" << ret << end_log;
+          counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
+        }
       } else {
         ret = g98_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
@@ -260,6 +291,11 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
         if (heart_len > 0) {
           fast_gw_link_.send_msg(heart_buf, heart_len);
         }
+      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
+        heart_len = counter_->build_heart_msg(heart_buf, sizeof(heart_buf));
+        if (heart_len > 0) {
+          fast_core_link_.send_msg(heart_buf, heart_len);
+        }
       } else {
         heart_len = counter98_->build_heart_msg(heart_buf, sizeof(heart_buf));
         if (heart_len > 0) {
@@ -272,6 +308,8 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
       const link_close_event_info *tcl = reinterpret_cast<const link_close_event_info *>(evt->data);
       if (evt->link_type == LINK_TYPE_SPEED_GW) {
         fast_gw_link_.close_ch(tcl->err_code);
+      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
+        fast_core_link_.close_ch(tcl->err_code);
       } else {
         g98_link_.close_ch(tcl->err_code);
       }
@@ -282,6 +320,9 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
       if (evt->link_type == LINK_TYPE_SPEED_GW) {
         if (counter_->can_link_connect(evt->link_type))
           fast_gw_link_.connect(recv_poll_num_, pcon->need_switch, &epoll_th_);
+      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
+        if (counter_->can_link_connect(evt->link_type))
+          fast_core_link_.connect(recv_poll_num_, pcon->need_switch, &epoll_th_);
       } else {
         if (counter98_->can_link_connect(evt->link_type))
           g98_link_.connect(recv_poll_num_, pcon->need_switch, &epoll_th_);
@@ -298,7 +339,9 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
       break;
     }
     case LINK_EVENT_TYPE_FPGA_CORE_CONNECT: {
-      // fpga core 链接由 fpga_counter 同步处理
+      const fpga_core_connect_info *pcon =
+          reinterpret_cast<const fpga_core_connect_info *>(evt->data);
+      deal_fpga_core_connect(*pcon);
       break;
     }
     case LINK_EVENT_TYPE_AGWUSER_LOGIN: {
@@ -331,7 +374,7 @@ void multi_socket_engine<TFastCounter>::deal_cust_login(const acc_login_event_in
 
   int32 ret = 0;
   if (fast_gw_link_.is_free()) {
-    ret = fast_gw_link_.connect(recv_poll_num_, 0, NULL);
+    ret = fast_gw_link_.connect(recv_poll_num_, 0, &epoll_th_);
     if (ret < 0) {
       error_log(tlh) << "fast gateway link connect to login error,branch_id=" << pmlog.branch_id
                      << ",fund_account=" << pmlog.fund_account_id << ",session=" << pmlog.session
@@ -364,6 +407,37 @@ void multi_socket_engine<TFastCounter>::deal_cust_login(const acc_login_event_in
                    << ",fund_account=" << pmlog.fund_account_id << ",session=" << pmlog.session
                    << ",client_req_no=" << pmlog.cust_req_no << ",ret=" << ret << end_log;
     counter_->ans_cust_login(pmlog, LBAPI_ERR_SEND_MSG, "send fast login msg error");
+  }
+}
+
+// fpga core 链接建立 (仅 fpga_direct 模式): 从 login_ans 提取 trade_ip/trade_port 后连接
+template <class TFastCounter>
+void multi_socket_engine<TFastCounter>::deal_fpga_core_connect(const fpga_core_connect_info &pmlog) {
+  lb_common::lb_log_hand tlh(log_);
+
+  if (counter_->get_counter_type() != static_cast<int32_t>(counter_type::fpga_direct)) {
+    error_log(tlh) << "fpga core connect only support fpga_direct counter" << end_log;
+    return;
+  }
+
+  if (fast_core_link_.is_work()) {
+    info_log(tlh) << "fpga core link have connected" << end_log;
+    return;
+  }
+
+  lb_common::csock_addr taddr;
+  std::memset(&taddr, 0, sizeof(taddr));
+  taddr.port = pmlog.trade_port;
+  std::memcpy(taddr.ip, pmlog.trade_ip, sizeof(taddr.ip));
+  fast_core_link_.set_remote(taddr);
+
+  int32 ret = fast_core_link_.connect(recv_poll_num_, 0, &epoll_th_);
+  if (ret == 0) {
+    info_log(tlh) << "cust login to connect fpga core ok,trade_ip=" << pmlog.trade_ip
+                  << ",trade_port=" << pmlog.trade_port << end_log;
+  } else {
+    error_log(tlh) << "cust login to connect fpga core error,trade_ip=" << pmlog.trade_ip
+                   << ",trade_port=" << pmlog.trade_port << ",ret=" << ret << end_log;
   }
 }
 template <class TFastCounter>
@@ -416,6 +490,8 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_agw98
 template <class TFastCounter> void multi_socket_engine<TFastCounter>::eng_link_op::deal_heart_msg_ans(int16 link_type) {
   if (link_type == LINK_TYPE_SPEED_GW) {
     owner_->fast_gw_link_.deal_heart_ans();
+  } else if (link_type == LINK_TYPE_SPEED_TRADE) {
+    owner_->fast_core_link_.deal_heart_ans();
   } else {
     owner_->g98_link_.deal_heart_ans();
   }
@@ -429,6 +505,8 @@ template <class TFastCounter>
 void multi_socket_engine<TFastCounter>::eng_link_op::deal_close_link(int16 link_type, int32 err_code) {
   if (link_type == LINK_TYPE_SPEED_GW) {
     owner_->fast_gw_link_.close_ch(err_code);
+  } else if (link_type == LINK_TYPE_SPEED_TRADE) {
+    owner_->fast_core_link_.close_ch(err_code);
   } else {
     owner_->g98_link_.close_ch(err_code);
   }

@@ -1,0 +1,189 @@
+{
+  "test_cases": [
+    {
+      "test_case": {
+        "name": "GOne 登录测试",
+        "description": "验证 GOne 登录应答的所有字段（GW 链路）",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "login",
+        "fields": {
+          "client_req_no": 1001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "account_id": "A12345678901",
+          "cust_id": "C000000000000001",
+          "password": "TEST000000001",
+          "order_way_ext": "7",
+          "user_info": "mock_client"
+        }
+      },
+      "expected_response": {
+        "type": "login",
+        "fields": {
+          "client_req_no": null,
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "market_type": 1,
+          "err_code": 0,
+          "err_msg": null,
+          "login_time": null
+        }
+      }
+    },
+    {
+      "test_case": {
+        "name": "GOne 委托买入测试",
+        "description": "验证 GOne 委托回报(2003)的所有字段（Core 链路）",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "order_insert",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
+          "policy_id": 0,
+          "tgw_id": 0,
+          "security_id": "600007",
+          "order_price": 250200,
+          "order_qty": 100,
+          "stop_price": 0,
+          "client_seq_id": 0,
+          "market_type": 1
+        }
+      },
+      "expected_response": {
+        "type": "order_rtn",
+        "fields": {
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
+          "order_status": 0,
+          "policy_id": 0,
+          "market_type": 1,
+          "reserved": 0,
+          "security_id": "600007",
+          "order_price": 250200,
+          "order_qty": 100,
+          "client_seq_id": null,
+          "rtn_type": 0,
+          "err_code": 0,
+          "order_sys_no": null,
+          "frozen_amount": null,
+          "fee": 0,
+          "trade_qty": null,
+          "cancel_qty": 0,
+          "order_time": null,
+          "update_time": null
+        }
+      }
+    },
+    {
+      "test_case": {
+        "name": "GOne 成交回报校验",
+        "description": "验证 GOne 成交回报(2005)的所有字段（异步回报，无需新请求）",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "order_insert",
+        "fields": {}
+      },
+      "expected_response": {
+        "type": "trade_rtn",
+        "fields": {
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "side": "1",
+          "order_type": "2",
+          "order_status": 3,
+          "policy_id": 0,
+          "market_type": 1,
+          "reserved": 0,
+          "security_id": "600007",
+          "order_price": 250200,
+          "order_qty": 100,
+          "client_seq_id": null,
+          "order_sys_no": null,
+          "frozen_amount": null,
+          "fee": null,
+          "trade_qty": 100,
+          "cancel_qty": 0,
+          "order_time": null,
+          "exec_time": null,
+          "exec_id": null,
+          "exec_price": 250200,
+          "exec_qty": 100,
+          "exec_amount": null,
+          "exec_fee": null
+        }
+      }
+    },
+    {
+      "test_case": {
+        "name": "GOne 撤单测试",
+        "description": "验证 GOne 撤单应答的所有字段（撤单上一笔已成交委托）",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "order_cancel",
+        "fields": {
+          "client_req_no": 2001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "order_sys_no": "$last_order_sys_no",
+          "client_seq_id": 0
+        }
+      },
+      "expected_response": {
+        "type": "cancel_rsp",
+        "fields": {
+          "client_req_no": null,
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "market_type": 1,
+          "order_sys_no": null,
+          "client_seq_id": null,
+          "err_code": 0,
+          "rej_api": 0
+        }
+      }
+    },
+    {
+      "test_case": {
+        "name": "GOne 心跳维持测试",
+        "description": "等待 30 秒，验证 GW/Core 双链路心跳正常维持，无断线回调",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 35000
+      },
+      "request": {
+        "type": "wait_heartbeat",
+        "fields": {
+          "wait_seconds": 30
+        }
+      },
+      "expected_response": {
+        "type": "heartbeat_ok",
+        "fields": {
+          "link_connected": true
+        },
+        "validate": ["link_connected"]
+      }
+    }
+  ]
+}

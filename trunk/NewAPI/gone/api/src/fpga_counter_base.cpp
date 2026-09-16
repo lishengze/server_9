@@ -624,13 +624,15 @@ void fpga_counter_base::build_login_rtn(const acc_login_event_info &info, int32 
 void fpga_counter_base::build_login_rtn(const login_ans &msg, LoginAns &o_ans) {
   std::memset(&o_ans, 0, sizeof(o_ans));
   o_ans.client_req_no = msg.cust_req_no;
-  lb_common::comm_utils::str_copy_format(o_ans.cust_id.data(), msg.cust_id, sizeof(o_ans.cust_id));
-  lb_common::comm_utils::str_copy_format(o_ans.fund_account_id.data(), msg.fund_account_id,
-                                         sizeof(o_ans.fund_account_id));
-  lb_common::comm_utils::str_copy_format(o_ans.account_id.data(), msg.holder_acc,
-                                         std::min<int32>(sizeof(o_ans.account_id), sizeof(msg.holder_acc)));
-  lb_common::comm_utils::str_copy_format(o_ans.branch_id.data(), msg.branch_id,
-                                         std::min<int32>(sizeof(o_ans.branch_id), sizeof(msg.branch_id)));
+  // 注意：cust_id/fund_account_id 等为定长字段，可能占满字段（无 '\0' 结尾）。
+  // 不能用 str_copy_format（其最多拷贝 dst_size-1 字节，会把满字段截断），改用 memcpy 完整拷贝。
+  std::memcpy(o_ans.cust_id.data(), msg.cust_id, std::min<size_t>(sizeof(o_ans.cust_id), sizeof(msg.cust_id)));
+  std::memcpy(o_ans.fund_account_id.data(), msg.fund_account_id,
+              std::min<size_t>(sizeof(o_ans.fund_account_id), sizeof(msg.fund_account_id)));
+  std::memcpy(o_ans.account_id.data(), msg.holder_acc,
+              std::min<size_t>(sizeof(o_ans.account_id), sizeof(msg.holder_acc)));
+  std::memcpy(o_ans.branch_id.data(), msg.branch_id,
+              std::min<size_t>(sizeof(o_ans.branch_id), sizeof(msg.branch_id)));
 
   o_ans.market_type = market_type;
   o_ans.err_code = msg.err_code;
@@ -674,11 +676,13 @@ void fpga_counter_base::save_client_info(const login_ans &msg, fpga_cust_info &o
   o_cust.order_way_ext[0] = msg.order_way[0]; ///< 客户委托方式
   o_cust.order_way_ext[1] = msg.order_way[1]; ///< 客户委托方式
   o_cust.trade_port = msg.trade_port;
-  lb_common::comm_utils::str_copy_format(o_cust.trade_ip, msg.trade_ip, sizeof(o_cust.trade_ip));
-  lb_common::comm_utils::str_copy_format(o_cust.cust_id, msg.cust_id, sizeof(o_cust.cust_id));
-  lb_common::comm_utils::str_copy_format(o_cust.fund_account_id, msg.fund_account_id, sizeof(o_cust.fund_account_id));
-  lb_common::comm_utils::str_copy_format(o_cust.branch_id, msg.branch_id, sizeof(o_cust.branch_id));
-  lb_common::comm_utils::str_copy_format(o_cust.holder_acc, msg.holder_acc, sizeof(o_cust.holder_acc));
+  // 定长字段用 memcpy 完整拷贝，避免 str_copy_format 截断满字段（同 build_login_rtn）
+  std::memcpy(o_cust.trade_ip, msg.trade_ip, std::min<size_t>(sizeof(o_cust.trade_ip), sizeof(msg.trade_ip)));
+  std::memcpy(o_cust.cust_id, msg.cust_id, std::min<size_t>(sizeof(o_cust.cust_id), sizeof(msg.cust_id)));
+  std::memcpy(o_cust.fund_account_id, msg.fund_account_id,
+              std::min<size_t>(sizeof(o_cust.fund_account_id), sizeof(msg.fund_account_id)));
+  std::memcpy(o_cust.branch_id, msg.branch_id, std::min<size_t>(sizeof(o_cust.branch_id), sizeof(msg.branch_id)));
+  std::memcpy(o_cust.holder_acc, msg.holder_acc, std::min<size_t>(sizeof(o_cust.holder_acc), sizeof(msg.holder_acc)));
   std::memcpy(o_cust.end_code, msg.end_code, sizeof(o_cust.end_code));
   o_cust.cust_req_no = msg.cust_req_no;
   atomic_seq_fence();

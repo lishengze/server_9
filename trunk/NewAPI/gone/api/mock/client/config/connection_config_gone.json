@@ -1,0 +1,41 @@
+{
+  "api_instance_name": "gone_test_client",
+  "market_type": 1,
+  "fast_counter_type": 2,
+  "speed_link_type": 1,
+  "speed_counter_addr": {
+    "ip": "127.0.0.1",
+    "port": 44001
+  },
+  "counter98_addr": {
+    "ip": "127.0.0.1",
+    "port": 9003
+  },
+  "98agw_user": "agw_user_01",
+  "98agw_user_password": "agw_pwd_01",
+  "heartbeat_interval": 5,
+  "agw_user_login_timeout": 10,
+  "log_level": 1,
+  "log_output_dir": "./api_log",
+
+  "perf_test": {
+    "enable": false,
+    "duration_sec": 5,
+    "tps": 100,
+    "warmup_sec": 1,
+    "cpu_id": -1,
+    "report_file": "perf_report_gone.txt",
+    "order": {
+      "fund_account_id": "1000000000000001",
+      "branch_id": "0001",
+      "password": "TEST000000001",
+      "side": "1",
+      "order_type": "2",
+      "security_id": "600007",
+      "order_price": 250200,
+      "order_qty": 100,
+      "stop_price": 0,
+      "market_type": 1
+    }
+  }
+}

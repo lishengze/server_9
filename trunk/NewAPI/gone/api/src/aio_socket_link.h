@@ -104,6 +104,16 @@ public:
     return 0;
   }
 
+  /// 重置远程地址（清空主备，仅设置一个地址）
+  /// 用于 fpga_direct 模式：登录后从 login_ans 获取 trade_port，覆盖初始配置的 GW 地址
+  void reset_remote(const lb_common::csock_addr &remote) {
+    std::memset(addrs_, 0, sizeof(addrs_));
+    addrs_[0] = remote;
+    addr_valid_num = 1;
+    active_idx_ = 0;
+    reconn_.init(0);
+  }
+
   /// 设置主地址 (必须在 start_recv 前调用),最多调用两次，传入不同地址
   int32 set_remote(const lb_common::csock_addr &remote) {
     if (addr_valid_num < 2) {

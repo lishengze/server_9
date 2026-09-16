@@ -258,17 +258,20 @@ template <class TFastCounter>
 void single_socket_engine<TFastCounter>::deal_fpga_core_connect(const fpga_core_connect_info &pmlog) {
   lb_common::lb_log_hand tlh(log_);
 
+  // fpga_direct: 登录后从 login_ans 获取 trade_ip/trade_port，覆盖初始配置的 GW 地址，
+  // 重新连接 Core 链路（委托/撤单/心跳）
   lb_common::csock_addr taddr;
+  std::memset(&taddr, 0, sizeof(taddr));
   taddr.port = pmlog.trade_port;
   std::memcpy(taddr.ip, pmlog.trade_ip, sizeof(taddr.ip));
-  link_.set_remote(taddr);
+  link_.reset_remote(taddr);
 
   int32 ret = link_.connect(recv_poll_num_, 0, &recv_th_);
   if (ret == 0) {
-    info_log(tlh) << "cust login to connect fast counter ok,trade_ip=" << pmlog.trade_ip
+    info_log(tlh) << "cust login to connect fast counter core ok,trade_ip=" << pmlog.trade_ip
                   << ",trade_port=" << pmlog.trade_port << end_log;
   } else {
-    error_log(tlh) << "cust login to connect fast counter error,trade_ip=" << pmlog.trade_ip
+    error_log(tlh) << "cust login to connect fast counter core error,trade_ip=" << pmlog.trade_ip
                    << ",trade_port=" << pmlog.trade_port << ",ret=" << ret << end_log;
   }
 }
