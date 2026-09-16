@@ -231,9 +231,9 @@ static uint16_t map_api_market_id_to_fte(uint16_t api_market_id) {
 // build_order_msg: 构造 FTE 委托消息 (PktNewHeader + TradeOrderReq + 校验和)
 // 方案 C/D：直接序列化到 o_buf，边写边累加校验和（单趟），消除中间 body 对象与二次校验和遍历
 void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
-  // 获取会话缓存（补充 account_id / cust_id）
-  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
-  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+  // 获取会话缓存（补充 account_id / cust_id）；复用 fa_key_cache_ 避免每次构造 std::string
+  fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
   char* p = o_buf;
   uint32_t sum = 0;
@@ -267,8 +267,8 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
 // build_etf_order_msg: 构造 FTE ETF 委托消息 (PktNewHeader + TradeOrderReq + 校验和, msg_id=1010)
 // 方案 C/D：与 build_order_msg 结构一致，仅 msg_id 不同；直接序列化 + 单趟校验和
 void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
-  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
-  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+  fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
   char* p = o_buf;
   uint32_t sum = 0;
@@ -302,8 +302,8 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
 // build_cancel_msg: 构造 FTE 撤单消息 (PktNewHeader + CancelOrderReq + 校验和)
 // 方案 C/D：直接序列化 + 单趟校验和
 void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
-  std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
-  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+  fa_key_cache_.assign(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key_cache_);
 
   char* p = o_buf;
   uint32_t sum = 0;
@@ -324,8 +324,8 @@ void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
   cksum_net64(p, 0, sum);  // agw_seq_id
 
   // 撤单定位原单：从 GwSessionCache 映射表反查
-  cksum_net64(p, GwSessionCache::instance().get_orig_client_seq_id(fa_key, req.order_sys_no), sum);
-  cksum_net64(p, GwSessionCache::instance().get_clordno(fa_key, req.order_sys_no), sum);
+  cksum_net64(p, GwSessionCache::instance().get_orig_client_seq_id(fa_key_cache_, req.order_sys_no), sum);
+  cksum_net64(p, GwSessionCache::instance().get_clordno(fa_key_cache_, req.order_sys_no), sum);
   // 校验和
   cksum_finish(p, sum);
 }
@@ -360,7 +360,9 @@ void gw_counter_direct::build_login_msg(const acc_login_event_info &info, char *
   body.agw_seq_id = 0;
 
   // LogOnReq 特有字段
-  body.heart_bt_int = static_cast<uint32_t>(heart_interval);
+  // heart_bt_int 语义为秒，但 FTE 的 detect_timer 按毫秒解释 heart_period。
+  // 由 API 侧统一换算为毫秒（×1000），避免 FTE 侧再做时间转换。
+  body.heart_bt_int = static_cast<uint32_t>(heart_interval) * 1000;
 
   // password: 截断到 100 字节（acc_login_event_info.password 为 256）
   size_t pwd_len = strnlen(info.password, sizeof(info.password));

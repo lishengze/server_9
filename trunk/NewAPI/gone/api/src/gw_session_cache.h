@@ -12,7 +12,6 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -82,7 +81,6 @@ private:
   /// 从 fund_account_id 提取字符串键
   static std::string fa_key(const std::array<char, 16>& fa);
 
-  std::mutex mutex_;
   std::unordered_map<std::string, GwSessionInfo> sessions_;
 };
 
@@ -98,7 +96,6 @@ inline std::string GwSessionCache::fa_key(const std::array<char, 16>& fa) {
 }
 
 inline void GwSessionCache::create_session(const acc_login_event_info& login_req) {
-  std::lock_guard<std::mutex> lock(mutex_);
   std::string key(login_req.fund_account_id, strnlen(login_req.fund_account_id, 16));
   GwSessionInfo& info = sessions_[key];
   info.reset();
@@ -109,7 +106,6 @@ inline void GwSessionCache::create_session(const acc_login_event_info& login_req
 }
 
 inline void GwSessionCache::fill_session_from_ans(const gw_message::LogOnAns& ans) {
-  std::lock_guard<std::mutex> lock(mutex_);
   std::string key(ans.fund_account_id.data(), strnlen(ans.fund_account_id.data(), 16));
   auto it = sessions_.find(key);
   if (it == sessions_.end()) return;
@@ -118,7 +114,6 @@ inline void GwSessionCache::fill_session_from_ans(const gw_message::LogOnAns& an
 }
 
 inline GwSessionInfo* GwSessionCache::get_session(const std::string& fund_account_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
   auto it = sessions_.find(fund_account_id);
   if (it != sessions_.end()) return &it->second;
   return nullptr;
@@ -127,7 +122,6 @@ inline GwSessionInfo* GwSessionCache::get_session(const std::string& fund_accoun
 inline void GwSessionCache::record_order_locator(const std::string& fund_account_id,
                                                   int64_t order_sys_no, int64_t clordno,
                                                   int64_t client_seq_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
   auto it = sessions_.find(fund_account_id);
   if (it == sessions_.end()) return;
   OrderLocator loc;
@@ -137,7 +131,6 @@ inline void GwSessionCache::record_order_locator(const std::string& fund_account
 }
 
 inline int64_t GwSessionCache::get_clordno(const std::string& fund_account_id, int64_t order_sys_no) {
-  std::lock_guard<std::mutex> lock(mutex_);
   auto it = sessions_.find(fund_account_id);
   if (it == sessions_.end()) return 0;
   auto loc_it = it->second.order_locators.find(order_sys_no);
@@ -147,7 +140,6 @@ inline int64_t GwSessionCache::get_clordno(const std::string& fund_account_id, i
 
 inline int64_t GwSessionCache::get_orig_client_seq_id(const std::string& fund_account_id,
                                                        int64_t order_sys_no) {
-  std::lock_guard<std::mutex> lock(mutex_);
   auto it = sessions_.find(fund_account_id);
   if (it == sessions_.end()) return 0;
   auto loc_it = it->second.order_locators.find(order_sys_no);

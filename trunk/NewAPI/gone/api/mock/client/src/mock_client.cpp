@@ -95,6 +95,12 @@ bool MockClient::init(const std::string& config_path) {
         ret_attr = cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
         if (ret_attr) std::cerr << "[DEBUG] set_attr(log_output_dir)=" << ret_attr << std::endl;
 
+        // 可选：发送队列大小(MB)，默认 2MB；压测高 TPS 时建议调大避免 SEND_QUEUE_FULL
+        if (config.has("send_queue_size_mb")) {
+            ret_attr = cfg->set_attr("send_queue_size_mb", static_cast<int32_t>(config["send_queue_size_mb"].as_int()));
+            if (ret_attr) std::cerr << "[DEBUG] set_attr(send_queue_size_mb)=" << ret_attr << std::endl;
+        }
+
         // 创建回调
         callback_ = new CallbackHandler();
 

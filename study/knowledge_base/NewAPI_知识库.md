@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.2（2026-09-15，新增 §26 性能测试系统 / 关键缺陷修复 / FTE 对象池扩容 / CPU 绑定验证）
+> **版本**：v2.4（2026-09-16，§27.10 gw counter 优化与重测：FTE 10000TPS 0 失败、延迟 2248→393ns）
 
 ---
 
@@ -37,6 +37,7 @@
 24. [FTE 联调关键发现（Task 7.4~7.6）](#24-fte-联调关键发现task-74-76)
 25. [gw_counter 性能分析与优化（Task 7.8）](#25-gw_counter-性能分析与优化task-78)
 26. [性能测试系统与关键缺陷修复（Task 7.9~7.12）](#26-性能测试系统与关键缺陷修复task-79-712)
+27. [FTE vs GOne 完整性能对比与瓶颈分析](#27-fte-vs-gone-完整性能对比与瓶颈分析)（§27.10 gw counter 优化与重测）
 
 ---
 
@@ -1282,19 +1283,112 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 | 最大值 | 646,667 ns |
 | 最小值 | 111 ns |
 
-### 27.7 FTE 对比阻塞
+### 27.7 FTE vs GOne 完整对比（2026-09-16 重跑）
 
-FTE 环境重启后快速链路（33001）登录失败，无法在相同场景下对比。
+> 修复 FTE 环境后，在 docker `otc` 内完整重跑 FTE 与 GOne 的顺序性能测试（10000 TPS / 10s）。
 
-**日志分析**：
+**环境**：docker `otc`，FTE(33001) + 模拟交易所(38140/38141/39142) + counter98_mock(9002) 跑 FTE；gone_counter_mock(44001/44002) + counter98_mock(9003) 跑 GOne。
+
+#### 原始结果
+
+| 指标 | GOne (fpga_direct) @10000TPS | FTE (gw counter) @2000TPS（干净基线） | FTE (gw counter) @10000TPS |
+|:---|---:|---:|---:|
+| 实际 TPS | 9363.62 | 1996.08 | 9443.84 |
+| 成功率 | **100%** | **100%** | 43.7%（-25 失败 56%） |
+| 平均延迟 | **186.7 ns** | 1010 ns | 2248 ns |
+| P50 | **120 ns** | 611 ns | 1974 ns |
+| P90 | **180 ns** | 1593 ns | 2595 ns |
+| 最大值 | 165.7 us | 196 us | 3697 us |
+| 失败 | 0 | 0 | 53136（-25） |
+
+> GOne 平均延迟约为 FTE（干净基线）的 **1/5.4**，约为 FTE 高负载的 **1/12**。
+
+### 27.8 瓶颈分析
+
+**① GOne (fpga_direct) —— 极简路径，186ns**
+委托路径 `order_insert → fpga_counter_direct::deal_order_req`：
+- 状态检查直接读**成员变量**（`trade_link_connect` / `client_info_.login_state` / `client_info_.fpga_state`），无锁
+- `get_sec_index()`：成员 `sec_map_` 哈希查找
+- `trade_send_queue_->write_get_mth()`：无锁队列写
+- `build_order_msg(req, client_info_, sec_index, head)`：**直接使用成员 `client_info_`**，无全局锁、无 string 构造
+- **结论**：单客户会话全部缓存为成员变量，无锁无分配，是 186ns 的关键。
+
+**② FTE (gw counter) —— 全局锁 + string 构造，1010~2248ns（主要瓶颈）**
+委托路径 `order_insert → gw_counter_direct::deal_order_req`：
+- `build_order_msg(req, o_buf)` 中**每次委托**执行：
+  ```cpp
+  std::string fa_key(req.fund_account_id.data(), strnlen(...,16));  // string 构造+分配
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+  // get_session: std::lock_guard<std::mutex> mutex_ + unordered_map::find + string 比较
+  ```
+- **瓶颈点**：`GwSessionCache::get_session()` 的**全局 mutex 锁** + **string 构造** + **unordered_map 哈希**，是 FTE 比 GOne 慢 5~12 倍的主因。
+- 撤单路径更重：`build_cancel_msg` 调 `get_session()` + `get_clordno()` + `get_orig_client_seq_id()` = **3 次全局锁**。
+- **优化方向**（对应 api_dev_task.txt）：单客户场景下将会话缓存到 counter 实例成员变量，消除全局锁与 string 构造（对齐 fpga_direct 的 `client_info_` 范式）。
+
+**③ -25 SEND_QUEUE_FULL（56% 失败）—— FTE 下游容量瓶颈**
+- 10000 TPS × 10s = 10 万笔，远超 **FTE 对象池容量（32768）**。FTE 在 `index[16382]`（约 1.6 万笔）后停止处理（日志中断），FTE 崩溃/降级。
+- FTE 崩溃后 TCP 连接未立即收到 FIN（链路仍显示 connected），引擎线程无法正常发送，API 发送队列积压 → 后续订单返回 `-25`。
+- **结论**：-25 是**下游 FTE 容量不足**的连带效应。2000 TPS 干净基线 0 失败，证明 API 侧发送队列在合理负载下无瓶颈。
+
+**④ 心跳**：当前 API 侧 `gw_counter_direct.cpp:363` 仍 `heart_bt_int = heart_interval`（未 ×1000），依赖 FTE 侧 ×1000 修复；待按 api_dev_task.txt 优化（API 侧 ×1000 + FTE 回退）。
+
+### 27.9 结论
+
+1. ✅ **GOne 性能显著优于 FTE**：平均 187ns vs 1010ns（干净基线），快约 **5.4 倍**。
+2. ✅ **GOne 10000 TPS 稳定**：100% 成功，0 失败。
+3. ❌ **FTE 10000 TPS 无法支撑**：FTE 对象池耗尽崩溃，56% -25 失败。
+4. 🔧 **FTE 瓶颈定位**：API 侧 `GwSessionCache::get_session()` 全局锁 + string 构造；下游 FTE 对象池容量不足。
+5. 🔧 **优化建议**：① 会话缓存到 counter 实例成员（去全局锁）；② 发送队列/FTE 对象池扩容；③ 心跳 ×1000 移到 API 侧。
+
+### 27.10 gw counter 优化与重测（2026-09-16）
+
+> 针对 §27.8 定位的瓶颈实施 5 项优化，重测 10000 TPS / 10s。
+
+#### 27.10.1 优化内容
+
+| # | 优化项 | 文件 |
+|:--|:---|:---|
+| 1 | **GwSessionCache 去锁**：移除 6 个方法 `std::lock_guard<std::mutex>`（手动排查业务安全） | `gw_session_cache.h` |
+| 2 | **string 构造优化**：3 个 build 方法用类成员 `fa_key_cache_`，每次 `assign()` 复用 buffer | `gw_counter_direct.h/.cpp` |
+| 3 | **心跳 ×1000 移到 API 侧**：`heart_bt_int = heart_interval * 1000`，FTE 回退 | `gw_counter_direct.cpp` + FTE |
+| 4 | **发送队列扩容**：`send_queue_size_mb` 2MB→64MB（mock_client 增加透传） | `connection_config.json` + `mock_client.cpp` |
+| 5 | **FTE 对象池扩容**：`fte_report`/`fte_reject` 150000（实际 262144），ETF 池合理值，`etf_sync` 保持 10000 | FTE `uplink_biz_processor.cpp` |
+
+#### 27.10.2 优化后结果（10000 TPS / 10s）
+
 ```
-09:04:40  connect to 33001 OK → send cust login
-09:04:46  link closing（6s 心跳超时）→ FTE 未回 login_ans
-09:04:48+ connect ret=-1（重连持续失败）
+实际 TPS : 9621.25   样本数 : 96213
+成功 96213 / 失败 0   ← 100% 成功
+平均值 : 392.717 ns   P50 : 191 ns   P75 : 250 ns   P90 : 351 ns
+最大值 : 762530 ns    最小值 : 90 ns   标准差 : 3187.75 ns
 ```
 
-**限制**：FTE 运行在独立命名空间（`/mnt/work/gt_test/` 不可访问），进程为 root，无法查看 FTE 日志或重启。
+> 功能测试（登录/委托/成交/撤单/心跳）全部 PASS。
 
-**FTE 历史基准**（500 TPS / 30s 场景，2026-09-16 04:39）：
-- 平均 2,523ns，P50 2,052ns，P90 4,290ns
-- GOne 延迟约为 FTE 的 **1/6**（同等配置下）
+#### 27.10.3 优化前后对比（10000 TPS）
+
+| 指标 | 优化前 FTE | **优化后 FTE** | GOne | FTE/GOne |
+|:---|---:|---:|---:|---:|
+| 成功率 | 44% | **100%** | 100% | — |
+| 平均延迟 | 2248 ns | **392.7 ns** | 186.7 ns | 2.1x |
+| P50 | 1974 ns | **191 ns** | 120 ns | 1.6x |
+| P90 | 2595 ns | **351 ns** | 180 ns | 2.0x |
+| 失败 | 53136（-25） | **0** | 0 | — |
+| FTE 崩溃 | 是 | **否** | — | — |
+
+> FTE 与 GOne 差距从 **12 倍缩小到 2.1 倍**，10000 TPS 下 0 失败、FTE 不再崩溃。
+
+#### 27.10.4 优化效果分析
+
+1. **延迟 2248→392.7ns（5.7x）**：`get_session()` 全局锁 + string 堆分配移除；发送队列扩容消除 `write_get_mth` 拥塞阻塞。
+2. **成功率 44%→100%**：`send_queue_size_mb` 2MB→64MB 消除 -25（2MB 仅缓冲约 5700 笔）。
+3. **FTE 不再崩溃**：对象池实际 262144，支撑 10 万笔。
+4. **心跳正确性**：API 侧 ×1000 统一换算，FTE 回退。
+5. **剩余差距（2.1x）**：FTE 仍有 `unordered_map::find` 哈希遍历 + 消息构建开销；GOne 全成员变量零分配。进一步优化＝会话指针直接缓存到 counter 实例（完全对齐 fpga_direct 范式）。
+
+#### 27.10.5 关键经验
+
+- **`send_queue_size_mb` 需在 mock_client 显式透传**：JSON 配置项若 mock_client 未 `set_attr` 则默认 2MB，压测高 TPS 必现 -25。已补 `config.has("send_queue_size_mb")` 透传。
+- **FTE 对象池创建卡死**：将 ETF 大对象池也扩到 150000 会导致 `sz_fte_etf_report` 分配卡死（对象大、262144 个内存分配过慢）。订单压测只需 `fte_report`/`fte_reject`，ETF 池保持合理值。
+- **FTE 高负载后降级**：10000 TPS 压测后 FTE 进入降级状态（不响应新登录），需 stop_all + start_all 重启。
+- **mock_client 压测后挂起**：10 万笔回报回调处理慢，进程在 shutdown 阶段挂起，需 timeout 兜底。

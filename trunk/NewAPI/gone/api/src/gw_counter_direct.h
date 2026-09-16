@@ -195,6 +195,9 @@ private:
   int64 session_seq_ = 0;        ///< 会话消息序号（引擎线程自增、外部线程读取，用 atomic_fetch_add64/atomic_load64 访问）
   lb_common::lb_log *log_ = nullptr;
   link_engine_outop *trade_eng_op_ = nullptr; ///< 极速引擎导出的链接相关操作
+
+  /// 缓存 fund_account_id 字符串键，避免每次委托构造临时 std::string（大小固定，复用 buffer）
+  std::string fa_key_cache_;
 };
 
 } // namespace lb_api

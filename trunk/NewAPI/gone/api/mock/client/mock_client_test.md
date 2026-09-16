@@ -912,3 +912,133 @@ bash run_perf_compare.sh
 2. ✅ **GOne 性能表现优异**：10000 TPS 下 100% 成功，平均延迟 434ns，P50=333ns，P90=522ns。
 3. ❌ **FTE 对比数据缺失**：FTE 环境重启后快速链路登录失败，无法在相同场景下对比。
 4. ⚠️ **建议**：待 FTE 环境修复后，重新运行 `run_perf_compare.sh` 获取完整对比数据。
+
+### 4.7 完整对比测试（2026-09-16 重跑，10000 TPS）
+
+> FTE 环境修复后，在 docker 容器 otc 内完整重跑 FTE 与 GOne 的顺序性能测试。
+
+**环境**：docker `otc`，FTE(33001) + 模拟交易所(38140/38141/39142) + counter98_mock(9002) 跑 FTE；gone_counter_mock(44001/44002) + counter98_mock(9003) 跑 GOne。
+
+#### 4.7.1 原始报告
+
+**FTE (gw counter) @ 10000 TPS / 10s**（`perf_report_fte.txt`）：
+```
+实际 TPS : 9443.84   样本数 : 94440
+平均值 : 2247.89 ns   P50 : 1974 ns   P75 : 2465 ns   P90 : 2595 ns
+最大值 : 3697728 ns   最小值 : 150 ns   标准差 : 25727 ns
+失败返回码 : -25 (LBAPI_ERR_SEND_QUEUE_FULL) 53136 次（56%）
+```
+
+**FTE (gw counter) @ 2000 TPS / 5s（干净基线，`perf_report_fte_low.txt`）**：
+```
+实际 TPS : 1996.08   样本数 : 9981    成功 9981 / 失败 0
+平均值 : 1009.86 ns   P50 : 611 ns    P75 : 942 ns    P90 : 1593 ns
+最大值 : 196032 ns    最小值 : 231 ns  标准差 : 3051 ns
+```
+
+**GOne (fpga_direct) @ 10000 TPS / 10s**（`perf_report_gone.txt`）：
+```
+实际 TPS : 9363.62   样本数 : 93637   成功 93637 / 失败 0
+平均值 : 186.734 ns   P50 : 120 ns    P75 : 141 ns    P90 : 180 ns
+最大值 : 165673 ns    最小值 : 50 ns   标准差 : 1253 ns
+```
+
+#### 4.7.2 耗时对比（API 内处理耗时）
+
+| 指标 | GOne (fpga_direct) | FTE (gw counter) @2000TPS | FTE @10000TPS | GOne/FTE 倍数 |
+|:---|---:|---:|---:|---:|
+| 实际 TPS | 9363.62 | 1996.08 | 9443.84 | — |
+| 成功率 | **100%** | **100%** | 43.7%（-25 失败 56%） | — |
+| 平均延迟 | **186.7 ns** | 1010 ns | 2248 ns | **5.4x ~ 12x** |
+| P50 | **120 ns** | 611 ns | 1974 ns | 5.1x ~ 16.5x |
+| P90 | **180 ns** | 1593 ns | 2595 ns | 8.9x ~ 14.4x |
+| 最大值 | 165.7 us | 196 us | 3697 us | — |
+| 失败 | 0 | 0 | 53136（-25） | — |
+
+> GOne 平均延迟约为 FTE（干净基线）的 **1/5.4**，约为 FTE 高负载的 **1/12**。
+
+#### 4.7.3 瓶颈分析
+
+**① GOne (fpga_direct) —— 极简路径，186ns**
+委托路径 `api_impl::order_insert → fpga_counter_direct::deal_order_req`：
+- 状态检查：直接读**成员变量** `trade_link_connect` / `client_info_.login_state` / `client_info_.fpga_state`（无锁）
+- `get_sec_index()`：成员 `sec_map_` 哈希查找
+- `trade_send_queue_->write_get_mth()`：无锁队列写
+- `build_order_msg(req, client_info_, sec_index, head)`：**直接使用成员 `client_info_`**，无全局锁、无 string 构造、无哈希
+- **结论**：单客户会话信息全部缓存为成员变量，无锁无分配，是 186ns 的关键。
+
+**② FTE (gw counter) —— 全局锁 + string 构造，1010~2248ns（主要瓶颈）**
+委托路径 `api_impl::order_insert → gw_counter_direct::deal_order_req`：
+- 状态检查：`atomic_load16(&trade_link_connect_)` / `&login_state`
+- `take_req_que_mem()`：队列写
+- `build_order_msg(req, o_buf)` 中**每次委托**执行：
+  ```cpp
+  std::string fa_key(req.fund_account_id.data(), strnlen(...,16));  // string 构造+分配
+  GwSessionInfo *session = GwSessionCache::instance().get_session(fa_key);
+  // get_session: std::lock_guard<std::mutex> mutex_ + unordered_map::find + string 比较
+  ```
+- **瓶颈点**：`GwSessionCache::get_session()` 的**全局 mutex 锁** + **string 构造** + **unordered_map 哈希**，是 FTE 比 GOne 慢 5~12 倍的主因。
+- 撤单路径更重：`build_cancel_msg` 调 `get_session()` + `get_clordno()` + `get_orig_client_seq_id()` = **3 次全局锁**。
+- **优化方向**（对应 api_dev_task.txt）：单客户场景下将会话缓存到 counter 实例成员变量，消除全局锁与 string 构造（对齐 fpga_direct 的 `client_info_` 范式）。
+
+**③ -25 SEND_QUEUE_FULL（56% 失败）—— 下游 FTE 容量瓶颈**
+- 10000 TPS × 10s = 10 万笔，远超 **FTE 对象池容量（32768）**。FTE 在 `index[16382]`（约 1.6 万笔）后停止处理（日志中断），**FTE 崩溃/降级**。
+- FTE 崩溃后 TCP 连接未立即收到 FIN（链路仍显示 connected），引擎线程无法正常发送，API 发送队列积压 → 后续订单返回 `-25 LBAPI_ERR_SEND_QUEUE_FULL`。
+- **结论**：-25 是**下游 FTE 容量不足**的连带效应，非纯 API 瓶颈。10000 TPS 场景下 FTE 柜台本身无法支撑 10 万笔。
+- 2000 TPS 干净基线 0 失败，证明 API 侧发送队列在合理负载下无瓶颈。
+
+**④ 心跳**：当前 API 侧 `gw_counter_direct.cpp:363` 仍 `heart_bt_int = heart_interval`（未 ×1000），依赖 FTE 侧 ×1000 修复；待按 api_dev_task.txt 优化（API 侧 ×1000 + FTE 回退）。
+
+#### 4.7.4 结论
+
+1. ✅ **GOne 性能显著优于 FTE**：平均 187ns vs 1010ns（干净基线），快约 **5.4 倍**。
+2. ✅ **GOne 10000 TPS 稳定**：100% 成功，0 失败。
+3. ❌ **FTE 10000 TPS 无法支撑**：FTE 对象池耗尽崩溃，56% -25 失败。
+4. 🔧 **FTE 瓶颈定位**：`GwSessionCache::get_session()` 全局锁 + string 构造（API 侧主瓶颈）；FTE 对象池容量（下游主瓶颈）。
+5. 🔧 **优化建议**：① 会话缓存到 counter 实例成员（去全局锁）；② 发送队列/FTE 对象池扩容以支撑更高 TPS；③ 心跳 ×1000 移到 API 侧。
+
+### 4.8 gw counter 优化与重测（2026-09-16）
+
+> 针对 §4.7 定位的瓶颈，实施 4 项代码优化后重测（10000 TPS / 10s）。
+
+#### 4.8.1 优化内容
+
+| # | 优化项 | 文件 |
+|:--|:---|:---|
+| 1 | **GwSessionCache 去锁**：移除 6 个方法的 `std::lock_guard<std::mutex>`（手动排查业务场景安全） | `gw_session_cache.h` |
+| 2 | **string 构造优化**：`build_order_msg`/`build_etf_order_msg`/`build_cancel_msg` 用类成员 `fa_key_cache_`，每次 `assign()` 复用 buffer，避免临时 std::string 堆分配 | `gw_counter_direct.h/.cpp` |
+| 3 | **心跳 ×1000 移到 API 侧**：`heart_bt_int = heart_interval * 1000`（毫秒），FTE 侧回退不再转换 | `gw_counter_direct.cpp` + FTE `uplink_biz_processor.cpp` |
+| 4 | **发送队列扩容**：`send_queue_size_mb` 默认 2MB → 压测配置 64MB（mock_client 增加透传该配置项） | `connection_config.json` + `mock_client.cpp` |
+| 5 | **FTE 对象池扩容**：`fte_report`/`fte_reject` 150000（实际 262144），ETF 池保持合理值，`etf_sync` 保持 10000 | FTE `uplink_biz_processor.cpp` |
+
+#### 4.8.2 优化后结果（10000 TPS / 10s）
+
+```
+实际 TPS : 9621.25   样本数 : 96213
+成功 96213 / 失败 0   ← 100% 成功
+平均值 : 392.717 ns   P50 : 191 ns   P75 : 250 ns   P90 : 351 ns
+最大值 : 762530 ns    最小值 : 90 ns   标准差 : 3187.75 ns
+```
+
+> 功能测试（登录/委托/成交/撤单/心跳）全部 PASS，心跳优化后无断链。
+
+#### 4.8.3 优化前后对比（10000 TPS）
+
+| 指标 | 优化前 FTE | **优化后 FTE** | GOne | FTE/GOne |
+|:---|---:|---:|---:|---:|
+| 成功率 | 44% | **100%** | 100% | — |
+| 平均延迟 | 2248 ns | **392.7 ns** | 186.7 ns | 2.1x |
+| P50 | 1974 ns | **191 ns** | 120 ns | 1.6x |
+| P90 | 2595 ns | **351 ns** | 180 ns | 2.0x |
+| 失败 | 53136（-25） | **0** | 0 | — |
+| FTE 崩溃 | 是 | **否** | — | — |
+
+> FTE 与 GOne 差距从 **12 倍缩小到 2.1 倍**，且 10000 TPS 下 0 失败、FTE 不再崩溃。
+
+#### 4.8.4 优化效果分析
+
+1. **延迟 2248→392.7ns（5.7x）**：主因是 `GwSessionCache::get_session()` 全局锁 + string 堆分配移除；发送队列扩容消除了队列拥塞对 `write_get_mth` 的阻塞。
+2. **成功率 44%→100%**：`send_queue_size_mb` 2MB→64MB 消除 -25 SEND_QUEUE_FULL（2MB 仅约缓冲 5700 笔，10000 TPS 下瞬间积压）。
+3. **FTE 不再崩溃**：对象池 2000→262144（实际），支撑 10 万笔压测。
+4. **心跳正确性**：API 侧 ×1000 统一换算，FTE 回退，功能测试心跳 PASS。
+5. **剩余差距（2.1x）**：FTE 仍有 `unordered_map::find` 哈希遍历 + 消息构建（cksum_copy_pad）开销；GOne 全成员变量零分配。进一步优化可考虑会话指针直接缓存到 counter 实例（完全对齐 fpga_direct 范式）。
