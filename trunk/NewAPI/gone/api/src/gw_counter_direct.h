@@ -199,6 +199,20 @@ private:
 
   /// 缓存 fund_account_id 字符串键，避免每次委托构造临时 std::string（大小固定，复用 buffer）
   std::string fa_key_cache_;
+
+  /// 单链接单客户模式（true=单客户，false=多客户；默认 true，从配置读取）
+  bool single_cust_per_link_ = true;
+  /// 单客户模式下的本地会话（登录成功后直接缓存，含 order_locators；不存全局 map）
+  GwSessionInfo local_session_;
+
+  /// 获取会话：单客户模式直接返回本地成员，多客户模式从全局缓存按 fund_account_id 获取
+  GwSessionInfo *get_session_for_order(const char *fund_account_id);
+  /// 记录原单定位：单客户模式写本地成员，多客户模式写全局缓存
+  void record_order_locator(const char *fund_account_id, int64_t order_sys_no, int64_t clordno, int64_t client_seq_id);
+  /// 撤单反查原单 client_seq_id：单客户模式查本地成员，多客户模式查全局缓存
+  int64_t get_orig_client_seq_id(const char *fund_account_id, int64_t order_sys_no);
+  /// 撤单反查原单 clordno：单客户模式查本地成员，多客户模式查全局缓存
+  int64_t get_clordno(const char *fund_account_id, int64_t order_sys_no);
 };
 
 } // namespace lb_api

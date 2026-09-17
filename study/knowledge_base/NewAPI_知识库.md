@@ -1746,3 +1746,63 @@ P95      : 452 ns     ← 新指标
 2. **FTE 的瓶颈在软件链路本身**（FTE↔tgw 往返处理能力），而非 API 框架
 3. **GOne 在吞吐和尾部延迟上全面领先**，符合 FPGA 硬件极速 vs 软件柜台的定位
 4. **P95 新指标揭示了 FTE 的长尾问题**：20.5x 差距说明高负载下 FTE 请求排队严重，是后续优化重点
+
+## 33. gw counter 单链接单客户模式优化（2026-09-18，§32 后续）
+
+### 33.1 需求
+
+用户要求给 API 增加"单链接单客户 / 单链接多客户"配置化支持：
+1. 新增配置项判断当前 API 是单链接单客户还是单链接多客户
+2. 单客户：登录成功后直接缓存为客户信息成员变量，不存 map，委托时直接使用
+3. 多客户：登录后以 fund_account_id 为 key 存 map，委托时按 key 获取
+4. 委托时按配置分流
+5. **默认单链接单客户模式**
+6. 改造后全面测试 gw counter 单客户模式 vs gone counter 性能
+
+### 33.2 改造内容
+
+**新增配置** `single_cust_per_link`（bool，默认 true）：
+- `api_config.h` config_name 命名空间新增
+- `api_config_impl.h` 新增 `bool single_cust_per_link_ = true` + getter
+- `api_config.cpp`：known_attrs 新增 `{single_cust_per_link, bool_val}`；构造函数初始化 true；实现 bool `set_attr`/`get_attr`；copy_from 新增 bool 属性复制
+
+**gw_counter_direct 分流**（核心改造）：
+- 新增成员：`bool single_cust_per_link_`、`GwSessionInfo local_session_`（单客户模式本地会话，含 order_locators）
+- 新增辅助方法：`get_session_for_order`/`record_order_locator`/`get_orig_client_seq_id`/`get_clordno`（按模式分流）
+- `init()`：读取配置 + `local_session_.reset()`
+- `deal_cust_login`/`deal_log_ans`：单客户写本地成员，多客户写 GwSessionCache
+- `build_order_msg`/`build_etf_order_msg`/`build_cancel_msg`：用 `get_session_for_order` 替代 map 查找
+- `build_cancel_msg` 撤单反查：用 `get_orig_client_seq_id`/`get_clordno`
+- `deal_order_rtn`/`deal_trade_rtn`/`deal_etf_trade_rtn`：用 `record_order_locator`
+
+**mock_client 支持**：`mock_client.cpp` 增加 `single_cust_per_link` 配置项（as_bool）
+
+### 33.3 10000 TPS 对比（同环境，docker otc 容器内，不绑核）
+
+| 指标 | 单客户模式 | 多客户模式 | 改善 |
+|:---|:---:|:---:|:---:|
+| P50 | **291 ns** | 381 ns | **↓23.6%** |
+| P75 | **460 ns** | 551 ns | ↓16.5% |
+| P90 | **1373 ns** | 3386 ns | **↓59.5%** |
+| P95 | **9327 ns** | 10800 ns | ↓13.6% |
+| 平均 | **4658 ns** | 6202 ns | **↓24.9%** |
+| 最大 | **4.1 ms** | 9.0 ms | **↓54.2%** |
+| TPS | **8562** | 8320 | +2.9% |
+| 失败 | **0** | 0 | - |
+
+**结论**：单客户模式全面优于多客户模式。P50 ↓23.6%（省去 GwSessionCache unordered_map 的 string+hash 查找），P90 ↓59.5%（高负载下减少 map 累积开销），平均 ↓24.9%，最大 ↓54.2%。**10000 TPS 下 0 失败**（相比历史多客户 baseline 56% 失败 -25 SEND_QUEUE_FULL，彻底解决）。
+
+### 33.4 vs GOne（fpga_direct）参考
+
+GOne 硬件不可用（无 FPGA 卡），引用 §32.4 历史数据：
+- GOne @10000TPS：P50=120ns, P90=180ns, P95=452ns, TPS=9363
+- 单客户 @10000TPS：P50=291ns, P90=1373ns, P95=9327ns, TPS=8562
+
+差距仍大（P95 20x），根因是 **FTE 单线程 asio 处理能力瓶颈（~8500 TPS）→ TCP 背压**（见 §5.6/§32.6），非 API 框架问题。P50 已从 401→291ns（↓27%），框架层已接近 GOne。
+
+### 33.5 关键结论
+
+1. **单客户模式是 gw counter 的默认最优配置**（默认 true），消除 GwSessionCache 查找开销
+2. **0 失败**：单客户模式 + FTE DSE 队列修复（§30）后，10000 TPS 稳定运行
+3. **P95 尾部仍受 FTE 处理能力限制**：需 FTE 多线程 asio 或限流才能进一步改善（见 §5.6 方案六/七）
+4. **GOne 硬件不可用时无法直接对比**：引用历史数据作参考

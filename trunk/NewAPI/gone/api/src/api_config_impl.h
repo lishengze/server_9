@@ -108,6 +108,8 @@ public:
   const char *get_api_instance_name() const { return api_instance_name_; }
   /// 获取日志输出目录
   const char *get_log_output_dir() const { return log_output_dir_; }
+  /// 获取是否单链接单客户模式 (true=单客户, false=多客户)
+  bool get_single_cust_per_link() const { return single_cust_per_link_; }
 
 private:
   /// 检查属性名是否已知且期望类型匹配
@@ -142,6 +144,7 @@ private:
   int32_t log_level_;               ///< 日志级别(默认: 1=通知)
   char api_instance_name_[64];      ///< API实例名称(默认: 空, 必须设置)
   char log_output_dir_[256];        ///< 日志输出目录(默认: ./api_log)
+  bool single_cust_per_link_;       ///< 单链接单客户模式(默认: true)
 };
 
 } // namespace lb_api

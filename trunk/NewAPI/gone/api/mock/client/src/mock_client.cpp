@@ -101,6 +101,12 @@ bool MockClient::init(const std::string& config_path) {
             if (ret_attr) std::cerr << "[DEBUG] set_attr(send_queue_size_mb)=" << ret_attr << std::endl;
         }
 
+        // 可选：单链接单客户模式（默认 true）。true=单客户（登录缓存为成员，委托直接用），false=多客户（以 fund_account_id 为 key 存 map）
+        if (config.has("single_cust_per_link")) {
+            ret_attr = cfg->set_attr("single_cust_per_link", config["single_cust_per_link"].as_bool());
+            if (ret_attr) std::cerr << "[DEBUG] set_attr(single_cust_per_link)=" << ret_attr << std::endl;
+        }
+
         // 创建回调
         callback_ = new CallbackHandler();
 

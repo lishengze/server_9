@@ -40,6 +40,7 @@ static const attr_info_entry known_attrs[] = {
     {config_name::log_level, attr_type::int32_val},
     {config_name::api_instance_name, attr_type::string_val},
     {config_name::log_output_dir, attr_type::string_val},
+    {config_name::single_cust_per_link, attr_type::bool_val},
 };
 
 static constexpr int32_t known_attrs_count = sizeof(known_attrs) / sizeof(known_attrs[0]);
@@ -58,6 +59,7 @@ api_config_impl::api_config_impl()
   std::memset(api_instance_name_, 0, sizeof(api_instance_name_));
   std::memset(log_output_dir_, 0, sizeof(log_output_dir_));
   std::memcpy(log_output_dir_, "./api_log", 9);
+  single_cust_per_link_ = true;  // 默认单链接单客户
   std::memset(&speed_counter_addr_, 0, sizeof(speed_counter_addr_));
   std::memset(&speed_counter_addr_bak_, 0, sizeof(speed_counter_addr_bak_));
   std::memset(&counter98_addr_, 0, sizeof(counter98_addr_));
@@ -212,10 +214,16 @@ int32_t api_config_impl::set_attr(const char *attr_name, const std::string &attr
 }
 
 int32_t api_config_impl::set_attr(const char *attr_name, bool attr_val) {
-  (void)attr_val;
-  if (!attr_name)
-    return LBAPI_ERR_INVALID_PARAM;
-  return LBAPI_ERR_UNSUPPORTED_OP;
+  int32_t ret = check_attr_type(attr_name, attr_type::bool_val);
+  if (ret != LBAPI_OK)
+    return ret;
+
+  if (std::strcmp(attr_name, config_name::single_cust_per_link) == 0) {
+    single_cust_per_link_ = attr_val;
+  } else {
+    return LBAPI_ERR_CFG_INVALID;
+  }
+  return LBAPI_OK;
 }
 
 int32_t api_config_impl::set_attr(const char *attr_name, const net_addr &attr_val) {
@@ -360,10 +368,16 @@ int32_t api_config_impl::get_attr(const char *attr_name, std::string &o_val) con
 }
 
 int32_t api_config_impl::get_attr(const char *attr_name, bool &o_val) const {
-  (void)o_val;
-  if (!attr_name)
-    return LBAPI_ERR_INVALID_PARAM;
-  return LBAPI_ERR_UNSUPPORTED_OP;
+  int32_t ret = check_attr_type(attr_name, attr_type::bool_val);
+  if (ret != LBAPI_OK)
+    return ret;
+
+  if (std::strcmp(attr_name, config_name::single_cust_per_link) == 0) {
+    o_val = single_cust_per_link_;
+  } else {
+    return LBAPI_ERR_CFG_INVALID;
+  }
+  return LBAPI_OK;
 }
 
 int32_t api_config_impl::get_attr(const char *attr_name, net_addr &o_val) const {
@@ -525,6 +539,17 @@ int32_t api_config_impl::copy_from(const api_config &src) {
   for (const char *name : addr_attrs) {
     if (src.get_attr(name, addr_val) == LBAPI_OK) {
       set_attr(name, addr_val);
+    }
+  }
+
+  // bool属性
+  bool bool_val = false;
+  const char *bool_attrs[] = {
+      config_name::single_cust_per_link,
+  };
+  for (const char *name : bool_attrs) {
+    if (src.get_attr(name, bool_val) == LBAPI_OK) {
+      set_attr(name, bool_val);
     }
   }
 
