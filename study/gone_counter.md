@@ -1084,3 +1084,137 @@ flowchart TD
 2. **批量回调**：在 `callback_manager` 中聚合多个回调一次性投递，减少队列写入次数。
 3. **接收处理分离**：将 `deal_recv_msg` 中的消息解析与回调投递分离到不同线程，降低单线程负载。
 4. **证券代码缓存**：将 `get_sec_index` 的哈希查询结果缓存在 `OrderReq` 中，避免重复查询（同一证券多次委托）。
+
+---
+
+## 九、api_leave_time_ns 时间戳机制分析（2026-09-17）
+
+### 9.1 背景与目的
+
+性能测试需要测量"一笔委托在 API 内部的处理耗时"。原始算法在 `order_insert` 调用 `deal_order_req` **返回后**（即消息压入消费队列后）立即记录 `api_leave_time_ns`。但此时消息**尚未真正发送到网卡**——还需经过引擎线程消费队列、`send()` 系统调用等环节。导致测量的"API 内处理耗时"被**低估**，不反映真实发送延迟。
+
+优化目标：将 `api_leave_time_ns` 的记录点**移到引擎线程 `send()` 系统调用成功后**，使测量更贴近真实发送时刻。
+
+### 9.2 字段定义
+
+| 字段 | 位置 | 说明 |
+|:---|:---|:---|
+| `OrderReq::api_arrive_time_ns` | `order_trade_type.h:52` | 请求到达 API 的时间（用户线程记录） |
+| `OrderReq::api_leave_time_ns` | `order_trade_type.h:53` | 请求离开 API 的时间（引擎线程写入） |
+| `link_send_event::leave_time_ptr` | `api_event_msg.h:69` | 指向 `OrderReq::api_leave_time_ns` 的指针，跨线程传递写入目标 |
+| `perf_now_ns()` | `api_event_msg.h:14` | `clock_gettime(CLOCK_MONOTONIC)` 获取单调时钟纳秒（约 10-30ns） |
+
+> `OrderReq` 字段声明为 `mutable`，因为 `order_insert` 接收 `const OrderReq &`，但需要修改时间戳字段。
+
+### 9.3 完整赋值链（5 个环节）
+
+**① 用户线程 `order_insert` 入口重置**（`api_instance.cpp:300-316`）
+
+```cpp
+req.api_arrive_time_ns = perf_now_ns();   // 请求到达 api（记录起点）
+req.api_leave_time_ns = 0;                // 重置，等待引擎线程写入
+int32 ret = fast_.deal_order_req(req);
+if (ret == LBAPI_ERR_COUNTER_OFFLINE || ret == LBAPI_ERR_UNSUPPORTED_OP) {
+    ret = c98_.deal_order_req(req);       // 降级到 98
+}
+if (ret == LBAPI_OK) {
+    while (req.api_leave_time_ns == 0) {  // 自旋等待引擎线程写入
+        CPU_PAUSE();
+    }
+} else {
+    req.api_leave_time_ns = perf_now_ns(); // 发送失败，直接记录离开时间
+}
+return ret;
+```
+
+**② 柜台层 `deal_order_req` 设置写入指针**（`gw_counter_direct.cpp:170-171`）
+
+```cpp
+link_send_event *evt = reinterpret_cast<link_send_event *>(data);
+evt->leave_time_ptr = const_cast<uint64_t *>(&req.api_leave_time_ns);
+```
+
+委托消息入队时，把 `&req.api_leave_time_ns` 存入 `link_send_event::leave_time_ptr`，随消息进入发送队列。同理 `fpga_counter_direct.cpp:106`、`fpga_counter_gateway.cpp:151`。
+
+**③ 引擎线程 `send()` 后原子写入**（`single_socket_engine.cpp:162-165`）
+
+```cpp
+ret = link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
+if (unlikely(ret < 0)) { ... deal_send_error(...); }
+// 性能测试：send() 系统调用后记录离开 api 时间（成功/失败均写入，避免自旋死循环）
+if (evt->leave_time_ptr) {
+    __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+}
+```
+
+`multi_socket_engine.cpp:269/279/289` 与 `tcpdirect_engine.cpp:131` 同理（按 `link_type` 分发到不同链路，均在 `send()` 后写入）。
+
+**④ 用户线程自旋等待返回**（回到 `api_instance.cpp:310-312`）
+
+```cpp
+while (req.api_leave_time_ns == 0) { CPU_PAUSE(); }
+```
+
+引擎线程写入非 0 值后，自旋退出，`order_insert` 返回。
+
+**⑤ 性能测试计算耗时**（`perf_runner.cpp:119-121`）
+
+```cpp
+uint64_t lat = req.api_leave_time_ns - req.api_arrive_time_ns;  // api 内 + 发送耗时
+latencies.push_back(lat);
+```
+
+### 9.4 跨线程协作原理
+
+```
+用户线程 (order_insert)                引擎线程 (do_work)
+─────────────────────                ─────────────────────
+perf_now_ns() → arrive_time
+api_leave_time_ns = 0
+deal_order_req(req)
+   ├─ 取队列内存
+   ├─ leave_time_ptr = &req.api_leave_time_ns   ←── 传递写入目标
+   └─ cmt_req_que_mem(提交)  ──────────────►  pop 消息
+                                            send_msg() 系统调用
+                                            __atomic_store_n(leave_time_ptr,
+                                               perf_now_ns(), RELEASE)
+while (leave_time_ns == 0) ◄── 自旋 ────────  写入完成
+   CPU_PAUSE()
+return
+```
+
+关键点：**写入目标指针在入队时通过 `link_send_event::leave_time_ptr` 传递**，使引擎线程能直接写回用户线程栈上的 `OrderReq` 字段，无需共享额外状态。
+
+### 9.5 原子操作与内存序
+
+- **写入**：`__atomic_store_n(ptr, val, __ATOMIC_RELEASE)` —— 保证该写操作之前的所有内存操作（如消息数据填充）对后续读取方可见
+- **读取**：自旋循环 `while (req.api_leave_time_ns == 0)` 为普通读取，配合 `CPU_PAUSE()` 降低缓存行竞争和功耗
+- **避免死循环**：引擎线程**成功/失败均写入**时间戳（`send_msg` 返回后无条件写），确保即使 `send()` 失败，用户线程的自旋也能退出
+
+### 9.6 降级路径与失败路径
+
+| 场景 | `deal_order_req` 返回 | 时间戳处理 |
+|:---|:---|:---|
+| 极速柜台正常入队 | `LBAPI_OK` | 自旋等待引擎线程 send() 后写入 |
+| 极速柜台离线/不支持 → 降级 98 | `c98_.deal_order_req` 返回值 | 98 柜台**不设置** `leave_time_ptr`（counter98.h:152 默认 nullptr），`order_insert` 直接按 `ret` 处理 |
+| 发送队列满/断链 | `LBAPI_ERR_SEND_QUEUE_FULL` 等 | `ret != LBAPI_OK`，直接 `api_leave_time_ns = perf_now_ns()` |
+
+### 9.7 非委托事件的处理
+
+所有非委托的 `link_send_event` 构造点初始化 `leave_time_ptr = nullptr`，引擎线程在 `send()` 后判空跳过，不参与性能测试：
+
+| 事件 | 位置 |
+|:---|:---|
+| 撤单 | `gw_counter_direct.cpp:241`、`fpga_counter_direct.cpp:159`、`fpga_counter_gateway.cpp:212` |
+| ETF | `gw_counter_direct.cpp:206` |
+| 登录 | `counter98.cpp:583/691/797/941`、`fpga_counter_base.cpp:358` |
+| 心跳/关闭/连接 | `link_timer_op.h:125` |
+| 证券信息请求 | `fpga_counter_direct.cpp:487`、`fpga_counter_gateway.cpp:617` |
+| 98 柜台 | `counter98.h:152` |
+
+### 9.8 测量口径说明
+
+- **优化前**：`api_leave_time_ns` 在入队后记录 → 测量的是"API 内组包+入队耗时"
+- **优化后**：`api_leave_time_ns` 在 `send()` 系统调用后记录 → 测量的是"API 内组包+入队+引擎消费+发送系统调用"完整链路耗时
+- 因此优化后延迟数值**变大**（如 GOne 10000TPS 平均 434ns → 2189ns），这是**测量口径变化**，并非性能退化
+- 该口径更真实反映客户端发出委托到报文落到网卡的端到端耗时

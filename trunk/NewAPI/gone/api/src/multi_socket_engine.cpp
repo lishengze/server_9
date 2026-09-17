@@ -260,34 +260,35 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
     switch (evt->type) {
     case LINK_EVENT_TYPE_SEND_MSG: {
       if (evt->link_type == LINK_TYPE_SPEED_GW) {
+        // 性能测试：send() 前记录（纯框架延迟，排除系统调用/内核缓冲忙等）
+        if (evt->leave_time_ptr) {
+          __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+        }
         ret = fast_gw_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
           lb_common::lb_log_hand tlh(log_);
           error_log(tlh) << "fast gateway link send msg error,ret=" << ret << end_log;
           counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
         }
+      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
         if (evt->leave_time_ptr) {
           __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
         }
-      } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
         ret = fast_core_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
           lb_common::lb_log_hand tlh(log_);
           error_log(tlh) << "fast core link send msg error,ret=" << ret << end_log;
           counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
         }
+      } else {
         if (evt->leave_time_ptr) {
           __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
         }
-      } else {
         ret = g98_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
           lb_common::lb_log_hand tlh(log_);
           error_log(tlh) << "98 link send msg error,ret=" << ret << end_log;
           counter98_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
-        }
-        if (evt->leave_time_ptr) {
-          __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
         }
       }
       break;

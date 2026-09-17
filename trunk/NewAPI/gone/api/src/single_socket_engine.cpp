@@ -153,15 +153,16 @@ template <class TFastCounter> void single_socket_engine<TFastCounter>::do_work()
 
     switch (evt->type) {
     case LINK_EVENT_TYPE_SEND_MSG: {
+      // 性能测试：send() 系统调用前记录离开 api 时间（测量纯 API 框架处理延迟，
+      // 排除 send() 系统调用与内核缓冲满忙等；成功/失败均写入，避免上层自旋等待死循环）
+      if (evt->leave_time_ptr) {
+        __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+      }
       ret = link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
       if (unlikely(ret < 0)) {
         lb_common::lb_log_hand tlh(log_);
         error_log(tlh) << "single socket link send msg error,ret=" << ret << end_log;
         counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
-      }
-      // 性能测试：send() 系统调用后记录离开 api 时间（成功/失败均写入，避免上层自旋等待死循环）
-      if (evt->leave_time_ptr) {
-        __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
       }
       break;
     }
