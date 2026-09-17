@@ -38,6 +38,7 @@
 23. **GOne 性能测试** ✅：复用 PerfRunner，set_counter_name() 动态化报告标题（FTE/GOne/GOne-GW）；10000 TPS/10s 测试结果：92,073 笔 100% 成功，平均 434ns，P50=333ns，P90=522ns
 24. **FTE 对比阻塞**：FTE 环境重启后快速链路登录失败（FTE 未回 login_ans，6s 心跳超时断链），无法在相同场景对比；FTE 历史基准（500 TPS）：平均 2523ns，P50 2052ns，P90 4290ns（GOne 约为其 1/6）
 25. **gw counter 深度分析与优化落地** ✅（§28）：`study/gw_counter.md` 深度分析（架构/UML/各消息时序图/瓶颈/6套方案）；**6 项优化**——GwSessionCache 去锁（无锁直接访问）/ `fa_key_cache_` string 复用 / 心跳 ×1000（API 侧换算）/ 发送队列 64MB / FTE 对象池扩容 / 双趟序列化（`pad_copy`+`checksum_bytes` 宽累加）；三档 TPS 对比（10000TPS 平均 442.9→359.4ns ↓18.9%）；方案1（会话迁成员）实验验证后因业务约束回退（@10000TPS P50 160ns 逼近 GOne 120ns，证明会话 string+hash 是主要瓶颈）
+26. **FTE 压测卡死根因 + FTE vs GOne 全面对比** ✅（§30）：FTE 10000TPS 卡死根因是 `-DNO_DSE` 编译下 `fte_internal_spsc`（FTE→DSE 队列）无消费者线程，消息只进不出，队列满后 `producer_consumer_queue::push()` 忙等自旋；**非对象池耗尽**（对象池池空回退 new）；修复=扩容 `FTE_DSE_FIFO_LEN` 8192→65536 + NO_DSE 下启动丢弃消费者线程；修复后 FTE 10000TPS 完整跑完 91956 笔（平均 9224ns, P50 7964ns, P90 10823ns）；同环境对比 GOne 平均 5757ns（P50 3814ns, P90 6492ns），GOne 中低延迟快 40~56%，FTE 最大延迟更优（1045μs vs 3425μs），TPS 接近
 
 ## 三、分析框架
 
@@ -153,6 +154,9 @@
 | **GOne 测试用例** | `trunk/NewAPI/gone/api/mock/client/config/test_cases/gone_combo.json` |
 | **性能对比脚本** | `trunk/NewAPI/gone/api/mock/client/run_perf_compare.sh`（顺序 FTE → GOne） |
 | **gw 深度分析文档** | `study/gw_counter.md`（架构/UML/消息时序图/性能瓶颈/6套方案/优化落地） |
+| **FTE DSE 队列** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/src/main.cpp`（FTE_DSE_FIFO_LEN、SetFTE2DSEQueue、NO_DSE 丢弃线程） |
+| **FTE 队列实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/queue/producer_consumer_queue.h`（push 忙等自旋） |
+| **FTE 对象池实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/unbound_object_pool.h` / `object_pool.h`（池空回退 new） |
 
 ## 五、常见问答模板
 
@@ -390,6 +394,22 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 "========== {counter_name} 委托通路性能测试报告 =========="
 ```
 
+### Q21: FTE 10000 TPS 压测卡死怎么排查？
+```
+1. 现象：mock_client 停在约 16381 回调（~8000 单），FTE 进程 alive 但不再推进
+2. 先排除对象池：日志搜 "produce too slow" / "capacity should resize" / "Sth wrong"
+   （unbound_object_pool / object_pool 池空回退 new，永不返回 null，故对象池不是根因）
+3. 定位忙等死锁：ps -eo pid,comm 看 FTE 处理线程状态为 R（自旋，非 S 睡眠）
+   + gstack <pid> 看栈是否卡在 producer_consumer_queue.h push() 的 while(!trypush()){}
+4. 根因：-DNO_DSE 编译下 fte_internal_spsc（FTE→DSE 队列）无消费者线程，
+   SetFTE2DSEQueue 仍执行 → 消息只进不出，队列满后 push 忙等自旋
+5. 修复（最小改动）：
+   - 扩容 main.cpp 的 FTE_DSE_FIFO_LEN 8192→65536
+   - NO_DSE 下启动丢弃消费者线程（pop + msg.recycle_func.release(msg.data)）
+6. 部署：/mnt/work/gt_test/work_atp/cmake/fte/bin/ute ← build_/build_release/fte/ute
+7. 注意：pkill -f 会匹配自身命令行自杀，改用 pkill -x 或按 PID kill
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -404,7 +424,7 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.7 在 v2.6（§28 gw counter 优化）基础上新增 §29 压测算法优化：离开 API 时间记录点从入队后移到 send() 成功后（通过 `link_send_event::leave_time_ptr` 跨线程传递），GOne 10000TPS 平均 2189ns（新口径，含完整发送链路）。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程；同环境对比 GOne 中低延迟快 40~56%、FTE 最大延迟更优、TPS 接近。
 
 ---
 

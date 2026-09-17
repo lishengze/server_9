@@ -1529,3 +1529,87 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 ### 29.4 FTE 对比
 
 FTE 环境不可用（33001 未监听，ute/tgw 未运行），无法对比。
+
+---
+
+## 30. FTE 压测卡死根因分析与 FTE vs GOne 全面对比（2026-09-17）
+
+### 30.1 问题现象
+
+FTE（gw counter）在 10000 TPS / 10s 压测下卡死：mock_client 停在约 16381 个回调（约 8000 笔订单），无论 2000 还是 10000 TPS 都卡在相同累计订单数附近，FTE 进程存活但不再推进。
+
+### 30.2 根因定位（逐一排除）
+
+**排除对象池**：`unbound_object_pool`（订单池 1M）与 `object_pool`（fte_report/fte_reject 等）的 `get()` 在池空时都会**回退到 `new`**，永不返回 nullptr。日志中 `produce too slow`、`capacity should resize`、`Sth wrong` 均出现 0 次，证明**没有任何对象池耗尽**。
+
+**真正的根因——DSE 队列无消费者**：
+- `fte_internal_spsc`（FTE→DSE 队列，容量 8192，roundup 后 16384）是唯一承载 `kFTEExecutionReport` 等消息的队列
+- 编译带 **`-DNO_DSE`**：其唯一消费者 `external_data_sync::create()` 位于 `#ifndef NO_DSE` 块内被跳过
+- 但 `SetFTE2DSEQueue(&fte_internal_spsc)`（main.cpp:365）**仍执行**，生产者照常 `push`
+- 结果：消息**只进不出**，队列满后 `producer_consumer_queue::push()` 的 `while(!trypush()){}` **忙等自旋**，处理线程永久卡死
+
+**定位手段**：
+- `ps -eo pid,comm,args` 看进程：FTE alive（非 defunct）+ 处理线程状态 **R（自旋）**
+- `gstack <pid>` 看调用栈：卡在 `producer_consumer_queue.h:126 push()` 忙等，由 `DealReportAfter`（uplink_biz_processor.cpp:2648）触发
+- 卡住 index 16382 ≈ 队列容量 16384，进一步佐证
+
+### 30.3 修复方案（最小改动）
+
+1. **扩容 DSE 队列**：`fte/fte/src/main.cpp` 中 `FTE_DSE_FIFO_LEN` 8192→65536（roundup 后 131072），容纳 10 万笔订单瞬时排队
+2. **NO_DSE 下启动丢弃消费者线程**（main.cpp，`SetFTE2DSEQueue` 成功后）：
+```cpp
+#ifdef NO_DSE
+    std::thread dse_drop_th([&fte_internal_spsc]() {
+        internal_msg_type msg;
+        while (true) {
+            if (fte_internal_spsc.pop(msg)) {
+                if (msg.data) { msg.recycle_func.release(msg.data); }
+            }
+        }
+    });
+    dse_drop_th.detach();
+    LOG_INFO("NO_DSE mode: started DSE message drop thread to prevent queue blocking.");
+#endif
+```
+
+> 曾尝试 `PushToDSE` 辅助函数方案（头文件声明 + 替换 15 处 push），因改动面大被用户否决，改为上述最小改动。
+
+### 30.4 FTE 10000 TPS 验证结果（修复后）
+
+| 指标 | 值 |
+|:---|---:|
+| 实际 TPS | 9195.48 |
+| 样本数 | 91956（完整跑完 ✅） |
+| 平均延迟 | 9224.53 ns |
+| P50 | 7964 ns |
+| P75 | 9357 ns |
+| P90 | 10823 ns |
+| 最大 | 1045814 ns |
+
+> 修复前 2000 TPS 能过（消息量<容量）、10000 TPS 卡死；修复后两者均完整跑完。
+
+### 30.5 FTE vs GOne 全面对比（同环境 10000 TPS / 10s）
+
+| 指标 | FTE (gw) | GOne (fpga_direct) | 结论 |
+|:---|---:|---:|:---|
+| 实际 TPS | 9195 | 9067 | 接近（差 1.4%） |
+| 平均延迟 | 9224 ns | **5757 ns** | GOne 快 37.5% |
+| P50 | 7964 ns | **3814 ns** | GOne 快 52% |
+| P75 | 9357 ns | **4098 ns** | GOne 快 56% |
+| P90 | 10823 ns | **6492 ns** | GOne 快 40% |
+| 最大延迟 | **1045 μs** | 3425 μs | FTE 更稳定 |
+
+### 30.6 瓶颈分析
+
+1. **GOne 中低延迟区间优势明显**：P50/P75/P90 比 FTE 快 40~56%，符合 fpga_direct 硬件极速定位
+2. **FTE 最大延迟更优**（1045μs vs 3425μs），说明 gw counter 延迟分布更集中、更稳定
+3. **TPS 接近**：两者均受 mock_client 发送/回调链路和 CPU 竞争约束，差异仅 1.4%
+4. 注意：GOne 在干净环境（无 FTE 竞争）下平均仅 **2159ns**（§29.3），当前因 FTE 同机运行存在 CPU 竞争，GOne 平均劣化到 5757ns，说明**同机多柜台压测会互相干扰**，单柜台基准应单独测
+
+### 30.7 关键经验
+
+1. **对象池 ≠ 卡死原因**：`unbound_object_pool` / `object_pool` 池空回退 `new`，永不返回 null；判断池耗尽应查日志 `produce too slow` / `capacity should resize`
+2. **忙等自旋定位**：进程 alive + 线程 R（非 S）= 用户态忙等死锁，`gstack` 看栈是否卡在 `while(!trypush()){}`
+3. **`-DNO_DSE` 陷阱**：NO_DSE 编译下 DSE 队列无消费者，消息只进不出；排查 FTE 卡死务必检查编译宏与队列消费线程
+4. **`pkill` 自终止陷阱**：`pkill -f 'xxx'` 会匹配当前 shell 命令行自身导致自杀（exit 143），应改用 `pkill -x <进程名>` 或按 PID kill
+5. **FTE 部署**：`/mnt/work/gt_test/work_atp/cmake/fte/bin/ute`，编译产物 `build_/build_release/fte/ute`，`start_all.sh` 重启
