@@ -37,6 +37,7 @@
 22. **GOne 模拟柜台 gone_counter_mock** ✅：独立 CMake 构建，监听双端口，支持登录/委托/成交/撤单/心跳全链路；关键修复（字段截断 memcpy、Core 链路端口 reset_remote、mock 推送成交回报）
 23. **GOne 性能测试** ✅：复用 PerfRunner，set_counter_name() 动态化报告标题（FTE/GOne/GOne-GW）；10000 TPS/10s 测试结果：92,073 笔 100% 成功，平均 434ns，P50=333ns，P90=522ns
 24. **FTE 对比阻塞**：FTE 环境重启后快速链路登录失败（FTE 未回 login_ans，6s 心跳超时断链），无法在相同场景对比；FTE 历史基准（500 TPS）：平均 2523ns，P50 2052ns，P90 4290ns（GOne 约为其 1/6）
+25. **gw counter 深度分析与序列化优化** ✅（§28）：`study/gw_counter.md` 深度分析（架构/UML/各消息时序图/瓶颈/6套方案）；双趟序列化（`pad_copy`+`checksum_bytes` 宽累加）；三档 TPS 对比（10000TPS 平均 442.9→359.4ns ↓18.9%）；方案1（会话迁成员）实验验证后因业务约束回退（@10000TPS P50 160ns 逼近 GOne 120ns，证明会话 string+hash 是主要瓶颈）
 
 ## 三、分析框架
 
@@ -151,6 +152,7 @@
 | **GOne 测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json`（fast_counter_type=2） |
 | **GOne 测试用例** | `trunk/NewAPI/gone/api/mock/client/config/test_cases/gone_combo.json` |
 | **性能对比脚本** | `trunk/NewAPI/gone/api/mock/client/run_perf_compare.sh`（顺序 FTE → GOne） |
+| **gw 深度分析文档** | `study/gw_counter.md`（架构/UML/消息时序图/性能瓶颈/6套方案/优化落地） |
 
 ## 五、常见问答模板
 

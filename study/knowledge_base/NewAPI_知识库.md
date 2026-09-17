@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.4（2026-09-16，§27.10 gw counter 优化与重测：FTE 10000TPS 0 失败、延迟 2248→393ns）
+> **版本**：v2.5（2026-09-16，§28 gw counter 深度分析与序列化优化：双趟序列化 + 方案1实验回退，10000TPS 平均 359ns）
 
 ---
 
@@ -38,6 +38,7 @@
 25. [gw_counter 性能分析与优化（Task 7.8）](#25-gw_counter-性能分析与优化task-78)
 26. [性能测试系统与关键缺陷修复（Task 7.9~7.12）](#26-性能测试系统与关键缺陷修复task-79-712)
 27. [FTE vs GOne 完整性能对比与瓶颈分析](#27-fte-vs-gone-完整性能对比与瓶颈分析)（§27.10 gw counter 优化与重测）
+28. [gw counter 深度分析与序列化优化](#28-gw-counter-深度分析与序列化优化)（§28.1 分析文档 / §28.2 双趟序列化 / §28.3 三档对比 / §28.4 方案1实验回退）
 
 ---
 
@@ -1392,3 +1393,96 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 - **FTE 对象池创建卡死**：将 ETF 大对象池也扩到 150000 会导致 `sz_fte_etf_report` 分配卡死（对象大、262144 个内存分配过慢）。订单压测只需 `fte_report`/`fte_reject`，ETF 池保持合理值。
 - **FTE 高负载后降级**：10000 TPS 压测后 FTE 进入降级状态（不响应新登录），需 stop_all + start_all 重启。
 - **mock_client 压测后挂起**：10 万笔回报回调处理慢，进程在 shutdown 阶段挂起，需 timeout 兜底。
+
+---
+
+## 28. gw counter 深度分析与序列化优化（2026-09-16）
+
+> 在 §27.10 的 5 项优化基础上，进一步对 gw counter 模块进行**深度分析**（架构/UML/链路/瓶颈/方案）和**序列化微优化**（双趟宽累加），并在 §28.4 实验性验证**方案1（会话迁成员）**后因业务约束回退。
+
+### 28.1 深度分析文档 study/gw_counter.md
+
+**文件**：`study/gw_counter.md`（全文约 23KB）
+
+**内容**：
+
+| 章节 | 内容 |
+|------|------|
+| §1 整体架构 | 三层架构图（API层→Counter层→Engine层→网络），与 fpga_direct/counter98 对比 |
+| §2 类关系 UML 图 | Mermaid 类图展示 `api_impl`、`gw_counter_direct`、`GwSessionCache`、`single_socket_engine` 关系 |
+| §3 FTE 协议总览 | 报文格式（头8B+体+校验和4B）、消息类型表（1xxx/2xxx/3/9）、结构体尺寸、状态字典映射 |
+| §4 消息通讯链路 | **6 个 Mermaid 时序图**：登录、委托、撤单、ETF、心跳、回报拆包分发流程图 |
+| §5 状态机与线程模型 | 登录状态机、链接状态机、线程模型表（含 GwSessionCache 无锁数据竞争风险标注） |
+| §6 性能瓶颈分析 | 实测数据（GOne 187ns vs FTE 1010ns，5.4x 差距），热路径源码逐行分析，5 个瓶颈定位 |
+| §7 详细解决方案 | **6 套方案**（P0~P2 优先级）：会话迁成员、撤单映射、回报路径优化、线程安全、高 TPS 熔断、序列化微调 |
+
+**核心发现**：
+- 性能瓶颈根因：`GwSessionCache` 全局单例 unordered_map（string key + 哈希） vs fpga_direct 的成员变量缓存，是 5.4 倍差距的主要来源
+- 线程安全风险：当前 GwSessionCache 无锁，跨线程并发读写存在数据竞争
+- 撤单 3 次查找：`build_cancel_msg` 每次触发 3 次全局查找
+
+### 28.2 序列化优化落地（双趟宽累加）
+
+**改动文件**：`trunk/NewAPI/gone/api/src/gw_counter_direct.cpp`
+
+**新增辅助函数**：
+- `pad_copy(p, src, n)`：`memset(p,' ',n)` 整块填空格 + `memcpy(p,src,strnlen)` 拷贝实际内容（替代逐字节 `cksum_copy_pad`）
+- `checksum_bytes(buf, len)`：uint64 宽累加校验和（一次 8 字节拆字节求和，替代逐字节 `GenerateSzCheckSum`）
+
+**重写 3 个 build 函数**（双趟方案）：
+- 第一趟：字段赋值用 `memcpy`/`memset` 整块（session 字段直接 memcpy，req 字段 `pad_copy`）
+- 第二趟：对 `[头+体]` 用 `checksum_bytes` 宽累加算校验和
+
+**`GenerateSzCheckSum` 改为宽累加**（接收路径校验和也受益）。
+
+### 28.3 三档 TPS 性能对比（同环境旧版 vs 优化后）
+
+**对比方法**：`git stash` 临时编译旧版（逐字节单趟）跑基线，再恢复优化版跑同样三组，确保同环境公平对比。
+
+| TPS 档位 | 旧版平均 | 优化后平均 | 变化 |
+|:--------:|:--------:|:---------:|:----:|
+| 1000 TPS | 1012.8ns | 947.1ns | ↓6.5% |
+| 2000 TPS | 762.2ns | 741.7ns | ↓2.7% |
+| **10000 TPS** | **442.9ns** | **359.4ns** | **↓18.9%** |
+
+**结论**：序列化优化收益随 TPS 上升而放大。@10000TPS 平均 ↓18.9%，P90 ↓22.9%（441→340ns），0 失败。但低 TPS 下收益有限（报文仅 106 字节）。
+
+### 28.4 方案1（会话迁成员）实验验证后回退
+
+**实验内容**：将 `GwSessionInfo` 作为 `gw_counter_direct` 成员变量，所有 `GwSessionCache::instance().get_session()` 改为直接引用 `session_`，`record_order_locator` 改为直接写 `session_.order_locators`，撤单反查改为成员查找（1 次 find 替代 3 次全局查找）。
+
+**实验数据（@10000 TPS/5s）**：
+
+| 指标 | 旧版 | 双趟序列化 | **方案1** | 旧版→方案1 |
+|:---|---:|---:|---:|---:|
+| 平均延迟 | 442.9ns | 359.4ns | **297.3ns** | **↓32.9%** |
+| P50 | 241ns | 201ns | **160ns** | ↓33.6% |
+| P90 | 441ns | 340ns | **260ns** | **↓41.0%** |
+| 失败率 | 0% | 0% | 0% | 持平 |
+
+**回退原因**：业务逻辑必须以 `fund_account_id` 为 key 缓存会话数据、委托时取出赋值，会话缓存必须保留全局单例 `GwSessionCache`。方案1改造已回退。
+
+**意义**：方案1性能数据（@10000TPS P50 160ns，逼近 GOne 的 120ns）证明了"会话 string+hash 查找是主要性能瓶颈"的判断正确。当前代码状态 = 双趟序列化优化（方案6）。
+
+### 28.5 当前代码状态与剩余差距
+
+**当前代码**：HEAD + 双趟序列化优化（`pad_copy` + `checksum_bytes` + `GenerateSzCheckSum` 宽累加）+ `GwSessionCache` 全局单例（业务约束保留）。
+
+**最终性能（@10000 TPS）**：
+
+| 指标 | GOne(fpga) | FTE(gw) 当前 | 差距 |
+|:---|---:|---:|---:|
+| 平均延迟 | 186.7ns | **359.4ns** | 1.9x |
+| P50 | 120ns | **201ns** | 1.7x |
+| P90 | 180ns | **340ns** | 1.9x |
+| 成功率 | 100% | **100%** | 持平 |
+
+**剩余差距来源**：
+1. **`GwSessionCache` unordered_map 查找**（string 构造 + 哈希）：业务约束不可消除，可考虑无锁/更优哈希缓解
+2. **FTE 协议序列化**：106 字节报文，双趟优化后已接近极限
+3. **回报处理路径**：`std::string` 构造 + `strtoll` + `unordered_map` 插入（方案3 可优化）
+
+**下一步建议**：
+- 方案3（回报路径优化）：消除回报处理中的 `std::string` 构造
+- 方案4（线程安全）：给 GwSessionCache 加锁或明确线程归属
+- 方案5（高 TPS 熔断）：`send_queue_full` 时降级 counter98
