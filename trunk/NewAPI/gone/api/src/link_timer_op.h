@@ -122,6 +122,7 @@ public:
     evt->link_type = link_->get_link_type();
     evt->type = event_type;
     evt->data_len = 24;
+    evt->leave_time_ptr = nullptr;  // 心跳/关闭/连接事件不参与性能测试
 
     if (event_type == LINK_EVENT_TYPE_SEND_HEART) {
 

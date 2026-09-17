@@ -147,6 +147,9 @@ int32 fpga_counter_gateway::deal_order_req(const OrderReq &req) {
   g1_msg_head *head = reinterpret_cast<g1_msg_head *>(evt->data);
   build_order_msg(req, *cust, sec_index, head);
 
+  // 性能测试：记录发送完成时间戳写入指针，引擎线程在 send() 系统调用成功后写入
+  evt->leave_time_ptr = const_cast<uint64_t *>(&req.api_leave_time_ns);
+
   // 提交
   gw_send_queue_->write_cmt_mth(pos, total_len);
   gw_eng_op_->trigger_send();
@@ -205,6 +208,8 @@ int32_t fpga_counter_gateway::deal_cancel_req(const CancelReq &req) {
 
   g1_msg_head *head = reinterpret_cast<g1_msg_head *>(evt->data);
   build_cancel_msg(req, *cust, head);
+
+  evt->leave_time_ptr = nullptr;  // 撤单不参与性能测试
 
   gw_send_queue_->write_cmt_mth(pos, total_len);
   gw_eng_op_->trigger_send();
@@ -609,6 +614,7 @@ int32 fpga_counter_gateway::deal_link_connect(int16 link_type, int32 have_switch
       evt->link_type = LINK_TYPE_SPEED_GW;
       evt->type = LINK_EVENT_TYPE_SEND_MSG;
       evt->data_len = static_cast<int32>(sizeof(g1_msg_head) + sizeof(sec_info_req));
+      evt->leave_time_ptr = nullptr;  // 证券信息请求不参与性能测试
 
       g1_msg_head *head = reinterpret_cast<g1_msg_head *>(evt->data);
       build_sec_info_req_msg(0, head);

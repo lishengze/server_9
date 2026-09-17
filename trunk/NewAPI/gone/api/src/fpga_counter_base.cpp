@@ -355,6 +355,7 @@ int32 fpga_counter_base::delive_cust_login(fpga_cust_info &cust, lb_common::que_
   evt->link_type = LINK_TYPE_SPEED_GW;
   evt->type = LINK_EVENT_TYPE_ACCOUNT_LOGIN;
   evt->data_len = sizeof(acc_login_event_info);
+  evt->leave_time_ptr = nullptr;  // 登录事件不参与性能测试
   acc_login_event_info *info = reinterpret_cast<acc_login_event_info *>(evt + 1);
   build_login_event(cust, *info);
 

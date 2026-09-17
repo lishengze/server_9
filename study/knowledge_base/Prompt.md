@@ -404,7 +404,7 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.6 在 v2.3（§27 GOne）基础上新增 gw counter 优化落地（§28）：双趟序列化 + GwSessionCache 去锁 + fa_key_cache_ string 复用 + 心跳 ×1000 + 发送队列/对象池扩容，10000TPS 平均 359ns（较旧版 ↓18.9%）。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.7 在 v2.6（§28 gw counter 优化）基础上新增 §29 压测算法优化：离开 API 时间记录点从入队后移到 send() 成功后（通过 `link_send_event::leave_time_ptr` 跨线程传递），GOne 10000TPS 平均 2189ns（新口径，含完整发送链路）。
 
 ---
 

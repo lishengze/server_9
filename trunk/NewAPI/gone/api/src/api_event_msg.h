@@ -6,8 +6,16 @@
 #include "order_trade_type.h"
 
 #include <cstdint>
+#include <time.h>
 
 namespace lb_api {
+
+/// 性能测试辅助：获取当前单调时钟纳秒（低开销，clock_gettime 约 10-30ns）
+inline uint64_t perf_now_ns() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
+}
 
 using lb_common::int16;
 using lb_common::int32;
@@ -58,6 +66,7 @@ struct link_send_event {
   int16 link_type; ///< 目标链接类型 (LINK_TYPE_98 / LINK_TYPE_SPEED_TRADE / LINK_TYPE_SPEED_GW)
   int16 type;      ///< 事件类型
   int32 data_len;  ///< 数据长度 (心跳/关闭/重连/链接事件时为 0)
+  uint64_t *leave_time_ptr; ///< 发送完成时间戳写入指针（性能测试用，指向 OrderReq::api_leave_time_ns；非委托事件为 nullptr）
   char data[0];    ///< 数据柔性数组
 };
 

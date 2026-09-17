@@ -580,6 +580,7 @@ int32 counter98::deal_agw_login() {
   evt->link_type = LINK_TYPE_98;
   evt->type = LINK_EVENT_TYPE_AGWUSER_LOGIN;
   evt->data_len = 0;
+  evt->leave_time_ptr = nullptr;  // 登录事件不参与性能测试
   gw_send_queue_->write_cmt_mth(pos, evt_len);
   gw_eng_op_->trigger_send();
 
@@ -687,6 +688,7 @@ int32 counter98::deal_login_req(const LoginReq &req) {
   evt->link_type = LINK_TYPE_98;
   evt->type = LINK_EVENT_TYPE_ACCOUNT_LOGIN;
   evt->data_len = sizeof(acc_login_event_info);
+  evt->leave_time_ptr = nullptr;  // 登录事件不参与性能测试
   std::memcpy(evt->data, &info, sizeof(acc_login_event_info));
   gw_send_queue_->write_cmt_mth(pos, evt_len);
   gw_eng_op_->trigger_send();
@@ -792,6 +794,7 @@ int32 counter98::delive_fast_counter_login(const acc_login_event_info &info) {
     te_head->link_type = LINK_TYPE_SPEED_GW;
   te_head->type = LINK_EVENT_TYPE_ACCOUNT_LOGIN;
   te_head->data_len = sizeof(acc_login_event_info);
+  te_head->leave_time_ptr = nullptr;  // 登录事件不参与性能测试
 
   std::memcpy(te_head->data, (const char *)(&info), sizeof(acc_login_event_info));
 
@@ -935,6 +938,7 @@ int32 counter98::deal_link_connect(int16 link_type, int32 have_switch) {
       evt->link_type = LINK_TYPE_98;
       evt->type = LINK_EVENT_TYPE_AGWUSER_LOGIN;
       evt->data_len = 0;
+      evt->leave_time_ptr = nullptr;  // 登录事件不参与性能测试
       gw_send_queue_->write_cmt_mth(pos, evt_len);
       gw_eng_op_->trigger_send();
     }

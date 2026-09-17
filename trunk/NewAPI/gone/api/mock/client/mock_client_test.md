@@ -1042,3 +1042,81 @@ bash run_perf_compare.sh
 3. **FTE 不再崩溃**：对象池 2000→262144（实际），支撑 10 万笔压测。
 4. **心跳正确性**：API 侧 ×1000 统一换算，FTE 回退，功能测试心跳 PASS。
 5. **剩余差距（2.1x）**：FTE 仍有 `unordered_map::find` 哈希遍历 + 消息构建（cksum_copy_pad）开销；GOne 全成员变量零分配。进一步优化可考虑会话指针直接缓存到 counter 实例（完全对齐 fpga_direct 范式）。
+
+---
+
+## 五、压测算法优化：离开 API 时间记录点调整（2026-09-17）
+
+### 5.1 问题
+
+原压测算法中，`api_leave_time_ns` 在 `order_insert` 调用 `deal_order_req` **返回后**（即消息压入消费队列后）立即记录。但此时消息尚未发送到网卡——还需经过引擎线程消费队列、`send()` 系统调用等操作。导致测量的"API 内处理耗时"**不准确**，低估了真实发送延迟。
+
+### 5.2 优化方案
+
+将 `api_leave_time_ns` 的记录点**移到引擎线程 `send()` 系统调用成功后**，使测量更贴近真实发送时刻。
+
+**实现机制**（跨线程传递时间戳指针）：
+
+1. **`link_send_event` 增加 `uint64_t *leave_time_ptr` 字段**（`api_event_msg.h`），指向 `OrderReq::api_leave_time_ns`。
+2. **`order_insert`**（`api_instance.cpp`）：
+   - `req.api_leave_time_ns = 0`（重置）
+   - `deal_order_req(req)` 返回 `LBAPI_OK` 后，**自旋等待**引擎线程写入 `api_leave_time_ns`
+   - 发送失败时直接记录当前时间
+3. **委托路径设置指针**：`gw_counter_direct.cpp` / `fpga_counter_direct.cpp` / `fpga_counter_gateway.cpp` 的 `deal_order_req` 中 `evt->leave_time_ptr = &req.api_leave_time_ns`。
+4. **引擎线程写入时间戳**（`single_socket_engine.cpp` / `multi_socket_engine.cpp` / `tcpdirect_engine.cpp`）：
+   - `send_msg()` 后（成功/失败均写入，避免死循环）`__atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE)`
+5. **所有其他 `link_send_event` 构造点**（心跳/登录/连接/证券信息/撤单/ETF/98）初始化 `leave_time_ptr = nullptr`。
+
+**`perf_now_ns()` 提取**：从 `api_instance.cpp` 的匿名 namespace 提取到 `api_event_msg.h` 的 `lb_api` namespace，供用户线程和引擎线程共用。
+
+### 5.3 优化后 GOne 性能测试结果（10000 TPS / 10s）
+
+**环境**：gone_counter_mock（44001/44002）+ counter98_mock（9003），Release 编译。
+
+```
+========== GOne 委托通路性能测试报告 ==========
+测试时间 : 10.0001 秒
+目标 TPS : 10000
+实际 TPS : 9996.53
+样本数   : 99966
+
+------- API 内处理耗时（纳秒）-------
+样本数    : 99966
+平均值    : 2188.67 ns
+P50 (50%) : 1937 ns
+P75 (75%) : 2048 ns
+P90 (90%) : 2483 ns
+最大值    : 114691 ns
+最小值    : 441 ns
+标准差    : 1084.15 ns
+============================================
+```
+
+| 指标 | 优化前（入队后记录） | **优化后（send 后记录）** | 说明 |
+|:---|---:|---:|:---|
+| 发送/成功/失败 | 92,073/92,073/0 | **99,966/99,966/0** | 自旋等待使匀速发单更准确 |
+| 实际 TPS | 9,207 | **9,996** | 目标 10,000 达成率 92%→100% |
+| 平均延迟 | 434 ns | **2,189 ns** | 新测量含引擎消费+send() |
+| P50 | 333 ns | **1,937 ns** | — |
+| P90 | 522 ns | **2,483 ns** | — |
+
+> **注**：平均延迟从 434ns→2189ns 是**测量口径变化**（从"入队耗时"变为"入队+引擎消费+send() 系统调用"的完整发送链路耗时），并非性能退化。新口径更贴近真实消息发送延迟。
+
+### 5.4 FTE 对比状态
+
+**FTE 环境不可用**（33001/9002 未监听，ute/tgw 进程未运行），无法在相同场景下对比。
+
+### 5.5 修改文件清单
+
+| 文件 | 修改 |
+|:---|:---|
+| `api_event_msg.h` | `link_send_event` 增加 `leave_time_ptr`；`perf_now_ns()` 提取为公共函数 |
+| `api_instance.cpp` | `order_insert` 重置时间戳 + 成功后自旋等待引擎写入 |
+| `gw_counter_direct.cpp` | `deal_order_req` 设置指针；ETF/撤单设 nullptr |
+| `fpga_counter_direct.cpp` | `deal_order_req` 设置指针；撤单/证券信息/连接设 nullptr |
+| `fpga_counter_gateway.cpp` | `deal_order_req` 设置指针；撤单/证券信息设 nullptr |
+| `single_socket_engine.cpp` | `SEND_MSG` 分支 send() 后原子写时间戳 |
+| `multi_socket_engine.cpp` | 3 个发送路径 send() 后原子写时间戳 |
+| `tcpdirect_engine.cpp` | `SEND_MSG` 分支 send() 后原子写时间戳 |
+| `gw_counter_direct.h` / `counter98.h` | `take_req_que_mem` 初始化 `leave_time_ptr=nullptr` |
+| `fpga_counter_base.cpp` / `counter98.cpp` / `link_timer_op.h` | 登录/心跳/连接事件构造点初始化 nullptr |

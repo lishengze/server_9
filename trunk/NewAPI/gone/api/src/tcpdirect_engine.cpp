@@ -128,6 +128,9 @@ template <class TFastCounter> void tcpdirect_engine<TFastCounter>::do_work() {
         error_log(tlh) << "tcpdirect link send msg error,ret=" << ret << end_log;
         counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
       }
+      if (evt->leave_time_ptr) {
+        __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+      }
       break;
     }
     case LINK_EVENT_TYPE_SEND_HEART: {

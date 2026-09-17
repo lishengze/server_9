@@ -266,6 +266,9 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
           error_log(tlh) << "fast gateway link send msg error,ret=" << ret << end_log;
           counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
         }
+        if (evt->leave_time_ptr) {
+          __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+        }
       } else if (evt->link_type == LINK_TYPE_SPEED_TRADE) {
         ret = fast_core_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
@@ -273,12 +276,18 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
           error_log(tlh) << "fast core link send msg error,ret=" << ret << end_log;
           counter_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
         }
+        if (evt->leave_time_ptr) {
+          __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
+        }
       } else {
         ret = g98_link_.send_msg(const_cast<char *>(evt->data), evt->data_len);
         if (unlikely(ret < 0)) {
           lb_common::lb_log_hand tlh(log_);
           error_log(tlh) << "98 link send msg error,ret=" << ret << end_log;
           counter98_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
+        }
+        if (evt->leave_time_ptr) {
+          __atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE);
         }
       }
       break;

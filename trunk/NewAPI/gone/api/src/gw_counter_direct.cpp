@@ -166,6 +166,10 @@ int32 gw_counter_direct::deal_order_req(const OrderReq &req) {
 
   build_order_msg(req, data + sizeof(link_send_event));
 
+  // 性能测试：记录发送完成时间戳写入指针，引擎线程在 send() 系统调用成功后写入
+  link_send_event *evt = reinterpret_cast<link_send_event *>(data);
+  evt->leave_time_ptr = const_cast<uint64_t *>(&req.api_leave_time_ns);
+
   cmt_req_que_mem(pos, take_len);
   return LBAPI_OK;
 }
@@ -198,6 +202,9 @@ int32 gw_counter_direct::deal_etf_order_req(const OrderReq &req) {
 
   build_etf_order_msg(req, data + sizeof(link_send_event));
 
+  link_send_event *evt = reinterpret_cast<link_send_event *>(data);
+  evt->leave_time_ptr = nullptr;  // ETF 不参与性能测试
+
   cmt_req_que_mem(pos, take_len);
   return LBAPI_OK;
 }
@@ -229,6 +236,9 @@ int32_t gw_counter_direct::deal_cancel_req(const CancelReq &req) {
   }
 
   build_cancel_msg(req, data + sizeof(link_send_event));
+
+  link_send_event *evt = reinterpret_cast<link_send_event *>(data);
+  evt->leave_time_ptr = nullptr;  // 撤单不参与性能测试
 
   cmt_req_que_mem(pos, take_len);
   return LBAPI_OK;

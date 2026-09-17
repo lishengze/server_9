@@ -129,6 +129,7 @@ protected:
     evt->link_type = LINK_TYPE_SPEED_TRADE;
     evt->type = LINK_EVENT_TYPE_SEND_MSG;
     evt->data_len = take_len;
+    evt->leave_time_ptr = nullptr;  // 默认无时间戳写入目标（委托路径会在 deal_order_req 中覆盖）
     return pos;
   }
   /// 提交队列内存并触发发送

@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.6（2026-09-17，§28 gw counter 深度分析与序列化优化落地：双趟序列化 + GwSessionCache 去锁 + fa_key_cache_ string 复用 + 心跳 ×1000 + 发送队列/对象池扩容；10000TPS 平均 359ns）
+> **版本**：v2.7（2026-09-17，§29 压测算法优化：离开 API 时间记录点从入队后移到 send() 成功后，通过 `link_send_event::leave_time_ptr` 跨线程传递；GOne 10000TPS 平均 2189ns）
 
 ---
 
@@ -1494,3 +1494,38 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 - 方案3（回报路径优化）：消除回报处理中的 `std::string` 构造
 - 方案4（线程安全）：给 GwSessionCache 加锁或明确线程归属
 - 方案5（高 TPS 熔断）：`send_queue_full` 时降级 counter98
+
+---
+
+## 29. 压测算法优化：离开 API 时间记录点调整（2026-09-17）
+
+### 29.1 问题
+
+原压测算法中 `api_leave_time_ns` 在 `order_insert` 的 `deal_order_req` 返回后（入队后）记录，此时消息尚未发送到网卡，测量低估了真实延迟。
+
+### 29.2 方案
+
+将 `api_leave_time_ns` 记录点移到引擎线程 `send()` 系统调用后，通过 `link_send_event::leave_time_ptr` 跨线程传递时间戳指针。
+
+**核心修改**：
+- `link_send_event` 新增 `uint64_t *leave_time_ptr` 字段（`api_event_msg.h`）
+- `order_insert` 中重置 `api_leave_time_ns=0`，成功后自旋等待引擎线程写入（`api_instance.cpp`）
+- `deal_order_req` 设置指针（`gw_counter_direct.cpp` / `fpga_counter_direct.cpp` / `fpga_counter_gateway.cpp`）
+- 引擎线程 `do_work` 中 `send_msg` 后原子写入（`single_socket_engine.cpp` / `multi_socket_engine.cpp` / `tcpdirect_engine.cpp`）
+- 所有其他构造点初始化 `leave_time_ptr=nullptr`（心跳/登录/连接/证券信息/撤单/ETF/98）
+
+### 29.3 GOne 性能测试结果（10000 TPS / 10s，Release）
+
+| 指标 | 优化前（入队后记录） | **优化后（send 后记录）** | 说明 |
+|:---|---:|---:|:---|
+| 发送/成功/失败 | 92,073/92,073/0 | **99,966/99,966/0** | 自旋等待使匀速发单更准确 |
+| 实际 TPS | 9,207 | **9,996** | 目标 10,000 达成率提升 |
+| 平均延迟 | 434 ns | **2,189 ns** | 含引擎消费+send() 系统调用 |
+| P50 | 333 ns | **1,937 ns** | — |
+| P90 | 522 ns | **2,483 ns** | — |
+
+> 平均延迟从 434ns→2189ns 为**测量口径变化**（入队耗时 → 完整发送链路耗时），并非性能退化。
+
+### 29.4 FTE 对比
+
+FTE 环境不可用（33001 未监听，ute/tgw 未运行），无法对比。

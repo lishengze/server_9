@@ -30,15 +30,6 @@
 #include <cstring>
 #include <time.h>
 
-namespace {
-// 性能测试辅助：获取当前单调时钟纳秒（低开销，clock_gettime 约 10-30ns）
-inline uint64_t perf_now_ns() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
-}
-}
-
 namespace lb_api {
 
 // ---- 工厂函数: create_instance ----
@@ -303,16 +294,26 @@ template <class TF, class TE> int32 api_impl<TF, TE>::login(const LoginReq &req)
 }
 
 // order_insert: 买卖委托 (D22: a+b 组合降级)
-// 性能测试：在请求到达 api 与离开 api 时记录单调时钟纳秒到 OrderReq 的时间戳字段，
-//   供上层性能测试程序计算 api 内处理耗时（api_leave_time_ns - api_arrive_time_ns）。
+// 性能测试：api_arrive_time_ns 在请求到达 api 时记录；
+//   api_leave_time_ns 由引擎线程在消息 send() 系统调用成功后原子写入（更贴近真实发送时刻）。
+//   上层性能测试程序计算 api 内+发送耗时 = api_leave_time_ns - api_arrive_time_ns。
 template <class TF, class TE> int32 api_impl<TF, TE>::order_insert(const OrderReq &req) {
   req.api_arrive_time_ns = perf_now_ns();   // 请求到达 api
+  req.api_leave_time_ns = 0;                // 重置，等待引擎线程在 send() 成功后写入
   int32 ret = fast_.deal_order_req(req);
   if (ret == LBAPI_ERR_COUNTER_OFFLINE || ret == LBAPI_ERR_UNSUPPORTED_OP) {
     // 降级到 98
     ret = c98_.deal_order_req(req);
   }
-  req.api_leave_time_ns = perf_now_ns();    // 请求离开 api
+  if (ret == LBAPI_OK) {
+    // 自旋等待引擎线程在 send() 成功后写入 api_leave_time_ns
+    while (req.api_leave_time_ns == 0) {
+      CPU_PAUSE();
+    }
+  } else {
+    // 发送失败（队列满/断链等），直接记录离开时间
+    req.api_leave_time_ns = perf_now_ns();
+  }
   return ret;
 }
 

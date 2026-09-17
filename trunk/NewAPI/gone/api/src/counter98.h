@@ -149,6 +149,7 @@ protected:
     evt->link_type = LINK_TYPE_98;
     evt->type = LINK_EVENT_TYPE_SEND_MSG;
     evt->data_len = take_len;
+    evt->leave_time_ptr = nullptr;  // 98 不参与性能测试
     return pos;
   }
   FORCE_INLINE void cmt_req_que_mem(int64 get_pos, int32 take_len) {
