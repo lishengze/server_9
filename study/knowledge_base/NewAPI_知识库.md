@@ -1079,7 +1079,7 @@ TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一�
 | 文件 | 角色 |
 |------|------|
 | `mock/client/src/perf_runner.h/.cpp` | PerfConfig + PerfRunner（主控逻辑） |
-| `mock/client/src/metric_stats.h/.cpp` | 延迟统计（均值/P50/P75/P90/最大/最小/标准差） |
+| `mock/client/src/metric_stats.h/.cpp` | 延迟统计（均值/P50/P75/P90/P95/最大/最小/标准差） |
 | `mock/client/src/cpu_affinity.h/.cpp` | CPU 绑定（`sched_setaffinity`） |
 
 **执行流程**：
@@ -1514,6 +1514,8 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 - 引擎线程 `do_work` 中 `send_msg` 后原子写入（`single_socket_engine.cpp` / `multi_socket_engine.cpp` / `tcpdirect_engine.cpp`）
 - 所有其他构造点初始化 `leave_time_ptr=nullptr`（心跳/登录/连接/证券信息/撤单/ETF/98）
 
+> **后续优化（§30.8）**：经分析 `tcp_ch::send_msg_fc` 是阻塞式发送（EAGAIN→CPU_PAUSE 忙等），send() 后记录会吞入系统调用+内核缓冲忙等（占"API 内处理耗时"82~94%），后改为 send() **前**记录，测量纯 API 框架延迟。详见 `task/api_dev/time_ana.md` §二 和 `study/gone_counter.md` §九。
+
 ### 29.3 GOne 性能测试结果（10000 TPS / 10s，Release）
 
 | 指标 | 优化前（入队后记录） | **优化后（send 后记录）** | 说明 |
@@ -1606,6 +1608,14 @@ FTE（gw counter）在 10000 TPS / 10s 压测下卡死：mock_client 停在约 1
 3. **TPS 接近**：两者均受 mock_client 发送/回调链路和 CPU 竞争约束，差异仅 1.4%
 4. 注意：GOne 在干净环境（无 FTE 竞争）下平均仅 **2159ns**（§29.3），当前因 FTE 同机运行存在 CPU 竞争，GOne 平均劣化到 5757ns，说明**同机多柜台压测会互相干扰**，单柜台基准应单独测
 
+### 30.7 关键经验
+
+1. **对象池 ≠ 卡死原因**：`unbound_object_pool` / `object_pool` 池空回退 `new`，永不返回 null；判断池耗尽应查日志 `produce too slow` / `capacity should resize`
+2. **忙等自旋定位**：进程 alive + 线程 R（非 S）= 用户态忙等死锁，`gstack` 看栈是否卡在 `while(!trypush()){}`
+3. **`-DNO_DSE` 陷阱**：NO_DSE 编译下 DSE 队列无消费者，消息只进不出；排查 FTE 卡死务必检查编译宏与队列消费线程
+4. **`pkill` 自终止陷阱**：`pkill -f 'xxx'` 会匹配当前 shell 命令行自身导致自杀（exit 143），应改用 `pkill -x <进程名>` 或按 PID kill
+5. **FTE 部署**：`/mnt/work/gt_test/work_atp/cmake/fte/bin/ute`，编译产物 `build_/build_release/fte/ute`，`start_all.sh` 重启
+
 ### 30.8 CPU 隔离绑定 + 精简 TGW 后的复测（send() 前记录，2026-09-17 二轮）
 
 **环境优化**：
@@ -1655,11 +1665,3 @@ FTE（gw counter）在 10000 TPS / 10s 压测下卡死：mock_client 停在约 1
 - 短期：FTE 启用非阻塞发送（MSG_DONTWAIT+epoll 写就绪）+ 引擎线程绑核 → P95 预计 2850→800ns
 - 中期：批量发送（sendmmsg）提升 TPS
 - 长期：用户态协议栈（DPDK/io_uring）绕过内核网络栈，缩小与 GOne 差距
-
-### 30.7 关键经验
-
-1. **对象池 ≠ 卡死原因**：`unbound_object_pool` / `object_pool` 池空回退 `new`，永不返回 null；判断池耗尽应查日志 `produce too slow` / `capacity should resize`
-2. **忙等自旋定位**：进程 alive + 线程 R（非 S）= 用户态忙等死锁，`gstack` 看栈是否卡在 `while(!trypush()){}`
-3. **`-DNO_DSE` 陷阱**：NO_DSE 编译下 DSE 队列无消费者，消息只进不出；排查 FTE 卡死务必检查编译宏与队列消费线程
-4. **`pkill` 自终止陷阱**：`pkill -f 'xxx'` 会匹配当前 shell 命令行自身导致自杀（exit 143），应改用 `pkill -x <进程名>` 或按 PID kill
-5. **FTE 部署**：`/mnt/work/gt_test/work_atp/cmake/fte/bin/ute`，编译产物 `build_/build_release/fte/ute`，`start_all.sh` 重启

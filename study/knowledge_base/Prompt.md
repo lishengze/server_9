@@ -39,6 +39,7 @@
 24. **FTE 对比阻塞**：FTE 环境重启后快速链路登录失败（FTE 未回 login_ans，6s 心跳超时断链），无法在相同场景对比；FTE 历史基准（500 TPS）：平均 2523ns，P50 2052ns，P90 4290ns（GOne 约为其 1/6）
 25. **gw counter 深度分析与优化落地** ✅（§28）：`study/gw_counter.md` 深度分析（架构/UML/各消息时序图/瓶颈/6套方案）；**6 项优化**——GwSessionCache 去锁（无锁直接访问）/ `fa_key_cache_` string 复用 / 心跳 ×1000（API 侧换算）/ 发送队列 64MB / FTE 对象池扩容 / 双趟序列化（`pad_copy`+`checksum_bytes` 宽累加）；三档 TPS 对比（10000TPS 平均 442.9→359.4ns ↓18.9%）；方案1（会话迁成员）实验验证后因业务约束回退（@10000TPS P50 160ns 逼近 GOne 120ns，证明会话 string+hash 是主要瓶颈）
 26. **FTE 压测卡死根因 + FTE vs GOne 全面对比** ✅（§30）：FTE 10000TPS 卡死根因是 `-DNO_DSE` 编译下 `fte_internal_spsc`（FTE→DSE 队列）无消费者线程，消息只进不出，队列满后 `producer_consumer_queue::push()` 忙等自旋；**非对象池耗尽**（对象池池空回退 new）；修复=扩容 `FTE_DSE_FIFO_LEN` 8192→65536 + NO_DSE 下启动丢弃消费者线程；修复后 FTE 10000TPS 完整跑完 91956 笔（平均 9224ns, P50 7964ns, P90 10823ns）；同环境对比 GOne 平均 5757ns（P50 3814ns, P90 6492ns），GOne 中低延迟快 40~56%，FTE 最大延迟更优（1045μs vs 3425μs），TPS 接近
+27. **P95 指标 + FTE 尾部延迟瓶颈 + CPU 隔离绑定** ✅（§30.8-30.9）：mock_client `metric_stats` 增加 P95；绑定 core3（CPU3,11）后对比（10000TPS）FTE 平均 2172ns/P50 418ns/P95 2850ns，GOne 平均 747ns/P50 245ns/P95 304ns——**FTE P95 是 GOne 的 9.4 倍**，FTE 尾部延迟是最大瓶颈（`send_msg_fc` 阻塞式忙等+内核 TCP 栈抖动）；**绑定单核会饿死**（`order_insert` 自旋等待引擎线程写时间戳，同核互相饿死，TPS 骤降至 ~500），须绑定整个物理核 2HT（如 `taskset -c 3,11`）；精简 TGW（只留当前委托对应上海 38141/38140）降低 CPU 开销
 
 ## 三、分析框架
 
@@ -141,7 +142,7 @@
 | **JSON 工具** | `trunk/NewAPI/gone/api/mock/include/json_utils.h/.cpp` |
 | **bin 文件工具** | `trunk/NewAPI/gone/api/mock/98_counter/bin_tool.py`（update 字段） |
 | **性能测试模块** | `trunk/NewAPI/gone/api/mock/client/src/perf_runner.h/.cpp`（PerfConfig+PerfRunner） |
-| **延迟统计** | `trunk/NewAPI/gone/api/mock/client/src/metric_stats.h/.cpp` |
+| **延迟统计** | `trunk/NewAPI/gone/api/mock/client/src/metric_stats.h/.cpp`（均值/P50/P75/P90/P95/最大/最小/标准差） |
 | **CPU 绑定** | `trunk/NewAPI/gone/api/mock/client/src/cpu_affinity.h/.cpp` |
 | **perf 测试记录** | `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` §7.4~7.12 |
 | **业务引擎（数据竞争修复）** | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp`（do_work 移除 deal_recv） |
@@ -157,6 +158,7 @@
 | **FTE DSE 队列** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/src/main.cpp`（FTE_DSE_FIFO_LEN、SetFTE2DSEQueue、NO_DSE 丢弃线程） |
 | **FTE 队列实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/queue/producer_consumer_queue.h`（push 忙等自旋） |
 | **FTE 对象池实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/unbound_object_pool.h` / `object_pool.h`（池空回退 new） |
+| **时间戳/瓶颈分析** | `task/api_dev/time_ana.md`（记录点 send 前/后分析、P95 尾部延迟瓶颈、解决方案）+ `study/gone_counter.md` §九（api_leave_time_ns 机制） |
 
 ## 五、常见问答模板
 
@@ -332,6 +334,12 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/clie
 4. 建议：绑定到非 CPU0 的专用核，或使用 isolcpus 内核参数隔离
 5. 验证：日志输出 "已绑定到 CPU X" + "当前 CPU 亲和性: X"
 6. 多轮稳定性（3×200TPS/10s）绑核/不绑核全部通过
+
+⚠️ 高 TPS 压测（10000TPS）绑核注意：
+- 绑定【单个】CPU 会饿死：order_insert 自旋等待引擎线程写 api_leave_time_ns，
+  而发送线程与引擎线程在同一核上互相饿死，TPS 骤降至 ~500、延迟 1ms+
+- 必须绑定【整个物理核心（2 个 HT）】，如 taskset -c 3,11（core3 的两个超线程）
+- 通过 taskset 而非 perf_test.cpu_id（后者只绑主线程，引擎线程不受限）
 ```
 
 ### Q17: GOne 双链路架构是怎样的？
@@ -375,12 +383,20 @@ LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
 
 ### Q19: GOne 性能测试结果如何？与 FTE 对比？
 ```
-GOne（10000 TPS / 10s）：平均 434ns, P50=333ns, P90=522ns, 100% 成功
-FTE 历史基准（500 TPS / 30s）：平均 2523ns, P50=2052ns, P90=4290ns
-GOne 延迟约为 FTE 的 1/6（同配置下）
+最新对比（绑定 core3，10000 TPS / 10s，含 P95，O3 Release）：
+| 指标 | FTE (gw) | GOne (fpga_direct) |
+|------|----------|--------------------|
+| 实际 TPS | 9156 | 9546 |
+| 平均 | 2172ns | 747ns |
+| P50 | 418ns | 245ns |
+| P75 | 448ns | 259ns |
+| P90 | 599ns | 277ns |
+| P95 | 2850ns | 304ns |
+| 最大 | 3178μs | 2987μs |
 
-注意：FTE 基准为 500 TPS 非 10000 TPS，高负载下 FTE 延迟可能进一步劣化。
-FTE 环境当前因快速链路登录失败无法进行同场景对比。
+核心结论：GOne 全面优于 FTE（平均快 65.6%，P95 快 89.3%）。
+FTE 最大瓶颈是尾部延迟（P95 2850ns 是 GOne 的 9.4 倍），根因是阻塞式 send 忙等 + 内核 TCP 栈抖动。
+详见 time_ana.md §五/§六。
 ```
 
 ### Q20: GOne 性能测试报告标题如何动态化？
@@ -410,6 +426,26 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 7. 注意：pkill -f 会匹配自身命令行自杀，改用 pkill -x 或按 PID kill
 ```
 
+### Q22: FTE 尾部延迟（P95）瓶颈怎么分析？如何解决？
+```
+现象：FTE P95(2850ns) 是 GOne P95(304ns) 的 9.4 倍；P90→P95 跨度 +2251ns（GOne 仅 +27ns）；
+      平均(2172) vs P50(418) 达 5.2x，平均被长尾严重拉高。
+
+根因（按影响排序）：
+1. tcp_ch::send_msg_fc 阻塞式发送：EAGAIN 时 CPU_PAUSE() 忙等，内核缓冲满时延迟剧增
+2. 内核 TCP 栈抖动：系统调用 / 中断 / 软中断 / 锁竞争导致偶发延迟尖峰
+3. FTE 模拟柜台处理波动（容器内调度延迟）
+4. 跨进程通信放大（API→FTE→API 全链路，任何一环波动都放大尾部）
+
+解决方案（分阶段）：
+- 短期：FTE 启用非阻塞发送（MSG_DONTWAIT + epoll 写就绪），消除忙等 → P95 预计 2850→800ns；
+        引擎线程 pthread_setaffinity_np 绑专用核心 → P95 ↓30%
+- 中期：sendmmsg 批量发送，减少系统调用 → TPS ↑10~20%
+- 长期：DPDK / io_uring 用户态协议栈绕过内核网络栈，缩小与 GOne 差距
+
+GOne 延迟极稳定（P50→P95 仅 245→304ns，跨度 59ns），几乎无尾部延迟，体现 fpga_direct 硬件极速优势。
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -424,7 +460,7 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程；同环境对比 GOne 中低延迟快 40~56%、FTE 最大延迟更优、TPS 接近。§30.8-30.9 补充 CPU 隔离绑定（core3）经验与 P95 指标：绑定单核会饿死（须绑整个物理核 2HT），FTE P95(2850ns) 是 GOne P95(304ns) 的 9.4 倍，FTE 尾部延迟是最大瓶颈（阻塞式 send 忙等+内核栈抖动）。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程。§30.8-30.9 补充 CPU 隔离绑定（core3）经验与 P95 指标：绑定单核会饿死（须绑整个物理核 2HT），FTE P95(2850ns) 是 GOne P95(304ns) 的 9.4 倍，FTE 尾部延迟是最大瓶颈（阻塞式 send 忙等+内核栈抖动）。记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）。
 
 ---
 
