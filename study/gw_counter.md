@@ -756,3 +756,177 @@ cksum_net64(p, req.client_seq_id, sum);                  // 逐字节
   - **结论**：会话缓存查找是 gw counter 剩余性能差距的主因，但因业务必须以 `fund_account_id` 为 key 缓存，该优化不可落地，需从其他角度（如无锁/更优哈希）缓解。
 - **功能正确性**：委托/撤单/成交回报全部通过（FTE 登录/心跳/委托/成交用例），校验和匹配，0 失败。
 - **剩余差距**：@10000TPS P50 160ns vs GOne 120ns，差距已缩小到 ~40ns，主要来自 FTE 协议本身的字段序列化与回报处理。
+
+---
+
+## 9. 消息发送全链路分析（deal_order_req → 网卡）
+
+> 本节详细剖析 `gw_counter_direct::deal_order_req(const OrderReq &req)` 在调用完 `cmt_req_que_mem` 之后，委托消息是如何最终发送出去的。覆盖：队列提交、引擎线程消费、socket 发送、失败回调四个阶段。
+
+### 9.1 前置：`cmt_req_que_mem` 之前做了什么
+
+在 `deal_order_req` 中，`cmt_req_que_mem` 之前已完成三步：
+
+1. **`take_req_que_mem(data, take_len)`** → 内部调用 `trade_send_queue_->write_get_mth(data, take_len + sizeof(link_send_event))`，通过 CAS 原子操作获取队列写入位置和指针。
+2. **在队列内存中直接构造**（零拷贝，省一次 memcpy）：
+   - `link_send_event *evt = (link_send_event *)data;` — 设置 `evt->link_type = LINK_TYPE_SPEED_TRADE`、`evt->type = LINK_EVENT_TYPE_SEND_MSG`、`evt->data_len = take_len`。
+   - `build_order_msg(req, data + sizeof(link_send_event))` — 构造 FTE 二进制协议消息体（含校验和）。
+3. **`cmt_req_que_mem(pos, take_len)`** — 提交队列写入，使数据对读端可见。
+
+### 9.2 阶段一：`cmt_req_que_mem` — 提交写入，数据对读端可见
+
+```cpp
+// gw_counter_direct.h:136
+FORCE_INLINE void cmt_req_que_mem(int64 get_pos, int32 take_len) {
+    trade_send_queue_->write_cmt_mth(get_pos, take_len + sizeof(link_send_event));
+    //trade_eng_op_->trigger_send();  // 注释掉了
+}
+```
+
+- `write_cmt_mth` 用 **CAS 忙等待**更新 `wrcmt`（写提交计数器），使刚写入的 `link_send_event + 协议消息` 对读端可见。
+- **`trigger_send()` 被注释**：因为 `single_socket_engine` 是**忙轮询模式**，引擎线程不休眠，数据入队后下一轮 `do_work()` 立即读到，无需 eventfd 唤醒。这与 `multi_socket_engine`（等待触发模式）不同 — 后者 `trigger_send()` 有实际逻辑（`queue_dealing_` 判断后唤醒）。
+
+### 9.3 阶段二：引擎线程忙轮询消费队列
+
+`single_socket_engine` 在 `init()` 中调用：
+
+```cpp
+ret = init_th(0, tcpuid, 0);  // busyround=0 → runmod=1（忙轮询）
+```
+
+`simple_thread::init_th` 中：`busyround == 0` → `runmod = 1`，引擎线程走 `busy_run()` **无限循环，不休眠**：
+
+```cpp
+void simple_thread::busy_run() {
+    waitflag = 0;
+    while (state == 2 && g_signal_stopctl == -1) {
+        do_work();   // 持续调用，永不阻塞
+    }
+}
+```
+
+`single_socket_engine::do_work()` 每次批量消费 `send_poll_num_` 轮：
+
+```cpp
+void single_socket_engine::do_work() {
+    for (int32 i = 0; i < send_poll_num_; ++i) {
+        char *raw = nullptr;
+        int64 pos = send_queue_.read_get(raw);  // ① 读队列
+        if (pos <= 0) break;  // 队列空则退出
+
+        const link_send_event *evt = (const link_send_event *)raw;
+        int32 evt_len = sizeof(link_send_event) + evt->data_len;
+        int32 ret = 0;
+
+        switch (evt->type) {
+        case LINK_EVENT_TYPE_SEND_MSG: {
+            ret = link_.send_msg(evt->data, evt->data_len);  // ② 发送
+            if (unlikely(ret < 0))
+                counter_->deal_send_error(evt->data, evt->data_len, evt->link_type, ret);
+            break;
+        }
+        // ... 其他事件类型（SEND_HEART / LINK_CLOSE / LINK_CONNECT / ACCOUNT_LOGIN）
+        }
+        send_queue_.read_cmt(evt_len);  // ③ 提交读
+    }
+}
+```
+
+**关键点**：`read_get` 内部原子比较 `rdcmt` vs `wrcmt`。由于 `write_cmt_mth` 已更新 `wrcmt`，引擎线程在下一轮 `do_work()` 中**立即读到新数据，延迟仅为几个 CPU 指令周期**。
+
+### 9.4 阶段三：`link_.send_msg` → `aio_socket_link` → `tcp_ch` → `send()` 系统调用
+
+调用链：
+
+```
+aio_socket_link::send_msg(buf, len)
+    → ch_.send_msg_fc(buf, len)          // aio_tcp 委托给 tcp_ch
+        → tcp_ch::send_msg_fc(pmsg, len)  // 真正写 socket
+```
+
+`tcp_ch::send_msg_fc` 的实现（**无锁，单线程发送**）：
+
+```cpp
+int32 tcp_ch::send_msg_fc(char *pmsg, int32 len) {
+    int32 ret = 0;
+    int32 wlen = 0;
+    while (is_work()) {
+        ret = send(sysfd, pmsg + wlen, len - wlen, 0);  // MSG_DONTWAIT
+        if (likely(ret == len - wlen)) {
+            return len;            // ✅ 全部发送成功
+        } else if (ret >= 0) {
+            wlen += ret;           // 部分发送，继续循环
+            continue;
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                CPU_PAUSE();       // 内核缓冲区满，自旋等待
+                continue;
+            } else
+                return LBERR_OBJ_WRITE_FAIL;  // ❌ 连接断开
+        }
+    }
+    return LBERR_OBJ_STATE_LIMIT;
+}
+```
+
+循环调用 `send()` 系统调用，直到全部 len 字节发送完成。`EAGAIN` 时自旋 `CPU_PAUSE()` 等待。
+
+> **⚠️ 线程安全**：`send_msg_fc` 无锁，`tcp_ch` 文档明确标注"多线程并发 send 会导致字节流交错"。但 `single_socket_engine` 的发送线程是**单线程**（引擎线程是唯一发送者），天然安全。
+
+### 9.5 阶段四：发送失败的回调处理
+
+如果 `send_msg_fc` 返回负值，引擎线程调用：
+
+```cpp
+counter_->deal_send_error(evt->data, evt->data_len, evt->link_type, ret);
+```
+
+`gw_counter_direct::deal_send_error` 解析消息头中的 `msg_id`，识别委托还是撤单，构建对应拒绝回报（`build_api_order_rej` / `build_api_cancel_rej`），通过 `callback_manager` 回调通知客户。
+
+### 9.6 全流程时序图
+
+```
+用户线程 (api_impl)             引擎线程 (single_socket_engine)         TCP 协议栈
+      │                                  │                                │
+      │  deal_order_req()                │                                │
+      │   ├ take_req_que_mem()           │                                │
+      │   │   → write_get_mth (CAS)      │                                │
+      │   ├ build_order_msg()            │                                │
+      │   └ cmt_req_que_mem()            │                                │
+      │       → write_cmt_mth (CAS) ─────┼── wrcmt 更新 ──→               │
+      │                                  │   (下一轮 do_work 立即读到)    │
+      │                                  │                                │
+      │                                  │  do_work()                     │
+      │                                  │   ├ read_get(raw)              │
+      │                                  │   │   (rdcmt < wrcmt → 有数据) │
+      │                                  │   ├ link_.send_msg()           │
+      │                                  │   │   → ch_.send_msg_fc()      │
+      │                                  │   │       → send(sysfd) ──────┼──→ 网卡
+      │                                  │   └ read_cmt(evt_len)          │
+      │                                  │       → rdcmt 推进             │
+      │                                  │                                │
+      │                                  │  (循环，直到队列空)             │
+```
+
+### 9.7 关键设计要点总结
+
+| 要点 | 说明 |
+|:---|:---|
+| **零拷贝入队** | `write_get_mth` 直接返回队列内存指针，`build_order_msg` 在队列内存中原地构造，省去中间 buffer 和 memcpy |
+| **无锁队列** | `que_mth_buf` 使用 CAS 原子操作，写端多线程安全（`write_get_mth`+`write_cmt_mth`），读端单线程 |
+| **忙轮询引擎** | `init_th(0, ...)` → `runmod=1` → `busy_run()` 无限循环 `do_work()`，不休眠，延迟最低 |
+| **trigger_send 注释** | 引擎线程持续轮询，数据入队后下一轮 `do_work()` 立即读到，不需要 eventfd 唤醒 |
+| **单线程发送** | `tcp_ch::send_msg_fc` 无锁，引擎线程是唯一发送者，不会出现字节流交错 |
+| **send 阻塞处理** | `EAGAIN` 时 `CPU_PAUSE()` 自旋等待，不 yield 不 sleep，保持最低延迟 |
+
+### 9.8 相关文件索引
+
+| 组件 | 文件 |
+|:---|:---|
+| 柜台发送入口 | `trunk/NewAPI/gone/api/src/gw_counter_direct.h`（`take_req_que_mem` / `cmt_req_que_mem`） |
+| 单 socket 引擎 | `trunk/NewAPI/gone/api/src/single_socket_engine.h/.cpp`（`do_work` / `init`） |
+| 线程框架 | `trunk/NewAPI/common/include/simple_thread.h` + `src/simple_thread.cpp`（`busy_run` / `init_th`） |
+| 无锁队列 | `trunk/NewAPI/common/include/que_mth_buf.h`（`write_get_mth` / `write_cmt_mth` / `read_get` / `read_cmt`） |
+| 链接封装 | `trunk/NewAPI/gone/api/src/aio_socket_link.h`（`send_msg`） |
+| socket 发送 | `trunk/NewAPI/common/src/tcp_ch.cpp`（`send_msg_fc`） |
+| 事件结构 | `trunk/NewAPI/gone/api/src/api_event_msg.h`（`link_send_event` / `link_engine_outop`） |

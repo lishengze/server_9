@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.5（2026-09-16，§28 gw counter 深度分析与序列化优化：双趟序列化 + 方案1实验回退，10000TPS 平均 359ns）
+> **版本**：v2.6（2026-09-17，§28 gw counter 深度分析与序列化优化落地：双趟序列化 + GwSessionCache 去锁 + fa_key_cache_ string 复用 + 心跳 ×1000 + 发送队列/对象池扩容；10000TPS 平均 359ns）
 
 ---
 
@@ -1331,7 +1331,7 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 - FTE 崩溃后 TCP 连接未立即收到 FIN（链路仍显示 connected），引擎线程无法正常发送，API 发送队列积压 → 后续订单返回 `-25`。
 - **结论**：-25 是**下游 FTE 容量不足**的连带效应。2000 TPS 干净基线 0 失败，证明 API 侧发送队列在合理负载下无瓶颈。
 
-**④ 心跳**：当前 API 侧 `gw_counter_direct.cpp:363` 仍 `heart_bt_int = heart_interval`（未 ×1000），依赖 FTE 侧 ×1000 修复；待按 api_dev_task.txt 优化（API 侧 ×1000 + FTE 回退）。
+**④ 心跳**：FTE 的 `heart_bt_int` 语义为**秒**，但 `tcp_endpoint.h` 的 `detect_timer` 按**毫秒**解释 `heart_period`。已由 API 侧统一换算：`build_login_msg` 中 `heart_bt_int = heart_interval * 1000`（当前代码 `gw_counter_direct.cpp` 已实现），FTE 侧 `uplink_biz_processor.cpp` 回退为直赋。若未换算，FTE 会因 10ms 心跳超时主动断链，导致成交回报（2005）丢失。
 
 ### 27.9 结论
 
@@ -1466,7 +1466,15 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
 
 ### 28.5 当前代码状态与剩余差距
 
-**当前代码**：HEAD + 双趟序列化优化（`pad_copy` + `checksum_bytes` + `GenerateSzCheckSum` 宽累加）+ `GwSessionCache` 全局单例（业务约束保留）。
+**当前代码**：HEAD + 双趟序列化优化（`pad_copy` + `checksum_bytes` + `GenerateSzCheckSum` 宽累加）+ `GwSessionCache` 全局单例（业务约束保留）+ 5 项性能优化（§27.10：去锁 / `fa_key_cache_` string 复用 / 心跳 ×1000 / 发送队列 64MB / FTE 对象池扩容）。
+
+> **gw counter 优化全景（2026-09-17 掌握）**：
+> 1. **GwSessionCache 去锁**：移除 6 个方法 `std::lock_guard<std::mutex>`，手动排查业务场景后无锁直接访问（`gw_session_cache.h`）
+> 2. **string 构造优化**：3 个 build 方法（order/etf/cancel）用类成员 `fa_key_cache_`，每次 `assign()` 复用 buffer，避免每次委托构造临时 `std::string`（`gw_counter_direct.h` 成员 + `.cpp` 使用）
+> 3. **心跳 ×1000**：`build_login_msg` 中 `heart_bt_int = heart_interval * 1000`，FTE 侧 `uplink_biz_processor.cpp` 回退为直赋（秒→毫秒统一由 API 侧换算）
+> 4. **发送队列扩容**：`send_queue_size_mb` 2MB→64MB（mock_client 增加透传）
+> 5. **FTE 对象池扩容**：`fte_report`/`fte_reject` 150000（实际 262144），ETF 池保持合理值（避免分配卡死）
+> 6. **双趟序列化**：`pad_copy`（memset 整块 + memcpy）+ `checksum_bytes`（uint64 宽累加），替代逐字节单趟
 
 **最终性能（@10000 TPS）**：
 
