@@ -40,6 +40,7 @@ void MetricStats::compute(const std::vector<uint64_t>& samples) {
   p50 = percentile(0.50);
   p75 = percentile(0.75);
   p90 = percentile(0.90);
+  p95 = percentile(0.95);
 
   // 样本标准差（n-1 无偏估计）
   double sum_sq = 0.0;
@@ -58,6 +59,7 @@ std::string MetricStats::to_string() const {
       << "P50 (50%) : " << p50 << " ns\n"
       << "P75 (75%) : " << p75 << " ns\n"
       << "P90 (90%) : " << p90 << " ns\n"
+      << "P95 (95%) : " << p95 << " ns\n"
       << "最大值    : " << max << " ns\n"
       << "最小值    : " << min << " ns\n"
       << "标准差    : " << stddev << " ns\n";

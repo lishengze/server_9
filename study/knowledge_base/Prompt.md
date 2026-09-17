@@ -424,7 +424,7 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程；同环境对比 GOne 中低延迟快 40~56%、FTE 最大延迟更优、TPS 接近。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程；同环境对比 GOne 中低延迟快 40~56%、FTE 最大延迟更优、TPS 接近。§30.8-30.9 补充 CPU 隔离绑定（core3）经验与 P95 指标：绑定单核会饿死（须绑整个物理核 2HT），FTE P95(2850ns) 是 GOne P95(304ns) 的 9.4 倍，FTE 尾部延迟是最大瓶颈（阻塞式 send 忙等+内核栈抖动）。
 
 ---
 

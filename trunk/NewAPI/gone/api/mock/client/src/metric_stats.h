@@ -1,7 +1,7 @@
 // metric_stats.h - 性能指标统计
 //
 // 职责：对收集到的耗时样本（纳秒）计算统计指标：
-//   平均值 / P50 / P75 / P90 / 最大值 / 最小值 / 标准差
+//   平均值 / P50 / P75 / P90 / P95 / 最大值 / 最小值 / 标准差
 // 供性能测试程序输出到报告文件。
 
 #pragma once
@@ -20,6 +20,7 @@ struct MetricStats {
   uint64_t p50 = 0;      ///< 50 分位（ns）
   uint64_t p75 = 0;      ///< 75 分位（ns）
   uint64_t p90 = 0;      ///< 90 分位（ns）
+  uint64_t p95 = 0;      ///< 95 分位（ns）
   uint64_t max = 0;      ///< 最大值（ns）
   uint64_t min = 0;      ///< 最小值（ns）
   double stddev = 0.0;   ///< 标准差（ns）
