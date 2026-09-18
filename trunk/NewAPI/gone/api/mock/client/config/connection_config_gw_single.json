@@ -23,10 +23,10 @@
   "perf_test": {
     "enable": true,
     "duration_sec": 10,
-    "tps": 10000,
+    "tps": 8000,
     "warmup_sec": 3,
     "cpu_id": -1,
-    "report_file": "perf_report_gw_single_10k.txt",
+    "report_file": "perf_report_gw_single_8k_orig.txt",
     "order": {
       "fund_account_id": "1000000000000001",
       "branch_id": "0001",
