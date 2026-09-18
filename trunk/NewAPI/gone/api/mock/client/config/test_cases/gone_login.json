@@ -1,0 +1,39 @@
+{
+  "test_cases": [
+    {
+      "test_case": {
+        "name": "GOne 登录测试",
+        "description": "GOne 登录用例（GW 链路），用于异地测试的仅登录最小目录，登录完成后进入 perf_test",
+        "counter_type": "fpga_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "login",
+        "fields": {
+          "client_req_no": 1001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "account_id": "A12345678901",
+          "cust_id": "C000000000000001",
+          "password": "TEST000000001",
+          "order_way_ext": "7",
+          "user_info": "mock_client"
+        }
+      },
+      "expected_response": {
+        "type": "login",
+        "fields": {
+          "client_req_no": null,
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "market_type": 1,
+          "err_code": 0,
+          "err_msg": null,
+          "login_time": null
+        }
+      }
+    }
+  ]
+}

@@ -72,10 +72,30 @@ set_target_properties(mock_client PROPERTIES
   LINK_FLAGS "-Wl,--allow-shlib-undefined"
 )
 
+# ==================== 网卡抓包时间分析工具 ====================
+# 用途：抓取指定接口上发往 FTE 端口的委托包，解析 client_seq_id，
+#       关联 mock_client 产出的映射文件，计算端到端延迟。
+# 运行：需 root 权限（AF_PACKET SOCK_RAW）
+#    sudo ./api_net_time_capture --iface lo --port 33001 --map /tmp/api_net_time_map.txt
+# 依赖：metric_stats.cpp（共享统计模块）、api_net_time_common.h（共享常量）
+add_executable(api_net_time_capture
+  api_net_time_capture.cpp
+  src/metric_stats.cpp
+)
+
+target_include_directories(api_net_time_capture PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/..
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
 # 输出目录
 if(NOT BUILD_SUM_COUNT)
   set_target_properties(mock_client PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  )
+  set_target_properties(api_net_time_capture PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
   )
 endif()

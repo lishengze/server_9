@@ -28,6 +28,7 @@ bool PerfConfig::load(const JsonValue& node) {
         warmup_sec = static_cast<int32_t>(node["warmup_sec"].as_int());
         cpu_id = static_cast<int32_t>(node["cpu_id"].as_int());
         report_file = node["report_file"].as_string();
+        net_time_map_file = node["net_time_map_file"].as_string();
 
         // 委托模板（可选，缺省使用默认值）
         JsonValue od = node["order"];
@@ -102,6 +103,8 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
     sent_ = 0;
     ok_ = 0;
     fail_codes_.clear();
+    net_time_map_.clear();
+    net_time_map_.reserve(static_cast<size_t>(cfg_.tps) * static_cast<size_t>(cfg_.duration_sec));
 
     auto next_send = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() < end_time) {
@@ -119,6 +122,9 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
         // 计算 api 内耗时（纳秒）
         uint64_t lat = req.api_leave_time_ns - req.api_arrive_time_ns;
         latencies.push_back(lat);
+
+        // 记录 (client_seq_id, api_arrive_time_ns) 映射，供网卡抓包程序关联分析
+        net_time_map_.emplace_back(req.client_seq_id, req.api_arrive_time_ns);
 
         // 匀速等待
         next_send += interval;
@@ -190,6 +196,16 @@ bool PerfRunner::run() {
             std::cout << "[PerfRunner] 报告已保存到: " << cfg_.report_file << std::endl;
         } else {
             std::cerr << "[PerfRunner] 无法写入报告: " << cfg_.report_file << std::endl;
+        }
+    }
+
+    // 6. 写出网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns）
+    if (!cfg_.net_time_map_file.empty()) {
+        if (apinet::write_map_file(cfg_.net_time_map_file, net_time_map_)) {
+            std::cout << "[PerfRunner] 网卡抓包映射已写出: " << cfg_.net_time_map_file
+                      << " (" << net_time_map_.size() << " 条)" << std::endl;
+        } else {
+            std::cerr << "[PerfRunner] 无法写出网卡抓包映射: " << cfg_.net_time_map_file << std::endl;
         }
     }
 

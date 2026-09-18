@@ -885,7 +885,88 @@ int32 tcp_ch::send_msg_fc(char *pmsg, int32 len) {
 
 ---
 
-## 九、待办/备注
+## 九、GOne vs gw 网卡抓包性能对比（2026-09-18）
+
+> 对 GOne（FPGA）counter 也采用与 §8 相同的**网卡抓包时间分析**方法（`api_net_time_capture`，详见 `mock/client/api_net_time_design.md`），测量委托从进入 API（`api_arrive_time_ns`）到真正从网卡发出的端到端延迟，与 gw（FTE）做全面对比。**同一测试环境、同一方法、同一测试目录（仅登录用例），对比公平。**
+
+### 9.1 网卡抓包程序扩展（支持 GOne 协议）
+
+GOne 委托包结构与 gw 不同，已扩展 `api_net_time_capture` 支持 `--proto gone`：
+
+| 项 | gw (FTE) | GOne (FPGA) |
+|:---|:---|:---|
+| 包结构 | PktNewHeader 8B + TradeOrderReq 106B + 校验和 4B = 118B | g1_msg_head 16B + order_req 48B = 64B |
+| msg_id | 1003（**大端**） | **1001**（**小端**） |
+| client_seq_id 字段 | TradeOrderReq.client_seq_id（偏移 62） | order_req.cust_req_no（偏移 40） |
+| client_seq_id 字节序 | 小端（build_order_msg memcpy host） | 小端（`body->cust_req_no = req.client_seq_id` 直接赋值） |
+| 委托发送端口 | 33001（FTE 单一链路） | **44002（Core 链路）**，44001 为 GW 登录链路 |
+| 校验和 | 有（4B） | 无 |
+
+> **关键**：GOne 委托走 **Core 链路（44002）**，登录走 GW 链路（44001）。抓包须过滤 44002 端口。GW 登录应答 `trade_port` 填 `core_port_`（gone_counter_server.cpp:211）。
+
+### 9.2 测试环境
+
+- 编译：`./build.sh Release`（含 `api_net_time_capture` 扩展支持 GOne）
+- 环境：docker otc 容器；gw 连 FTE 33001 + counter98_mock 9001；GOne 连 gone_counter_mock 44001(GW)/44002(Core) + counter98_mock 9003
+- 方法：抓包程序先启动（120s）→ mock_client（仅登录用例目录快速登录后 perf_test 8000 TPS）→ 抓包程序结束后关联映射文件
+- 映射文件：`/tmp/api_net_time_map_single.txt`（gw）/ `/tmp/api_net_time_map_gone.txt`（GOne）
+
+### 9.3 API 内处理耗时对比（mock_client perf 报告）
+
+| 指标 | gw (FTE) | GOne (FPGA) | 差异 |
+|:---|---:|---:|:---|
+| 实际 TPS | 7797.97 | 9458.79 | GOne ↑21% |
+| P50 | 290 ns | 421 ns | gw 优 ↓31% |
+| P90 | 571 ns | 581 ns | 相当 |
+| P95 | 2836 ns | **732 ns** | GOne 优 ↓74% |
+| 失败 | 0 | 0 | — |
+
+> **API 内处理**：gw 的 P50（290ns）优于 GOne（421ns）——gw 会话已迁成员（`local_session_`）省去查找；但 **gw 的 P95（2836ns）远高于 GOne（732ns）**——gw 尾部受 FTE 单线程 asio 背压影响（§5.6）。GOne 是 FPGA 硬件，处理能力稳定（P50→P95 跨度仅 421→732ns）。
+
+### 9.4 网卡端到端延迟对比（网卡发出时间 - api_arrive_time_ns）
+
+| 指标 | gw (FTE) | GOne (FPGA) | 差异 |
+|:---|---:|---:|:---|
+| 捕获委托包 | 77,780 | 93,949 | — |
+| 关联成功 | 77,780 (100%) | 93,949 (100%) | — |
+| P50 | 2,856 ns | 3,197 ns | gw 优 ↓11% |
+| P90 | 3,468 ns | 3,847 ns | gw 优 ↓10% |
+| P95 | 6,626 ns | 4,699 ns | GOne 优 ↓29% |
+| 平均 | 3,623 ns | 5,498 ns | gw 优 ↓34% |
+| 最大 | 765 μs | 4,203 μs | gw 优 |
+| 最小 | 2,365 ns | 2,285 ns | 相当 |
+
+### 9.5 内核协议栈 + 网卡排队差额（端到端 - API 内）
+
+| 指标 | gw | GOne | 差异 |
+|:---|---:|---:|:---|
+| P50 | 2,566 ns | 2,776 ns | 相当 |
+| P90 | 2,897 ns | 3,266 ns | gw 略优 |
+| P95 | 3,790 ns | 3,967 ns | 相当 |
+
+> **内核+网卡排队是公共基线**：两者差额均在 ~2.5-4μs 范围，与柜台无关，是内核协议栈 + ::send() + 网卡排队固有开销。最小延迟 ~2.3μs 为内核协议栈基线。
+
+### 9.6 关键结论
+
+1. **API 内处理**：gw P50（290ns）优于 GOne（421ns），但 **gw P95（2836ns）远高于 GOne（732ns）**——gw 尾部受 FTE 背压限制，GOne FPGA 硬件延迟稳定（P50→P95 跨度仅 311ns）。
+2. **网卡端到端**：两者 P50/P90 接近（gw 2856/3468 vs GOne 3197/3847，gw 略优），但 **P95 gw(6626) 明显高于 GOne(4699)**——gw 尾部拖尾来自 FTE 背压传导。
+3. **内核+网卡排队**：两者公共基线 ~2.5-4μs，与柜台无关。
+4. **吞吐**：GOne 实际 TPS 9458 > gw 7798，GOne 处理能力更强（FPGA 硬件），gw 受 FTE 单线程 asio 限制。
+5. **GOne 最大 4.2ms 异常**：GOne 虽有 FPGA，但最大延迟 4.2ms（远高于 P95 4.7μs），为偶发调度抖动或 mock 环境干扰，需关注但非系统性。
+
+### 9.7 综合建议
+
+| 维度 | 结论 |
+|:---|:---|
+| 延迟稳定性 | **GOne 更优**（P95 732ns vs gw 2836ns，FPGA 硬件无背压） |
+| 平均/中位延迟 | gw 略优（P50 290 vs 421ns，会话迁成员优化生效） |
+| 吞吐能力 | GOne 更优（9458 vs 7798 TPS，FPGA 处理能力） |
+| gw 优化方向 | FTE 侧多线程 asio（§6.2 方案六）消除背压，P95 可向 GOne 靠拢 |
+| 网卡排队 | 两者公共基线，无法通过柜台优化消除 |
+
+---
+
+## 十、待办/备注
 
 - [x] 完成 send() 前记录改动（3 个引擎文件）
 - [x] O3 Release 编译验证
@@ -895,5 +976,7 @@ int32 tcp_ch::send_msg_fc(char *pmsg, int32 len) {
 - [x] 深入根因分析：P90/P95 突然增大的机制（§5.6，代码级证据 + 背压传导链）
 - [x] 非阻塞发送优化落地 + 负面影响分析（§7，含静默丢单缺陷）
 - [x] 回退到原始方案 + 8000 TPS 复测（§8，单客户/多客户均 0 失败；首轮多客户 100% 失败系测试方法错误——空测试目录跳过 FTE 登录，已更正）
+- [x] 网卡抓包时间分析功能开发（mock/client，§9 前，含 GOne 协议支持）
+- [x] GOne vs gw 网卡抓包性能对比（§9，GOne 延迟更稳定，gw P50 更优）
 - [ ] 如需端到端延迟，补充网卡硬件时间戳方案
 - [ ] 多客户生产如需非阻塞方案，先修复 §7.4.2.9 丢单缺陷

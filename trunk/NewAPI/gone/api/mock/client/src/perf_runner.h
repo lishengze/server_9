@@ -13,6 +13,7 @@
 #include "json_utils.h"
 #include "metric_stats.h"
 #include "cpu_affinity.h"
+#include "../api_net_time_common.h"
 
 #include <cstdint>
 #include <map>
@@ -35,6 +36,7 @@ struct PerfConfig {
     int32_t cpu_id = -1;        ///< CPU 绑定目标，-1 表示不绑定
     std::string report_file = "perf_report.txt"; ///< 报告输出文件
     std::string counter_name = "FTE"; ///< 柜台名称（用于报告标题，FTE/GOne 等）
+    std::string net_time_map_file;    ///< 网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns），空则不写
 
     // 委托模板（用于构造性能测试的委托请求）
     std::string fund_account_id;
@@ -89,6 +91,7 @@ private:
     double actual_tps_ = 0.0;   ///< 实际 TPS
     double test_time_sec_ = 0.0;///< 实际测试时长（秒）
     std::string cpu_bind_desc_; ///< CPU 绑定描述
+    std::vector<std::pair<int64_t, uint64_t>> net_time_map_; ///< (client_seq_id, api_arrive_time_ns)
 };
 
 } // namespace mock

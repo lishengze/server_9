@@ -25,6 +25,7 @@
     "warmup_sec": 3,
     "cpu_id": -1,
     "report_file": "perf_report_gone.txt",
+    "net_time_map_file": "/tmp/api_net_time_map_gone.txt",
     "order": {
       "fund_account_id": "1000000000000001",
       "branch_id": "0001",
