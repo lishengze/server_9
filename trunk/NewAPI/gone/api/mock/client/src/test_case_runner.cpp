@@ -2,6 +2,7 @@
 #include "api_interface.h"
 #include "api_config.h"
 #include "order_trade_type.h"
+#include "logger.h"
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -40,7 +41,7 @@ bool TestCaseRunner::load_test_case(const std::string& path) {
         // 兼容单个 test_case
         return load_single_case(root);
     } catch (const std::exception& e) {
-        std::cerr << "[Loader] 加载失败: " << path << " - " << e.what() << std::endl;
+        LOG_ERROR("[Loader] 加载失败: " << path << " - " << e.what());
         return false;
     }
 }
@@ -89,11 +90,11 @@ bool TestCaseRunner::load_single_case(const JsonValue& root) {
         }
 
         test_cases_.push_back(test_case);
-        std::cout << "[Loader] 加载测试用例: " << test_case.name
-                  << " (type=" << req["type"].as_string() << ")" << std::endl;
+        LOG_INFO("[Loader] 加载测试用例: " << test_case.name
+                  << " (type=" << req["type"].as_string() << ")");
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[Loader] 加载失败: " << e.what() << std::endl;
+        LOG_ERROR("[Loader] 加载失败: " << e.what());
         return false;
     }
 }
@@ -102,7 +103,7 @@ int TestCaseRunner::load_test_dir(const std::string& dir) {
     int count = 0;
     DIR* dp = opendir(dir.c_str());
     if (!dp) {
-        std::cerr << "[Loader] 无法打开目录: " << dir << std::endl;
+        LOG_ERROR("[Loader] 无法打开目录: " << dir);
         return 0;
     }
     struct dirent* entry;
@@ -117,18 +118,97 @@ int TestCaseRunner::load_test_dir(const std::string& dir) {
     return count;
 }
 
+int TestCaseRunner::load_plan(const JsonValue& plan_node, const std::string& base_dir) {
+    int count = 0;
+    try {
+        JsonValue ft = plan_node["functional_tests"];
+        if (!ft.is_array()) {
+            LOG_ERROR("[Loader] test_plan.functional_tests 缺失或非法, 跳过计划加载");
+            return 0;
+        }
+        for (size_t i = 0; i < ft.size(); i++) {
+            JsonValue item = ft[i];
+            if (!item.is_object()) continue;
+
+            // 场景开关：enabled=false 跳过
+            if (item.has("enabled") && !item["enabled"].as_bool()) {
+                std::string name = item.has("name") ? item["name"].as_string() : "unnamed";
+                LOG_INFO("[Loader] 跳过场景(未启用): " << name);
+                continue;
+            }
+
+            std::string name = item.has("name") ? item["name"].as_string() : ("scenario_" + std::to_string(i));
+            std::string description = item.has("description") ? item["description"].as_string() : "";
+            std::string req_file = item.has("request_file") ? item["request_file"].as_string() : "";
+            std::string exp_file = item.has("expected_file") ? item["expected_file"].as_string() : "";
+            int timeout_ms = item.has("timeout_ms") ? static_cast<int>(item["timeout_ms"].as_int()) : 5000;
+
+            std::string req_path = req_file.empty() ? "" : (base_dir + "/" + req_file);
+            std::string exp_path = exp_file.empty() ? "" : (base_dir + "/" + exp_file);
+
+            TestCase test_case;
+            test_case.name = name;
+            test_case.description = description;
+            test_case.counter_type = "plan";
+            test_case.timeout_ms = timeout_ms;
+
+            // 解析请求（独立文件，结构: { "type": ..., "fields": {...} }）
+            if (!req_path.empty()) {
+                JsonValue req_root = JsonParser::parse_file(req_path);
+                JsonValue req = req_root["request"];
+                if (req.is_null()) req = req_root;  // 兼容直接以 type/fields 为顶层
+                test_case.request_type = parse_type(req["type"].as_string());
+                test_case.request_fields = req["fields"];
+            } else {
+                test_case.request_type = TestCaseType::None;
+            }
+
+            // 解析预期回报（独立文件，空文件/无字段时仅验证响应类型）
+            if (!exp_path.empty()) {
+                JsonValue exp_root = JsonParser::parse_file(exp_path);
+                JsonValue exp = exp_root["expected_response"];
+                if (exp.is_null()) exp = exp_root;
+                test_case.response_type = parse_type(exp["type"].as_string());
+
+                JsonValue fields = exp["fields"];
+                if (fields.is_object()) {
+                    std::vector<std::string> fkeys = fields.keys();
+                    for (size_t j = 0; j < fkeys.size(); j++) {
+                        FieldMatch fm;
+                        fm.field_name = fkeys[j];
+                        fm.expected_value = fields[fkeys[j]];
+                        // null = 动态字段（流水号/时间）跳过校验；非 null 必须校验
+                        fm.required = !fields[fkeys[j]].is_null();
+                        test_case.expected_fields.push_back(fm);
+                    }
+                }
+            } else {
+                test_case.response_type = TestCaseType::None;
+            }
+
+            test_cases_.push_back(test_case);
+            count++;
+            LOG_INFO("[Loader] 加载计划场景: " << name
+                      << " (req=" << (req_file.empty() ? "-" : req_file)
+                      << ", exp=" << (exp_file.empty() ? "-" : exp_file) << ")");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR("[Loader] load_plan 异常: " << e.what());
+    }
+    return count;
+}
+
 std::vector<TestResult> TestCaseRunner::execute_all() {
     std::vector<TestResult> results;
     for (size_t i = 0; i < test_cases_.size(); i++) {
-        std::cout << "\n========== 执行测试用例 [" << (i+1) << "/"
+        LOG_INFO("========== 执行测试用例 [" << (i+1) << "/"
                   << test_cases_.size() << "]: "
-                  << test_cases_[i].name << " ==========" << std::endl;
+                  << test_cases_[i].name << " ==========");
         TestResult r = execute(test_cases_[i]);
         results.push_back(r);
-        std::cout << ">> 结果: " << (r.passed ? "通过" : "失败")
+        LOG_INFO(">> 结果: " << (r.passed ? "通过" : "失败")
                   << " (" << r.elapsed_ms << "ms)"
-                  << (r.passed ? "" : " - " + r.fail_reason)
-                  << std::endl;
+                  << (r.passed ? "" : " - " + r.fail_reason));
     }
     return results;
 }
@@ -143,7 +223,7 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     // 发送请求
     if (tc.response_type == TestCaseType::TradeRtn) {
         // 成交回报(2005)是异步回报：无需发送新请求，等待并校验已存储的成交回报
-        std::cout << "[Runner] 等待并校验异步成交回报(2005)..." << std::endl;
+        LOG_INFO("[Runner] 等待并校验异步成交回报(2005)...");
         int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
         auto wait_start = std::chrono::steady_clock::now();
         while (!handler_->has_trade_rtn()) {
@@ -178,7 +258,7 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     if (tc.response_type == TestCaseType::WaitHeartbeat) {
         // 心跳测试：等待指定时间，检查链接状态
         int wait_sec = tc.request_fields["wait_seconds"].as_int();
-        std::cout << "[Runner] 等待 " << wait_sec << " 秒验证心跳..." << std::endl;
+        LOG_INFO("[Runner] 等待 " << wait_sec << " 秒验证心跳...");
         for (int i = 0; i < wait_sec; i++) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             if (!handler_->last_link_status()) {
@@ -239,8 +319,8 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 std::string val;
 
                 val = tc.request_fields["fund_account_id"].as_string();
-                std::cerr << "[DEBUG] login fund_account_id val=[" << val << "] len=" << val.size()
-                          << " req.size=" << req.fund_account_id.size() << std::endl;
+                LOG_DEBUG("login fund_account_id val=[" << val << "] len=" << val.size()
+                          << " req.size=" << req.fund_account_id.size());
                 std::memcpy(req.fund_account_id.data(), val.c_str(),
                             std::min(val.size(), req.fund_account_id.size()));
 
@@ -269,7 +349,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                             std::min(val.size(), req.user_info.size()));
 
                 int32_t ret = api_->login(req);
-                std::cout << "[Runner] login() 返回: " << ret << std::endl;
+                LOG_INFO("[Runner] login() 返回: " << ret);
                 return ret == 0;
             }
 
@@ -303,7 +383,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.market_type = tc.request_fields["market_type"].as_int();
 
                 int32_t ret = api_->order_insert(req);
-                std::cout << "[Runner] order_insert() 返回: " << ret << std::endl;
+                LOG_INFO("[Runner] order_insert() 返回: " << ret);
                 return ret == 0;
             }
 
@@ -332,7 +412,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.client_seq_id = tc.request_fields["client_seq_id"].as_int();
 
                 int32_t ret = api_->order_cancel(req);
-                std::cout << "[Runner] order_cancel() 返回: " << ret << std::endl;
+                LOG_INFO("[Runner] order_cancel() 返回: " << ret);
                 return ret == 0;
             }
 
@@ -340,11 +420,11 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 return true; // 心跳测试不需要发送请求
 
             default:
-                std::cerr << "[Runner] 不支持请求类型: " << (int)tc.request_type << std::endl;
+                LOG_ERROR("[Runner] 不支持请求类型: " << (int)tc.request_type);
                 return false;
         }
     } catch (const std::exception& e) {
-        std::cerr << "[Runner] 发送请求异常: " << e.what() << std::endl;
+        LOG_ERROR("[Runner] 发送请求异常: " << e.what());
         return false;
     }
 }

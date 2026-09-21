@@ -25,6 +25,7 @@ enum class TestCaseType {
     OrderCancel,
     TradeRtn,
     WaitHeartbeat,
+    None,       // 无请求（如仅等待异步回报）或无预期字段
     Unknown
 };
 
@@ -71,6 +72,13 @@ public:
 
     /// 加载目录下所有测试用例 JSON 文件
     int load_test_dir(const std::string& dir);
+
+    /// 从主测试计划加载用例（场景列表，每个场景引用独立的 request_file / expected_file）
+    /// @param plan_node test_plan 节点（含 functional_tests 数组：
+    ///                  [{name, enabled, timeout_ms, request_file, expected_file}...]）
+    /// @param base_dir  相对路径基准目录（通常为主配置文件所在目录）
+    /// @return 成功加载的用例数
+    int load_plan(const JsonValue& plan_node, const std::string& base_dir);
 
     /// 执行所有已加载的测试用例
     std::vector<TestResult> execute_all();

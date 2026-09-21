@@ -1,0 +1,17 @@
+{
+  "type": "order_insert",
+  "fields": {
+    "fund_account_id": "1000000000000001",
+    "branch_id": "0001",
+    "side": "1",
+    "order_type": "2",
+    "policy_id": 0,
+    "tgw_id": 0,
+    "security_id": "600007",
+    "order_price": 250200,
+    "order_qty": 100,
+    "stop_price": 0,
+    "client_seq_id": 0,
+    "market_type": 1
+  }
+}

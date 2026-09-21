@@ -12,6 +12,7 @@
 #include "mock_client.h"
 #include "api_interface.h"
 #include "api_config.h"
+#include "logger.h"
 #include <iostream>
 
 namespace mock {
@@ -32,7 +33,7 @@ MockClient::~MockClient() {
 // 当前实现采用「直接链接」方式（编译时已链接 liblbapi.so），
 // 因此本方法仅做占位并打印信息，lib_path 参数保留给未来 dlopen 动态加载扩展。
 bool MockClient::load_api(const std::string& lib_path) {
-    std::cout << "[MockClient] 使用直接链接方式加载 API" << std::endl;
+    LOG_INFO("[MockClient] 使用直接链接方式加载 API");
     return true;
 }
 
@@ -48,63 +49,71 @@ bool MockClient::load_api(const std::string& lib_path) {
 // 任一步失败都会释放已分配资源并返回 false。
 bool MockClient::init(const std::string& config_path) {
     try {
-        // 加载 JSON 配置
         JsonValue config = JsonParser::parse_file(config_path);
+        return init_from_json(config);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[MockClient] 初始化异常: " << e.what());
+        return false;
+    }
+}
 
+// init_from_json: 从已解析的 JSON 配置节点初始化（供 test_plan 主配置模式复用）
+bool MockClient::init_from_json(const JsonValue& config) {
+    try {
         // 创建 API 配置
         lb_api::api_config* cfg = lb_api::api_config::create_config();
         if (!cfg) {
-            std::cerr << "[MockClient] create_config 失败" << std::endl;
+            LOG_ERROR("[MockClient] create_config 失败");
             return false;
         }
 
         // 设置配置属性
         int32_t ret_attr = 0;
         ret_attr = cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(api_instance_name)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(api_instance_name)=" << ret_attr);
         ret_attr = cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(market_type)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(market_type)=" << ret_attr);
         ret_attr = cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(fast_counter_type)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(fast_counter_type)=" << ret_attr);
         ret_attr = cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(speed_link_type)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(speed_link_type)=" << ret_attr);
 
         // 柜台地址
         std::string speed_ip = config["speed_counter_addr"]["ip"].as_string();
         int speed_port = config["speed_counter_addr"]["port"].as_int();
         std::string speed_addr = speed_ip + ":" + std::to_string(speed_port);
         ret_attr = cfg->set_attr("speed_counter_addr", speed_addr.c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(speed_counter_addr)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(speed_counter_addr)=" << ret_attr);
 
         std::string c98_ip = config["counter98_addr"]["ip"].as_string();
         int c98_port = config["counter98_addr"]["port"].as_int();
         std::string c98_addr = c98_ip + ":" + std::to_string(c98_port);
         ret_attr = cfg->set_attr("counter98_addr", c98_addr.c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(counter98_addr)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(counter98_addr)=" << ret_attr);
 
         ret_attr = cfg->set_attr("98agw_user", config["98agw_user"].as_string().c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(98agw_user)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(98agw_user)=" << ret_attr);
         ret_attr = cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string().c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(98agw_user_password)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(98agw_user_password)=" << ret_attr);
         ret_attr = cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(heartbeat_interval)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(heartbeat_interval)=" << ret_attr);
         ret_attr = cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(agw_user_login_timeout)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(agw_user_login_timeout)=" << ret_attr);
         ret_attr = cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int()));
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(log_level)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(log_level)=" << ret_attr);
         ret_attr = cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
-        if (ret_attr) std::cerr << "[DEBUG] set_attr(log_output_dir)=" << ret_attr << std::endl;
+        if (ret_attr) LOG_DEBUG("set_attr(log_output_dir)=" << ret_attr);
 
         // 可选：发送队列大小(MB)，默认 2MB；压测高 TPS 时建议调大避免 SEND_QUEUE_FULL
         if (config.has("send_queue_size_mb")) {
             ret_attr = cfg->set_attr("send_queue_size_mb", static_cast<int32_t>(config["send_queue_size_mb"].as_int()));
-            if (ret_attr) std::cerr << "[DEBUG] set_attr(send_queue_size_mb)=" << ret_attr << std::endl;
+            if (ret_attr) LOG_DEBUG("set_attr(send_queue_size_mb)=" << ret_attr);
         }
 
         // 可选：单链接单客户模式（默认 true）。true=单客户（登录缓存为成员，委托直接用），false=多客户（以 fund_account_id 为 key 存 map）
         if (config.has("single_cust_per_link")) {
             ret_attr = cfg->set_attr("single_cust_per_link", config["single_cust_per_link"].as_bool());
-            if (ret_attr) std::cerr << "[DEBUG] set_attr(single_cust_per_link)=" << ret_attr << std::endl;
+            if (ret_attr) LOG_DEBUG("set_attr(single_cust_per_link)=" << ret_attr);
         }
 
         // 创建回调
@@ -115,25 +124,25 @@ bool MockClient::init(const std::string& config_path) {
         lb_api::api_config::destroy_config(cfg);
 
         if (ret != 0 || !api_) {
-            std::cerr << "[MockClient] create_instance 失败: " << ret << std::endl;
+            LOG_ERROR("[MockClient] create_instance 失败: " << ret);
             delete callback_;
             callback_ = nullptr;
             return false;
         }
 
-        std::cout << "[MockClient] API 实例创建成功" << std::endl;
+        LOG_INFO("[MockClient] API 实例创建成功");
 
         // 启动
         ret = api_->start();
         if (ret != 0) {
-            std::cerr << "[MockClient] api->start() 失败: " << ret << std::endl;
+            LOG_ERROR("[MockClient] api->start() 失败: " << ret);
             delete callback_;
             callback_ = nullptr;
             lb_api::api_interface::release_instance(api_);
             api_ = nullptr;
             return false;
         }
-        std::cout << "[MockClient] API 启动成功" << std::endl;
+        LOG_INFO("[MockClient] API 启动成功");
 
         // 创建测试执行器
         runner_ = new TestCaseRunner(api_, callback_);
@@ -153,7 +162,7 @@ bool MockClient::init(const std::string& config_path) {
 
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[MockClient] 初始化异常: " << e.what() << std::endl;
+        LOG_ERROR("[MockClient] 初始化异常: " << e.what());
         return false;
     }
 }
@@ -197,17 +206,17 @@ TestResult MockClient::run_test(const std::string& testcase_path) {
 // 通过 load_test_dir() 扫描目录下所有 .json 文件并加载，逐个 execute_all() 执行。
 std::vector<TestResult> MockClient::run_all_tests(const std::string& test_dir) {
     if (!runner_) {
-        std::cerr << "[MockClient] MockClient 未初始化" << std::endl;
+        LOG_ERROR("[MockClient] MockClient 未初始化");
         return std::vector<TestResult>();
     }
 
     int count = runner_->load_test_dir(test_dir);
     if (count == 0) {
-        std::cerr << "[MockClient] 未找到测试用例: " << test_dir << std::endl;
+        LOG_ERROR("[MockClient] 未找到测试用例: " << test_dir);
         return std::vector<TestResult>();
     }
 
-    std::cout << "[MockClient] 已加载 " << count << " 个测试用例" << std::endl;
+    LOG_INFO("[MockClient] 已加载 " << count << " 个测试用例");
     std::vector<TestResult> results = runner_->execute_all();
 
     for (size_t i = 0; i < results.size(); i++) {
@@ -216,21 +225,108 @@ std::vector<TestResult> MockClient::run_all_tests(const std::string& test_dir) {
     return results;
 }
 
+// run_test_plan: 运行测试计划（test_plan.json 主配置文件模式）
+// 流程：
+//   1. 从 plan_root 提取 connection 子节点，调用 init_from_json 完成 API 初始化
+//   2. 从 plan_root 提取 test_plan 子节点，调用 runner_->load_plan() 加载场景
+//      （场景引用的 request_file / expected_file 以 base_dir 为相对基准）
+//   3. 逐一执行场景并计入报告
+//   4. 若 test_plan.perf_test 配置了独立 request_file，则注入 order 模板后执行性能测试
+bool MockClient::run_test_plan(const JsonValue& plan_root, const std::string& base_dir) {
+    // 1. 初始化：connection 节点优先；否则兼容 connection_config_file 引用
+    //    注意：JsonValue::operator[] 对缺失 key 抛异常，必须先 has() 判断
+    JsonValue conn;
+    if (plan_root.has("connection")) {
+        conn = plan_root["connection"];
+    }
+    if (conn.is_null() && plan_root.has("connection_config_file")) {
+        std::string conn_file = plan_root["connection_config_file"].as_string();
+        std::string conn_path = conn_file.empty() ? "" : (base_dir + "/" + conn_file);
+        try {
+            conn = JsonParser::parse_file(conn_path);
+            LOG_INFO("[MockClient] 从文件加载连接配置: " << conn_path);
+        } catch (const std::exception& e) {
+            LOG_ERROR("[MockClient] 加载连接配置失败: " << conn_path << " - " << e.what());
+            return false;
+        }
+    }
+    if (conn.is_null() || !conn.is_object()) {
+        LOG_ERROR("[MockClient] 测试计划缺少 connection 配置");
+        return false;
+    }
+    if (!init_from_json(conn)) {
+        LOG_ERROR("[MockClient] 测试计划初始化失败");
+        return false;
+    }
+
+    // 2. 加载计划场景
+    JsonValue test_plan;
+    if (plan_root.has("test_plan")) {
+        test_plan = plan_root["test_plan"];
+    } else {
+        LOG_ERROR("[MockClient] 测试计划缺少 test_plan 节点");
+        return false;
+    }
+    int count = 0;
+    try {
+        count = runner_->load_plan(test_plan, base_dir);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[MockClient] 加载测试计划异常: " << e.what());
+        return false;
+    }
+    if (count == 0) {
+        LOG_ERROR("[MockClient] 测试计划未加载到任何已启用场景");
+        return false;
+    }
+    LOG_INFO("[MockClient] 已加载 " << count << " 个计划场景");
+
+    // 3. 执行功能测试场景
+    std::vector<TestResult> results = runner_->execute_all();
+    for (size_t i = 0; i < results.size(); i++) {
+        report_.add_result(results[i]);
+    }
+
+    // 4. 性能测试（test_plan.perf_test）
+    if (test_plan.has("perf_test")) {
+        JsonValue perf_node = test_plan["perf_test"];
+        // 若 perf_test 配置了独立委托模板文件（order_file），加载并注入 order 节点
+        if (perf_node.is_object() && perf_node.has("order_file")) {
+            std::string order_file = perf_node["order_file"].as_string();
+            if (!order_file.empty()) {
+                try {
+                    JsonValue order_root = JsonParser::parse_file(base_dir + "/" + order_file);
+                    JsonValue order = order_root.has("order") ? order_root["order"] : order_root;
+                    JsonValue new_perf = perf_node;
+                    new_perf.set("order", order);
+                    perf_node = new_perf;
+                    LOG_INFO("[MockClient] 从文件加载性能委托模板: " << order_file);
+                } catch (const std::exception& e) {
+                    LOG_ERROR("[MockClient] 加载性能委托模板失败: " << e.what());
+                    return false;
+                }
+            }
+        }
+        run_perf_test(perf_node);
+    }
+
+    return true;
+}
+
 // run_perf_test: 运行性能测试
 // 从 connection_config.json 的 "perf_test" 节点加载配置，若 enable=true 则执行。
 bool MockClient::run_perf_test(const JsonValue& perf_node) {
     if (!perf_runner_) {
-        std::cerr << "[MockClient] PerfRunner 未初始化" << std::endl;
+        LOG_ERROR("[MockClient] PerfRunner 未初始化");
         return false;
     }
 
     if (!perf_runner_->load_config(perf_node)) {
-        std::cerr << "[MockClient] 性能测试配置加载失败" << std::endl;
+        LOG_ERROR("[MockClient] 性能测试配置加载失败");
         return false;
     }
 
     if (!perf_runner_->enabled()) {
-        std::cout << "[MockClient] 性能测试未开启（perf_test.enable=false）" << std::endl;
+        LOG_INFO("[MockClient] 性能测试未开启（perf_test.enable=false）");
         return false;
     }
 
@@ -242,10 +338,10 @@ bool MockClient::run_perf_test(const JsonValue& perf_node) {
 void MockClient::shutdown() {
     if (api_) {
         api_->stop();
-        std::cout << "[MockClient] API 已停止" << std::endl;
+        LOG_INFO("[MockClient] API 已停止");
 
         lb_api::api_interface::release_instance(api_);
-        std::cout << "[MockClient] API 实例已释放" << std::endl;
+        LOG_INFO("[MockClient] API 实例已释放");
         api_ = nullptr;
     }
 
@@ -257,6 +353,17 @@ void MockClient::shutdown() {
 
     delete callback_;
     callback_ = nullptr;
+}
+
+// write_analysis: 写入测试结果分析文件
+bool MockClient::write_analysis(const std::string& path, const std::string& plan_desc) const {
+    std::string perf_report;
+    long long perf_failed = -1; // -1 表示未执行
+    if (perf_runner_ && perf_runner_->ran()) {
+        perf_report = perf_runner_->report_text();
+        perf_failed = static_cast<long long>(perf_runner_->failed());
+    }
+    return ResultAnalysis::write(path, report_, perf_report, perf_failed, plan_desc);
 }
 
 } // namespace mock

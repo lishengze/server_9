@@ -5,6 +5,7 @@
 //   耗时和字段校验详情。
 
 #include "test_report.h"
+#include "logger.h"
 #include <iostream>
 #include <fstream>
 
@@ -26,26 +27,27 @@ void TestReport::add_result(const TestResult& result) {
 // print: 打印汇总报告到控制台
 // 输出统计行，随后逐个用例打印 PASS/FAIL、耗时、失败原因和字段校验详情。
 void TestReport::print() const {
-    std::cout << "\n========================================\n";
-    std::cout << "          测试报告\n";
-    std::cout << "========================================\n";
-    std::cout << "总计: " << total_ << " | 通过: " << passed_
-              << " | 失败: " << failed_ << std::endl;
-    std::cout << "----------------------------------------\n";
+    LOG_INFO("");
+    LOG_INFO("========================================");
+    LOG_INFO("          测试报告");
+    LOG_INFO("========================================");
+    LOG_INFO("总计: " << total_ << " | 通过: " << passed_
+              << " | 失败: " << failed_);
+    LOG_INFO("----------------------------------------");
 
     for (size_t i = 0; i < results_.size(); i++) {
         const TestResult& r = results_[i];
-        std::cout << (r.passed ? "[PASS] " : "[FAIL] ")
+        LOG_INFO((r.passed ? "[PASS] " : "[FAIL] ")
                   << r.case_name
-                  << " (" << r.elapsed_ms << "ms)" << std::endl;
+                  << " (" << r.elapsed_ms << "ms)");
         if (!r.passed) {
-            std::cout << "       原因: " << r.fail_reason << std::endl;
+            LOG_INFO("       原因: " << r.fail_reason);
         }
         for (size_t j = 0; j < r.match_details.size(); j++) {
-            std::cout << "       " << r.match_details[j] << std::endl;
+            LOG_INFO("       " << r.match_details[j]);
         }
     }
-    std::cout << "========================================\n";
+    LOG_INFO("========================================");
 }
 
 // save: 将详细报告写入文件
@@ -53,7 +55,7 @@ void TestReport::print() const {
 bool TestReport::save(const std::string& path) const {
     std::ofstream file(path.c_str());
     if (!file.is_open()) {
-        std::cerr << "无法写入报告文件: " << path << std::endl;
+        LOG_ERROR("无法写入报告文件: " << path);
         return false;
     }
 

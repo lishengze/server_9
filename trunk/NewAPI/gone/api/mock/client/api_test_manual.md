@@ -537,6 +537,102 @@ export LD_LIBRARY_PATH=/home/user/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH
 - 性能测试报告：`perf_report_*.txt`（由配置 `report_file` 指定）
 - 网卡抓包映射：`/tmp/api_net_time_map_*.txt`（由配置 `net_time_map_file` 指定）
 
+### 7.2.1 测试计划模式（--plan，推荐）
+
+将 **所有支持的测试请求整合到一个主配置文件**：控制哪些场景执行、每个场景的请求/预期回报案例文件、性能测试开关与参数。请求/预期详细案例数据独立存放于 `config/cases/`（FTE）与 `config/cases_gone/`（GOne）。
+
+**主配置文件结构**（`config/test_plan_gw.json` / `config/test_plan_gone.json`）：
+
+```json
+{
+  "connection_config_file": "connection_config_gw_single.json",
+  "test_plan": {
+    "functional_tests": [
+      {
+        "name": "FTE 登录测试",
+        "enabled": true,            // false 跳过该场景
+        "timeout_ms": 30000,
+        "request_file": "cases/login_request.json",   // 相对主配置目录
+        "expected_file": "cases/login_expected.json"
+      },
+      { "name": "FTE 成交回报校验", "expected_file": "cases/trade_expected.json" } // 无请求（异步回报）
+    ],
+    "perf_test": {
+      "enable": true, "duration_sec": 10, "tps": 8000,
+      "warmup_sec": 3, "cpu_id": -1,
+      "report_file": "perf_report_gw_plan.txt",
+      "net_time_map_file": "/tmp/api_net_time_map_gw_plan.txt",
+      "order_file": "cases/perf_order_request.json"
+    }
+  }
+}
+```
+
+**独立案例文件**（`config/cases/`，字段取自 FTE 实测值）：
+
+| 文件 | type | 说明 |
+|---|---|---|
+| `login_request.json` / `login_expected.json` | login | 登录请求与 9 字段应答预期 |
+| `order_request.json` / `order_expected.json` | order_insert / order_rtn | 委托请求与 23 字段回报预期 |
+| `trade_expected.json` | trade_rtn | 成交回报(2005) 26 字段预期（异步，无请求文件） |
+| `cancel_request.json` / `cancel_expected.json` | order_cancel / cancel_rsp | 撤单（`$last_order_sys_no` 引用上笔委托） |
+| `heartbeat_request.json` / `heartbeat_expected.json` | wait_heartbeat / heartbeat_ok | 心跳维持 30s |
+| `perf_order_request.json` | - | perf 委托模板（`{order:{...}}`） |
+
+**执行**：
+
+```bash
+./build_cmake/bin/mock_client --lib build_cmake/lib/liblbapi.so \
+  --plan trunk/NewAPI/gone/api/mock/client/config/test_plan_gw.json \
+  --report /tmp/test_plan_gw_report.txt
+```
+
+流程：加载 connection → 加载计划（enabled 场景）→ 顺序执行功能测试（逐字段比对预期回报）→ perf_test（`order_file` 注入委托模板）。
+
+**预期回报校验规则**：预期文件 `fields` 中字段值 `null` 表示动态字段（流水号/时间戳，跳过校验）；非 `null` 字段**必须精确匹配**，逐字段输出 `✓/✗`，任一不一致即该场景 FAIL。
+
+**GOne 与 FTE 预期差异（重要，`cases_gone/`）**：
+
+| 字段 | FTE 预期 | GOne 预期 | 说明 |
+|---|---|---|---|
+| `cust_id`（委托/成交/撤单） | `1000000000000001` | `C000000000000001` | FTE 回填资金账号；GOne 返回真实客户号 |
+| `rtn_type`（委托回报） | 1 | 0 | 两个柜台回报类型定义不同 |
+| `err_code`（撤单） | 50046 | 0 | FTE 拒撤已成交委托；GOne 模拟柜台直接撤单成功 |
+
+除上述 3 项外两者其余字段值完全一致（已验证 5/5 场景通过）。
+
+### 7.2.2 日志系统与结果分析（-log / --analysis）
+
+mock_client 内置完整的分级日志系统（`src/logger.h/.cpp`）与结果分析模块（`src/result_analysis.h/.cpp`）。
+
+**日志分级**：`DEBUG` / `INFO` / `WARN` / `ERROR` / `FATAL` 五级（默认最低 `INFO`）。
+**输出目标**：每条日志**同时**输出到屏幕和控制台 + 日志文件（格式 `[时间戳] [级别] [文件:行] 消息`）。
+**线程安全**：内部互斥锁，支持多线程（回调线程、压测线程）并发写日志。
+
+**命令行参数**：
+- `--log <path>`：日志文件路径（默认 `mock_client.log`），每次运行**覆盖**写入
+- `--analysis <path>`：结果分析文件路径（默认 `result_analysis.txt`），**独立于运行日志**
+
+**结果分析文件**（`result_analysis.txt`）整合三部分，与运行日志相互独立：
+1. **【一、功能测试分析】**：总计/通过/失败/通过率 + 逐用例 `[PASS]/[FAIL]` + 逐字段校验明细
+2. **【二、性能测试分析】**：若执行则嵌入完整 perf 报告（TPS/耗时分位/样本数）
+3. **【三、总体结论】**：功能通过率 + 性能失败笔数 + 综合结论（全部通过 / 存在失败）
+
+```bash
+./build_cmake/bin/mock_client --lib build_cmake/lib/liblbapi.so \
+  --plan config/test_plan_gw.json \
+  --log mock_client.log --analysis result_analysis.txt --report test_report.txt
+```
+
+**产物关系**：
+| 文件 | 内容 | 独立 |
+|---|---|---|
+| `mock_client.log` | 全量分级运行日志（屏幕+文件） | 是 |
+| `test_report.txt` | 功能测试报告（逐用例字段校验） | 是 |
+| `result_analysis.txt` | 最终结果分析（功能+性能+结论） | 是 |
+
+**注意**：API 库（liblbapi.so）自身的调试日志（`[DBG]`/`[DEBUG] set_attr` 等）由其内部日志系统经 `std::cout` 输出，不经过 mock_client 的 Logger。
+
 ### 7.3 性能测试报告解读
 
 ```
@@ -702,10 +798,17 @@ P50/P75/P90/P95/Max/Min/平均值/标准差
 | GOne 配置 | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` |
 | gw 登录用例 | `trunk/NewAPI/gone/api/mock/client/config/test_cases/fte_login.json` |
 | GOne 登录用例 | `trunk/NewAPI/gone/api/mock/client/config/test_cases/gone_login.json` |
+|| 测试计划主配置（gw） | `trunk/NewAPI/gone/api/mock/client/config/test_plan_gw.json` |
+|| 测试计划主配置（GOne） | `trunk/NewAPI/gone/api/mock/client/config/test_plan_gone.json` |
+|| FTE 案例（请求/预期） | `trunk/NewAPI/gone/api/mock/client/config/cases/*.json` |
+|| GOne 预期案例 | `trunk/NewAPI/gone/api/mock/client/config/cases_gone/*.json` |
+|| perf 委托模板 | `trunk/NewAPI/gone/api/mock/client/config/cases/perf_order_request.json` |
 | counter98_mock 配置 | `trunk/NewAPI/gone/api/mock/98_counter/config/server_config.json` |
 | gone_counter_mock 配置 | `trunk/NewAPI/gone/api/mock/gone_counter/config/server_config.json` |
 | CMakeLists（根） | `CMakeLists.txt` |
 | CMakeLists（子项目） | `trunk/NewAPI/CMakeLists.txt` |
+|| Logger 日志系统 | `trunk/NewAPI/gone/api/mock/client/src/logger.h` / `logger.cpp` |
+|| 结果分析模块 | `trunk/NewAPI/gone/api/mock/client/src/result_analysis.h` / `result_analysis.cpp` |
 | mock_client CMakeLists | `trunk/NewAPI/gone/api/mock/client/CMakeLists.txt` |
 | build.sh（依赖 docker） | `build.sh` |
 

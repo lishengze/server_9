@@ -1,0 +1,6 @@
+{
+  "type": "wait_heartbeat",
+  "fields": {
+    "wait_seconds": 30
+  }
+}

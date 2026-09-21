@@ -1,0 +1,14 @@
+{
+  "type": "login",
+  "fields": {
+    "client_req_no": null,
+    "cust_id": "C000000000000001",
+    "fund_account_id": "1000000000000001",
+    "account_id": "A12345678901",
+    "branch_id": "0001",
+    "market_type": 1,
+    "err_code": 0,
+    "err_msg": null,
+    "login_time": null
+  }
+}

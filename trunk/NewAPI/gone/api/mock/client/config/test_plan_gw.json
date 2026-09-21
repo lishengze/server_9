@@ -1,0 +1,57 @@
+{
+  "description": "GW(FTE) 测试计划主配置文件。整合所有功能测试场景 + 性能测试开关与参数。",
+  "connection_config_file": "connection_config_gw_single.json",
+  "test_plan": {
+    "functional_tests": [
+      {
+        "name": "FTE 登录测试",
+        "description": "验证 FTE 登录应答的所有字段",
+        "enabled": true,
+        "timeout_ms": 30000,
+        "request_file": "cases/login_request.json",
+        "expected_file": "cases/login_expected.json"
+      },
+      {
+        "name": "FTE 委托买入测试",
+        "description": "验证 FTE 委托回报(2003)的所有字段",
+        "enabled": true,
+        "timeout_ms": 5000,
+        "request_file": "cases/order_request.json",
+        "expected_file": "cases/order_expected.json"
+      },
+      {
+        "name": "FTE 成交回报校验",
+        "description": "验证 FTE 成交回报(2005)的所有字段（异步回报，无需请求文件）",
+        "enabled": true,
+        "timeout_ms": 5000,
+        "expected_file": "cases/trade_expected.json"
+      },
+      {
+        "name": "FTE 撤单测试",
+        "description": "验证 FTE 撤单应答的所有字段（撤单上一笔已成交委托）",
+        "enabled": true,
+        "timeout_ms": 5000,
+        "request_file": "cases/cancel_request.json",
+        "expected_file": "cases/cancel_expected.json"
+      },
+      {
+        "name": "FTE 心跳维持测试",
+        "description": "等待 30 秒，验证心跳正常维持，无断线回调",
+        "enabled": true,
+        "timeout_ms": 35000,
+        "request_file": "cases/heartbeat_request.json",
+        "expected_file": "cases/heartbeat_expected.json"
+      }
+    ],
+    "perf_test": {
+      "enable": true,
+      "duration_sec": 10,
+      "tps": 8000,
+      "warmup_sec": 3,
+      "cpu_id": -1,
+      "report_file": "perf_report_gw_plan.txt",
+      "net_time_map_file": "/tmp/api_net_time_map_gw_plan.txt",
+      "order_file": "cases/perf_order_request.json"
+    }
+  }
+}

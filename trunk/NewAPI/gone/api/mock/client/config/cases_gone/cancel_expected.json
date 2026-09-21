@@ -1,0 +1,15 @@
+{
+  "type": "cancel_rsp",
+  "fields": {
+    "client_req_no": null,
+    "cust_id": "C000000000000001",
+    "fund_account_id": "1000000000000001",
+    "account_id": "A12345678901",
+    "branch_id": "0001",
+    "market_type": 1,
+    "order_sys_no": null,
+    "client_seq_id": null,
+    "err_code": 0,
+    "rej_api": 0
+  }
+}

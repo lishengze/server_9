@@ -75,6 +75,12 @@ public:
     /// 生成完整报告文本（含参数 + 指标）
     std::string report_text() const;
 
+    /// 统计访问器（供结果分析使用）
+    size_t sent() const { return sent_; }          ///< 发送笔数
+    size_t ok() const { return ok_; }              ///< 成功笔数
+    size_t failed() const { return sent_ - ok_; }  ///< 失败笔数
+    bool ran() const { return sent_ > 0; }         ///< 是否已执行过发单
+
 private:
     /// 构造一笔委托请求（使用配置模板 + 递增 client_seq_id）
     static void build_order(const PerfConfig& cfg, int64_t seq, lb_api::OrderReq& req);

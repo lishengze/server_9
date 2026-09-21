@@ -1,0 +1,6 @@
+{
+  "type": "heartbeat_ok",
+  "fields": {
+    "link_connected": true
+  }
+}

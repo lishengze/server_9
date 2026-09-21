@@ -26,7 +26,7 @@ if(NOT BUILD_SUM_COUNT)
   endif()
 endif()
 
-# 源文件：mock_client 核心 + JSON 工具 + 性能测试模块
+# 源文件：mock_client 核心 + JSON 工具 + 性能测试模块 + 日志系统 + 结果分析
 file(GLOB MOCK_CLIENT_SRC
   src/main.cpp
   src/mock_client.cpp
@@ -36,6 +36,8 @@ file(GLOB MOCK_CLIENT_SRC
   src/perf_runner.cpp
   src/metric_stats.cpp
   src/cpu_affinity.cpp
+  src/logger.cpp
+  src/result_analysis.cpp
 )
 
 file(GLOB JSON_UTILS_SRC

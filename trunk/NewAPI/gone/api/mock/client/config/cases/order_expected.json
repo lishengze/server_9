@@ -1,0 +1,28 @@
+{
+  "type": "order_rtn",
+  "fields": {
+    "cust_id": "1000000000000001",
+    "fund_account_id": "1000000000000001",
+    "account_id": "A12345678901",
+    "branch_id": "0001",
+    "side": "1",
+    "order_type": "2",
+    "order_status": 0,
+    "policy_id": 0,
+    "market_type": 1,
+    "reserved": 0,
+    "security_id": "600007",
+    "order_price": 250200,
+    "order_qty": 100,
+    "client_seq_id": null,
+    "rtn_type": 1,
+    "err_code": 0,
+    "order_sys_no": null,
+    "frozen_amount": null,
+    "fee": 0,
+    "trade_qty": null,
+    "cancel_qty": 0,
+    "order_time": null,
+    "update_time": null
+  }
+}

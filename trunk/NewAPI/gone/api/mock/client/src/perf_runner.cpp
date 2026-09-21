@@ -8,6 +8,7 @@
 #include "perf_runner.h"
 #include "api_interface.h"
 #include "order_trade_type.h"
+#include "logger.h"
 
 #include <chrono>
 #include <cstring>
@@ -50,7 +51,7 @@ bool PerfConfig::load(const JsonValue& node) {
         }
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[PerfConfig] 加载失败: " << e.what() << std::endl;
+        LOG_ERROR("[PerfConfig] 加载失败: " << e.what());
         return false;
     }
 }
@@ -87,7 +88,7 @@ void PerfRunner::build_order(const PerfConfig& cfg, int64_t seq, lb_api::OrderRe
 // 匀速发单
 void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
     if (cfg_.tps <= 0) {
-        std::cerr << "[PerfRunner] TPS 必须 > 0" << std::endl;
+        LOG_ERROR("[PerfRunner] TPS 必须 > 0");
         return;
     }
 
@@ -143,20 +144,20 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
 
 bool PerfRunner::run() {
     if (!api_) {
-        std::cerr << "[PerfRunner] API 实例为空" << std::endl;
+        LOG_ERROR("[PerfRunner] API 实例为空");
         return false;
     }
 
-    std::cout << "\n========== 性能测试开始 ==========" << std::endl;
+    LOG_INFO("========== 性能测试开始 ==========");
 
     // 1. CPU 绑定
     if (cfg_.cpu_id >= 0) {
         if (!perf::cpu_affinity::bind_cpu(cfg_.cpu_id)) {
-            std::cerr << "[PerfRunner] CPU 绑定失败: cpu_id=" << cfg_.cpu_id << std::endl;
+            LOG_ERROR("[PerfRunner] CPU 绑定失败: cpu_id=" << cfg_.cpu_id);
             cpu_bind_desc_ = "绑定失败";
         } else {
             cpu_bind_desc_ = "CPU " + std::to_string(cfg_.cpu_id);
-            std::cout << "[PerfRunner] 已绑定到 " << cpu_bind_desc_ << std::endl;
+            LOG_INFO("[PerfRunner] 已绑定到 " << cpu_bind_desc_);
         }
     } else {
         cpu_bind_desc_ = "不绑定";
@@ -164,48 +165,48 @@ bool PerfRunner::run() {
 
     // 查询当前 CPU 亲和性（日志确认）
     std::string cpu_aff = perf::cpu_affinity::get_current_cpu();
-    std::cout << "[PerfRunner] 当前 CPU 亲和性: " << cpu_aff << std::endl;
+    LOG_INFO("[PerfRunner] 当前 CPU 亲和性: " << cpu_aff);
 
     // 2. 预热等待（确保绑核生效）
     if (cfg_.warmup_sec > 0) {
-        std::cout << "[PerfRunner] 预热等待 " << cfg_.warmup_sec << " 秒..." << std::endl;
+        LOG_INFO("[PerfRunner] 预热等待 " << cfg_.warmup_sec << " 秒...");
         std::this_thread::sleep_for(std::chrono::seconds(cfg_.warmup_sec));
     }
 
     // 3. 匀速发单
-    std::cout << "[PerfRunner] 开始发单: duration=" << cfg_.duration_sec
-              << "s, TPS=" << cfg_.tps << std::endl;
+    LOG_INFO("[PerfRunner] 开始发单: duration=" << cfg_.duration_sec
+              << "s, TPS=" << cfg_.tps);
 
     std::vector<uint64_t> latencies;
     run_benchmark(latencies);
 
     // 4. 统计
     stats_.compute(latencies);
-    std::cout << "[PerfRunner] 发单完成: 发送=" << sent_ << " 成功=" << ok_
-              << " 失败=" << (sent_ - ok_) << std::endl;
+    LOG_INFO("[PerfRunner] 发单完成: 发送=" << sent_ << " 成功=" << ok_
+              << " 失败=" << (sent_ - ok_));
 
     // 5. 输出报告
     std::string report = report_text();
-    std::cout << report << std::endl;
+    LOG_INFO(report);
 
     if (!cfg_.report_file.empty()) {
         std::ofstream ofs(cfg_.report_file);
         if (ofs) {
             ofs << report;
             ofs.close();
-            std::cout << "[PerfRunner] 报告已保存到: " << cfg_.report_file << std::endl;
+            LOG_INFO("[PerfRunner] 报告已保存到: " << cfg_.report_file);
         } else {
-            std::cerr << "[PerfRunner] 无法写入报告: " << cfg_.report_file << std::endl;
+            LOG_ERROR("[PerfRunner] 无法写入报告: " << cfg_.report_file);
         }
     }
 
     // 6. 写出网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns）
     if (!cfg_.net_time_map_file.empty()) {
         if (apinet::write_map_file(cfg_.net_time_map_file, net_time_map_)) {
-            std::cout << "[PerfRunner] 网卡抓包映射已写出: " << cfg_.net_time_map_file
-                      << " (" << net_time_map_.size() << " 条)" << std::endl;
+            LOG_INFO("[PerfRunner] 网卡抓包映射已写出: " << cfg_.net_time_map_file
+                      << " (" << net_time_map_.size() << " 条)");
         } else {
-            std::cerr << "[PerfRunner] 无法写出网卡抓包映射: " << cfg_.net_time_map_file << std::endl;
+            LOG_ERROR("[PerfRunner] 无法写出网卡抓包映射: " << cfg_.net_time_map_file);
         }
     }
 

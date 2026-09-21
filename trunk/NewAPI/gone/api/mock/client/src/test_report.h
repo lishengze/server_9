@@ -31,6 +31,9 @@ public:
     int passed() const { return passed_; }
     int failed() const { return failed_; }
 
+    /// 获取所有测试结果（供结果分析使用）
+    const std::vector<TestResult>& results() const { return results_; }
+
 private:
     std::vector<TestResult> results_;
     int total_;
