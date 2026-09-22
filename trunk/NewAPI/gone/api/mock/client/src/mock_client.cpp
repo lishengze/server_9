@@ -13,7 +13,9 @@
 #include "api_interface.h"
 #include "api_config.h"
 #include "logger.h"
-#include <iostream>
+#include <dlfcn.h>
+#include <thread>
+#include <chrono>
 
 namespace mock {
 
@@ -32,8 +34,42 @@ MockClient::~MockClient() {
 // load_api: 加载被测 API 动态库
 // 当前实现采用「直接链接」方式（编译时已链接 liblbapi.so），
 // 因此本方法仅做占位并打印信息，lib_path 参数保留给未来 dlopen 动态加载扩展。
+// 用 dladdr 定位实际生效的库路径，与 --lib 参数比对，避免用户误以为指定路径生效。
 bool MockClient::load_api(const std::string& lib_path) {
     LOG_INFO("[MockClient] 使用直接链接方式加载 API");
+    Dl_info info;
+    if (dladdr((void*)&lb_api::api_config::create_config, &info) && info.dli_fname) {
+        std::string actual(info.dli_fname);
+        LOG_INFO("[MockClient] 实际加载的 API 库: " << actual);
+        if (!lib_path.empty() && actual != lib_path) {
+            LOG_WARN("[MockClient] --lib 指定路径与实际加载库不一致: 指定=" << lib_path
+                      << ", 实际=" << actual << " (直接链接模式下 --lib 不生效)");
+        }
+    } else {
+        LOG_WARN("[MockClient] 无法定位 API 库路径 (dladdr 失败)");
+    }
+    return true;
+}
+
+// wait_link_ready: 等待柜台链接就绪
+// api_->start() 返回成功仅表示 API 实例启动，与柜台(FTE/98)的 TCP 链接是异步建立的，
+// 由 on_link_status 回调通知。此处轮询 last_link_status() 直到链接就绪或超时，
+// 避免在链接未就绪时执行测试导致大面积"发送请求失败"。
+bool MockClient::wait_link_ready(int timeout_ms) {
+    if (!callback_) {
+        LOG_WARN("[MockClient] 回调未初始化，跳过链接就绪等待");
+        return false;
+    }
+    auto start = std::chrono::steady_clock::now();
+    while (!callback_->last_link_status()) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count() > timeout_ms) {
+            LOG_WARN("[MockClient] 等待链接就绪超时 (" << timeout_ms << "ms)");
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    LOG_INFO("[MockClient] 链接已就绪");
     return true;
 }
 
@@ -280,6 +316,9 @@ bool MockClient::run_test_plan(const JsonValue& plan_root, const std::string& ba
     }
     LOG_INFO("[MockClient] 已加载 " << count << " 个计划场景");
 
+    // 2.5 等待柜台链接就绪（避免链接未建立时执行测试导致大面积失败）
+    wait_link_ready(10000);
+
     // 3. 执行功能测试场景
     std::vector<TestResult> results = runner_->execute_all();
     for (size_t i = 0; i < results.size(); i++) {
@@ -287,6 +326,7 @@ bool MockClient::run_test_plan(const JsonValue& plan_root, const std::string& ba
     }
 
     // 4. 性能测试（test_plan.perf_test）
+    bool perf_ok = true;
     if (test_plan.has("perf_test")) {
         JsonValue perf_node = test_plan["perf_test"];
         // 若 perf_test 配置了独立委托模板文件（order_file），加载并注入 order 节点
@@ -306,10 +346,17 @@ bool MockClient::run_test_plan(const JsonValue& plan_root, const std::string& ba
                 }
             }
         }
-        run_perf_test(perf_node);
+        // 仅当 perf_test 显式启用时才执行；未启用/未配置 enable 视为跳过（不算失败）
+        bool perf_enabled = perf_node.is_object() && perf_node.has("enable")
+                            && perf_node["enable"].as_bool();
+        if (perf_enabled) {
+            perf_ok = run_perf_test(perf_node);
+        } else {
+            LOG_INFO("[MockClient] 性能测试未开启（perf_test.enable=false）");
+        }
     }
 
-    return true;
+    return perf_ok;
 }
 
 // run_perf_test: 运行性能测试

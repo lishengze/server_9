@@ -13,7 +13,6 @@
 
 #include "callback_handler.h"
 #include "logger.h"
-#include <iostream>
 
 namespace mock {
 

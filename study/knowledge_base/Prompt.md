@@ -40,6 +40,9 @@
 25. **gw counter 深度分析与优化落地** ✅（§28）：`study/gw_counter.md` 深度分析（架构/UML/各消息时序图/瓶颈/6套方案）；**6 项优化**——GwSessionCache 去锁（无锁直接访问）/ `fa_key_cache_` string 复用 / 心跳 ×1000（API 侧换算）/ 发送队列 64MB / FTE 对象池扩容 / 双趟序列化（`pad_copy`+`checksum_bytes` 宽累加）；三档 TPS 对比（10000TPS 平均 442.9→359.4ns ↓18.9%）；方案1（会话迁成员）实验验证后因业务约束回退（@10000TPS P50 160ns 逼近 GOne 120ns，证明会话 string+hash 是主要瓶颈）
 26. **FTE 压测卡死根因 + FTE vs GOne 全面对比** ✅（§30）：FTE 10000TPS 卡死根因是 `-DNO_DSE` 编译下 `fte_internal_spsc`（FTE→DSE 队列）无消费者线程，消息只进不出，队列满后 `producer_consumer_queue::push()` 忙等自旋；**非对象池耗尽**（对象池池空回退 new）；修复=扩容 `FTE_DSE_FIFO_LEN` 8192→65536 + NO_DSE 下启动丢弃消费者线程；修复后 FTE 10000TPS 完整跑完 91956 笔（平均 9224ns, P50 7964ns, P90 10823ns）；同环境对比 GOne 平均 5757ns（P50 3814ns, P90 6492ns），GOne 中低延迟快 40~56%，FTE 最大延迟更优（1045μs vs 3425μs），TPS 接近
 27. **P95 指标 + FTE 尾部延迟瓶颈 + CPU 隔离绑定** ✅（§30.8-30.9）：mock_client `metric_stats` 增加 P95；绑定 core3（CPU3,11）后对比（10000TPS）FTE 平均 2172ns/P50 418ns/P95 2850ns，GOne 平均 747ns/P50 245ns/P95 304ns——**FTE P95 是 GOne 的 9.4 倍**，FTE 尾部延迟是最大瓶颈（`send_msg_fc` 阻塞式忙等+内核 TCP 栈抖动）；**绑定单核会饿死**（`order_insert` 自旋等待引擎线程写时间戳，同核互相饿死，TPS 骤降至 ~500），须绑定整个物理核 2HT（如 `taskset -c 3,11`）；精简 TGW（只留当前委托对应上海 38141/38140）降低 CPU 开销
+28. **mock_client test_plan 主配置模式** ✅（§35）：`--plan test_plan_*.json` 单文件整合全部功能测试场景 + 性能参数，独立案例放 `config/cases/`（FTE）/`cases_gone/`（GOne）；`connection_config_file` 引用连接配置；场景 `request_file`/`expected_file` 相对主配置目录；`order_file` 独立委托模板；`run_test_plan` 流程含 wait_link_ready + perf 结果返回。GOne vs FTE 预期差异（cust_id、rtn_type、撤单 err_code）
+29. **mock_client 日志系统与结果分析** ✅（§36）：`logger.h/cpp` 五级日志（DEBUG/INFO/WARN/ERROR/FATAL），`std::atomic<int> min_level_` 无锁判级快速路径，双输出（控制台+文件），格式 `[时间戳] [级别] [文件:行] 消息`；`result_analysis.h/cpp` 将功能测试报告 + 性能报告 + 总体结论整合输出到独立分析文件（默认 result_analysis.txt）
+30. **mock_client 全面复盘与修复回归** ✅（§37）：mock_client_upgrade.md 复盘 6 类 18 项（🔴4/🟡8/🟢6），10 项修复 + 1 项撤销（CallbackHandler 数据竞争复查确认不存在）；关键修复：load_api dladdr 定位、wait_link_ready 轮询、run_test_plan 返回 perf 结果、net_time_map_ 仅成功委托、Logger atomic、validate 死代码移除、ETF 委托实现。回归：GW 功能 5/5 + perf 6518TPS(P50=531ns) 0 失败；GOne 功能 5/5 + perf 9216TPS(P50=411ns,P90=641ns) 0 失败
 
 ## 三、分析框架
 
@@ -159,6 +162,11 @@
 | **FTE 队列实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/queue/producer_consumer_queue.h`（push 忙等自旋） |
 | **FTE 对象池实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/unbound_object_pool.h` / `object_pool.h`（池空回退 new） |
 | **时间戳/瓶颈分析** | `task/api_dev/time_ana.md`（记录点 send 前/后分析、P95 尾部延迟瓶颈、解决方案）+ `study/gone_counter.md` §九（api_leave_time_ns 机制） |
+|| **test_plan 主配置** | `trunk/NewAPI/gone/api/mock/client/config/test_plan_gw.json`（FTE）/ `test_plan_gone.json`（GOne，--plan 模式） |
+|| **cases 独立案例** | `trunk/NewAPI/gone/api/mock/client/config/cases/`（FTE：login/order/trade/cancel/heartbeat/perf）+ `cases_gone/`（GOne 差异文件） |
+|| **日志系统** | `trunk/NewAPI/gone/api/mock/client/src/logger.h/.cpp`（五级日志 + atomic 无锁判级 + 双输出） |
+|| **结果分析** | `trunk/NewAPI/gone/api/mock/client/src/result_analysis.h/.cpp`（功能+性能+结论整合输出） |
+|| **mock_client 复盘** | `trunk/NewAPI/gone/api/mock/client/mock_client_upgrade.md`（6 类 18 项复盘 + 10 修复 + 1 撤销） |
 
 ## 五、常见问答模板
 
@@ -288,16 +296,21 @@ P0 优化：
 
 ### Q13: 如何运行性能测试？
 ```
-# 配置：mock/client/config/connection_config.json 的 perf_test 块
+# 方式一（推荐）：test_plan 主配置模式（功能测试 + 性能测试一体化）
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client \
+  --plan mock/client/config/test_plan_gw.json        # FTE（perf 8000TPS）
+# 或 --plan mock/client/config/test_plan_gone.json    # GOne（perf 10000TPS）
+# perf 参数在主配置 test_plan.perf_test 块：enable/duration_sec/tps/warmup_sec/cpu_id/report_file/order_file
+
+# 方式二（兼容）：connection_config.json 的 perf_test 块（旧模式）
 # enable:true, duration_sec:30, tps:500, warmup_sec:3, cpu_id:-1(不绑)/0~(绑核)
 # order: 委托模板（fund_account_id, security_id, side, order_price 等）
-
-# 运行（功能测试后自动启动 perf test）
 LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/client/config/connection_config.json \
   --lib build_cmake/lib/liblbapi.so --testcase mock/client/config/test_cases/fte_combo.json
 
 # 输出：perf_report.txt（TPS/样本数/均值/P50/P75/P90/最大/最小/标准差/失败统计）
 # 日志：mock_client.log 含 "Perf test started/completed" 和 "已绑定到 CPU X"
+# 分析：result_analysis.txt 整合功能+性能+总体结论
 ```
 
 ### Q14: 性能测试遇到校验和不匹配 / -22 断链怎么排查？
@@ -446,6 +459,78 @@ mock_client.cpp init() 中根据 fast_counter_type 自动设置：
 GOne 延迟极稳定（P50→P95 仅 245→304ns，跨度 59ns），几乎无尾部延迟，体现 fpga_direct 硬件极速优势。
 ```
 
+### Q23: 如何使用 test_plan 主配置模式（--plan）？
+```
+# 运行（功能测试 + 性能测试一体化）：
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client \
+  --plan mock/client/config/test_plan_gw.json     # FTE
+# 或 --plan mock/client/config/test_plan_gone.json # GOne
+
+# 主配置结构（test_plan_gw.json 为例）：
+{
+  "connection_config_file": "connection_config_gw_single.json",  // 引用连接配置（相对主配置目录）
+  "test_plan": {
+    "functional_tests": [   // 每个场景：name/enabled/timeout_ms/request_file/expected_file
+      { "name": "FTE 登录测试", "enabled": true, "timeout_ms": 30000,
+        "request_file": "cases/login_request.json", "expected_file": "cases/login_expected.json" }
+    ],
+    "perf_test": {          // enable/duration_sec/tps/warmup_sec/cpu_id/report_file/order_file
+      "enable": true, "duration_sec": 10, "tps": 8000, "warmup_sec": 3, "cpu_id": -1,
+      "order_file": "cases/perf_order_request.json"
+    }
+  }
+}
+# request_file/expected_file 相对主配置所在目录（base_dir）
+# 流程：init_from_json → load_plan → wait_link_ready(10000) → execute_all → run_perf_test
+# 返回值反映 perf 成败（perf 未启用不算失败）
+```
+
+### Q24: 预期回报 JSON 如何写？字段校验规则？
+```
+# 预期文件（config/cases/order_expected.json 为例）：
+{ "type": "order_rtn", "fields": {
+    "fund_account_id": "1000000000000001",  // 非 null：精确比对（字符串）
+    "order_status": 0,                       // 非 null：精确比对
+    "client_seq_id": null,                   // null = 动态字段（流水号/时间）跳过校验
+    "order_sys_no": null } }
+
+# 规则：
+# - fields 中值 null = 动态字段（流水号/时间）跳过校验
+# - 非 null 值做字符串精确比对（extract_response_fields 自动提取回报结构体全部字段，
+#   定长 char 数组经 trim_fixed 裁剪 \0/空格）
+# - 撤单请求 order_sys_no 支持 "$last_order_sys_no" 特殊值，自动引用上一笔委托的 order_sys_no
+# - 成交回报(2005)/撤单应答是异步回报，可无 request_file（TradeRtn 不发请求，等待已存储回报）
+
+# GOne vs FTE 预期差异（cases_gone/ 单独管理）：
+#   登录 cust_id：FTE 资金账号 vs GOne 客户号
+#   委托 rtn_type：FTE=1 vs GOne=0
+#   撤单 err_code：FTE=50046 vs GOne=0
+```
+
+### Q25: mock_client 修复了哪些问题？如何回归验证？
+```
+# 修复内容（mock_client_upgrade.md，10 项修复 + 1 项撤销）：
+# 🔴 load_api() 忽略 --lib → dladdr 定位实际库路径 + 不一致 WARN
+# 🔴 无链接就绪等待 → wait_link_ready 轮询 last_link_status
+# 🟡 run_test_plan 忽略 perf 失败 → 返回 perf 结果（未启用不算失败）
+# 🟡 net_time_map_ 含失败委托 → 仅成功委托记录映射
+# 🟡 Logger::min_level_ 无锁读取 → 改 std::atomic<int>
+# 🟡 validate 数组死代码 → 移除
+# 🟡 ETF 委托类型未实现 → EtfOrderInsert 走 etf_order_insert
+# 🟢 多余 iostream / timeout_ms 重复计算 / None-Unknown 语义 → 清理
+# ⚠️ 撤销：CallbackHandler 数据竞争（复查确认数据赋值已在锁内 + wait_for_response
+#          同锁建立 happens-before，实际线程安全）
+
+# 回归验证（--plan 模式）：
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client/config/test_plan_gw.json
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client/config/test_plan_gone.json
+
+# 回归结果：
+#   GW(FTE)：功能 5/5 通过 + perf 6518TPS(P50=531ns) 0 失败
+#   GOne   ：功能 5/5 通过 + perf 9216TPS(P50=411ns,P90=641ns) 0 失败
+# 分析文件：result_analysis.txt（功能+性能+总体结论）
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -460,7 +545,7 @@ GOne 延迟极稳定（P50→P95 仅 245→304ns，跨度 59ns），几乎无尾
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-17。知识库 v2.8 在 v2.7（§29 压测算法优化）基础上新增 §30 FTE 压测卡死根因分析与 FTE vs GOne 全面对比：FTE 10000TPS 卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（非对象池耗尽），修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程。§30.8-30.9 补充 CPU 隔离绑定（core3）经验与 P95 指标：绑定单核会饿死（须绑整个物理核 2HT），FTE P95(2850ns) 是 GOne P95(304ns) 的 9.4 倍，FTE 尾部延迟是最大瓶颈（阻塞式 send 忙等+内核栈抖动）。记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-22。知识库 v3.0 在 v2.x（§29~§34：压测算法优化、FTE 卡死根因、复测、新计时口径、单链接单客户、非阻塞发送）基础上新增 §35 mock_client test_plan 主配置模式（--plan + cases/ 目录）、§36 日志系统与结果分析（logger.h/cpp + result_analysis.h/cpp）、§37 mock_client 全面复盘与修复回归（10 项修复 + 1 项撤销，GW/GOne 功能 5/5 + 性能 0 失败）。关键结论速查：FTE 压测卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程）；CPU 绑定须绑整个物理核 2HT（绑单核会饿死）；FTE P95 是 GOne 的 9.4 倍（尾部延迟最大瓶颈）；记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）。
 
 ---
 

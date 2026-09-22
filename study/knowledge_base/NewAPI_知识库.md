@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v2.7（2026-09-17，§29 压测算法优化：离开 API 时间记录点从入队后移到 send() 成功后，通过 `link_send_event::leave_time_ptr` 跨线程传递；GOne 10000TPS 平均 2189ns）
+> **版本**：v3.0（2026-09-22，§35 mock_client test_plan 主配置模式、§36 日志系统与结果分析、§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
 
 ---
 
@@ -39,6 +39,15 @@
 26. [性能测试系统与关键缺陷修复（Task 7.9~7.12）](#26-性能测试系统与关键缺陷修复task-79-712)
 27. [FTE vs GOne 完整性能对比与瓶颈分析](#27-fte-vs-gone-完整性能对比与瓶颈分析)（§27.10 gw counter 优化与重测）
 28. [gw counter 深度分析与序列化优化](#28-gw-counter-深度分析与序列化优化)（§28.1 分析文档 / §28.2 双趟序列化 / §28.3 三档对比 / §28.4 方案1实验回退）
+29. [压测算法优化：离开 API 时间记录点](#29-压测算法优化离开-api-时间记录点)
+30. [FTE 压测卡死根因（DSE 队列无消费者）与修复](#30-fte-压测卡死根因dse-队列无消费者与修复)
+31. [重新编译部署后 FTE vs GOne 复测](#31-重新编译部署后-fte-vs-gone-复测)
+32. [新计时口径对比（send 前记录点）](#32-新计时口径对比send-前记录点)
+33. [gw counter 单链接单客户模式优化](#33-gw-counter-单链接单客户模式优化)
+34. [gw counter 非阻塞发送 + 写就绪通知优化](#34-gw-counter-非阻塞发送--写就绪通知优化)
+35. [mock_client test_plan 主配置模式（--plan）](#35-mock_client-test_plan-主配置模式--plan)
+36. [mock_client 日志系统与结果分析](#36-mock_client-日志系统与结果分析)
+37. [mock_client 全面复盘与修复回归](#37-mock_client-全面复盘与修复回归)
 
 ---
 
@@ -1875,3 +1884,220 @@ GOne 硬件不可用（无 FPGA 卡），引用 §32.4 历史数据：
 - 非阻塞发送优化本身正确（避免了忙等钉死线程、P50 无退化），但**收益被 FTE 处理能力瓶颈掩盖**
 - 要真正改善 P90/P95，必须解决 FTE 处理能力：**FTE 多线程 asio**（对端改造）或**客户端限流**（发单 ≤ FTE 能力）
 - 当前环境 FTE 能力 ~8500 TPS，超过即过载，尾部延迟高是必然结果
+
+---
+
+## 35. mock_client test_plan 主配置模式（--plan，2026-09-21）
+
+### 35.1 需求与背景
+
+mock_client 早期采用"连接配置文件 + 测试用例目录/单文件"的分离模式（`--config` + `--testdir/--testcase`），存在三个痛点：
+
+1. **配置分散**：连接配置（connection_config.json）与测试用例（test_cases/*.json）分离，功能测试与性能测试参数割裂。
+2. **预期回报不完整**：旧 format 只校验类型，不校验字段值，无法逐字段精确验证。
+3. **性能测试与功能测试脱节**：需要分别在两处配置，难以保证"在功能测试通过基础上跑压测"。
+
+**解决方案**：引入 **test_plan 主配置模式**（`--plan <path>`），单文件整合全部功能测试场景 + 性能测试参数，独立案例放 `config/cases/`（FTE）/`config/cases_gone/`（GOne）。
+
+### 35.2 主配置文件结构
+
+`config/test_plan_gw.json`（FTE）与 `config/test_plan_gone.json`（GOne）为两个模板，结构如下：
+
+```json
+{
+  "description": "GW(FTE) 测试计划主配置文件",
+  "connection_config_file": "connection_config_gw_single.json",  // 引用连接配置（相对主配置目录）
+  "test_plan": {
+    "functional_tests": [
+      {
+        "name": "FTE 登录测试",
+        "enabled": true,
+        "timeout_ms": 30000,
+        "request_file": "cases/login_request.json",   // 相对 base_dir（主配置所在目录）
+        "expected_file": "cases/login_expected.json"
+      },
+      { "name": "FTE 成交回报校验", "expected_file": "cases/trade_expected.json" }  // 异步回报可无 request_file
+    ],
+    "perf_test": {
+      "enable": true, "duration_sec": 10, "tps": 8000, "warmup_sec": 3, "cpu_id": -1,
+      "report_file": "perf_report_gw_plan.txt",
+      "net_time_map_file": "/tmp/api_net_time_map_gw_plan.txt",
+      "order_file": "cases/perf_order_request.json"   // 独立委托模板（推荐），也可内联 order 节点
+    }
+  }
+}
+```
+
+**关键字段**：
+- `connection_config_file`：连接配置文件名（相对主配置所在目录 base_dir），也可直接内联 `connection` 节点。
+- `functional_tests[]`：每个场景可含 `request_file`/`expected_file`（均相对 base_dir）、`timeout_ms`、`enabled`。
+- `perf_test`：与旧模式 connection_config 的 perf_test 块字段一致，新增 `order_file` 指向独立委托模板文件。
+
+**运行入口**（main.cpp 模式一）：
+
+```bash
+# FTE（单链接单客户）
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client \
+  --plan mock/client/config/test_plan_gw.json
+# GOne
+LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client \
+  --plan mock/client/config/test_plan_gone.json
+```
+
+### 35.3 cases/ 目录结构
+
+独立请求/预期文件按 `config/cases/`（FTE，`cases_gone/` 为 GOne 差异文件）组织：
+
+| 文件 | 说明 |
+|------|------|
+| `login_request.json` / `login_expected.json` | 登录请求与预期应答 |
+| `order_request.json` / `order_expected.json` | 委托请求与预期回报 |
+| `trade_expected.json` | 成交回报预期（异步，无 request_file） |
+| `cancel_request.json` / `cancel_expected.json` | 撤单请求与预期应答 |
+| `heartbeat_request.json` / `heartbeat_expected.json` | 心跳维持测试 |
+| `perf_order_request.json` | 性能测试委托模板（`{"order": {...}}`） |
+
+**请求文件结构**（`{type, fields}`；load_plan 用 `req_root["request"]`，否则回退 `req_root`）：
+
+```json
+{ "type": "login", "fields": { "fund_account_id": "1000000000000001", "branch_id": "0001", ... } }
+```
+
+**预期文件结构**（`{type, fields}`；load_plan 用 `exp_root["expected_response"]`，否则回退 `exp_root`）：
+
+```json
+{ "type": "order_rtn", "fields": { "fund_account_id": "1000000000000001", "order_status": 0, "client_seq_id": null } }
+```
+
+`fields` 中值 `null` = 动态字段（流水号/时间）跳过校验；非 null 值做字符串精确比对。
+
+### 35.4 parse_type 类型映射
+
+| 字符串 | 枚举 | 说明 |
+|--------|------|------|
+| `"login"` | `Login` | 登录请求/应答 |
+| `"order_insert"` / `"order_rtn"` | `OrderInsert` | 委托请求/回报 |
+| `"etf_order_insert"` | `EtfOrderInsert` | ETF 委托（→ `etf_order_insert`） |
+| `"order_cancel"` / `"cancel_rsp"` | `OrderCancel` | 撤单请求/应答 |
+| `"trade_rtn"` | `TradeRtn` | 成交回报（**异步**，无 request_file） |
+| `"wait_heartbeat"` / `"heartbeat_ok"` | `WaitHeartbeat` | 心跳维持（send_request 直接返回 true） |
+
+**注意**：`EtfOrderInsert` 在 send_request 中走 `api_->etf_order_insert()`（非 `order_insert`）；`TradeRtn` 在 execute 走异步分支（不发请求，等待已存储的成交回报）；`WaitHeartbeat` 不发请求，execute 跳过 validate_response。
+
+### 35.5 run_test_plan 流程（mock_client.cpp）
+
+```
+run_test_plan(plan_root, base_dir)
+  1. 提取 connection：plan_root.has("connection") ? 内联 : 解析 connection_config_file（base_dir 相对）
+     （注意 JsonValue::operator[] 对缺失 key 抛异常，必须先 has() 判断）
+  2. init_from_json(conn) 完成 API 初始化
+  3. runner_->load_plan(test_plan, base_dir) 加载场景（enabled=false 跳过）
+  4. wait_link_ready(10000) 等待柜台链接就绪（避免链接未建立时大面积失败）
+  5. runner_->execute_all() 逐一执行场景并计入 report_
+  6. perf_test：若配置 order_file 则加载并注入 order 节点（order_root.has("order") ? order : order_root）
+     → 仅当 perf_test.enable=true 才执行 run_perf_test（未启用不算失败）
+  7. 返回 perf_ok（反映性能测试成败）
+```
+
+### 35.6 GOne vs FTE 预期文件差异
+
+| 字段 | FTE（cases/） | GOne（cases_gone/） |
+|------|--------------|-------------------|
+| 登录 `cust_id` | `C000000000000001` | `C000000000000001`（资金账号） |
+| 委托 `cust_id` | `1000000000000001`（资金账号） | `C000000000000001`（客户号） |
+| 委托 `rtn_type` | 1 | 0 |
+| 撤单 `err_code` | 50046 | 0 |
+
+> GOne 与 FTE 在 cust_id 语义（资金账号 vs 客户号）、rtn_type、撤单 err_code 上存在差异，故 GOne 差异文件放 `cases_gone/` 单独管理。
+
+---
+
+## 36. mock_client 日志系统与结果分析
+
+### 36.1 日志系统（logger.h/cpp）
+
+mock_client 引入独立分级日志系统 `mock::Logger`（单例），替代原有分散的 `std::cout`/`std::cerr`。
+
+**核心设计**：
+- **五级日志**：`DEBUG/INFO/WARN/ERROR/FATAL`。
+- **双输出目标**：同时输出到屏幕（控制台）和日志文件。
+- **线程安全**：内部 `std::mutex` 保护文件与控制台输出。
+- **格式**：`[时间戳] [级别] [文件:行] 消息`。
+- **无锁快速路径**：`min_level_` 用 `std::atomic<int>`（memory_order_relaxed），`log()` 在加锁前先判级，低于最低级别直接丢弃（避免锁竞争），消除 data race。
+
+**使用方式**：
+```cpp
+mock::Logger::instance().init(log_path, mock::LogLevel::INFO, true);  // main 入口初始化
+LOG_INFO("测试报告已保存到: " << report_path);   // 支持 << 流式拼接
+LOG_DEBUG(...) / LOG_WARN(...) / LOG_ERROR(...) / LOG_FATAL(...)
+```
+
+**关键实现**（logger.cpp）：
+- `init()`：设置日志文件路径、最低级别、控制台开关；重复调用先 close 再开。
+- `log()`：判级 → 生成毫秒时间戳 → 保留文件 basename → 去尾部换行 → 加锁输出到 stderr（ERROR/FATAL）/stdout + 文件。
+- `close()`：flush + 关闭文件。
+
+### 36.2 结果分析系统（result_analysis.h/cpp）
+
+`mock::ResultAnalysis` 将测试最终结果整合输出到独立分析文件（默认 `result_analysis.txt`），与运行日志（mock_client.log）和功能报告（test_report.txt）相互独立。
+
+**整合内容**（result_analysis.cpp `ResultAnalysis::write()`）：
+1. **【一、功能测试分析】**：总计/通过/失败/通过率 + 逐用例 PASS/FAIL（含耗时、失败原因、字段校验详情）。
+2. **【二、性能测试分析】**：若执行则内嵌 perf_report 文本；未执行标明"未执行性能测试"。
+3. **【三、总体结论】**：功能测试通过率 + 性能测试失败笔数 + 综合结论（`func_ok && perf_ok`）。
+
+**关键逻辑**：
+- `perf_failed < 0` 表示未执行性能测试，不纳入总体结论判定。
+- 通过 `main.cpp` 的 `client.write_analysis(analysis_path, plan_desc)` 调用，`plan_desc` 记录测试计划/配置来源。
+
+### 36.3 新命令行参数（main.cpp）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--plan <path>` | 空 | 测试计划主配置（推荐模式） |
+| `--analysis <path>` | `result_analysis.txt` | 结果分析文件输出路径 |
+| `--log <path>` | `mock_client.log` | 日志文件路径 |
+
+---
+
+## 37. mock_client 全面复盘与修复回归（2026-09-21）
+
+### 37.1 复盘文档
+
+`mock/client/mock_client_upgrade.md` 对 mock_client 全部源文件（~2800 行）做了全面复盘，识别 **6 类共 18 项** 优化点（🔴高4 / 🟡中8 / 🟢低6），按严重度提出修复建议。
+
+### 37.2 修复状态（10 项修复 + 1 项撤销）
+
+| # | 严重度 | 问题 | 状态 |
+|---|--------|------|------|
+| 1 | 🔴 | `load_api()` 忽略 `--lib` | ✅ 修复（dladdr 定位实际库路径 + 不一致 WARN） |
+| 2 | 🔴 | 无链接就绪等待 | ✅ 修复（`wait_link_ready` 轮询 `last_link_status`） |
+| 3 | 🟡 | `run_test_plan` 忽略 perf 失败 | ✅ 修复（返回 perf 结果，未启用不算失败） |
+| 4 | 🟡 | `net_time_map_` 含失败委托条目 | ✅ 修复（仅成功委托记录映射） |
+| 5 | 🟡 | `Logger::min_level_` 无锁读取 | ✅ 修复（改 `std::atomic<int>`） |
+| 6 | 🟡 | validate 数组死代码 | ✅ 移除 |
+| 7 | 🟡 | ETF 委托类型未实现 | ✅ 实现（`EtfOrderInsert` → `etf_order_insert`） |
+| 8 | 🟢 | 多余 iostream 包含 | ✅ 移除 |
+| 9 | 🟢 | timeout_ms 重复计算 | ✅ 提取局部变量 |
+| 10 | 🟢 | None/Unknown 语义 | ✅ 加 Unknown 警告 |
+| 11 | 🔴 | ~~CallbackHandler 数据竞争~~ | ⚠️ **撤销**：复查确认当前实现已线程安全，无需修改 |
+
+**#11 撤销原因**：深入复查发现各 `on_*` 回调的数据赋值已在 `lock_guard` 锁内，主线程通过 `wait_for_response()`（持同一把锁）看到标志后读取数据，构成正确的 happens-before 同步。**该问题实际不存在**。
+
+### 37.3 关键修复细节
+
+- **load_api()**（mock_client.cpp）：当前为直接链接方式（编译时已链接 liblbapi.so），用 `dladdr` 定位实际生效库路径，与 `--lib` 参数比对，不一致时 WARN（避免用户误以为指定路径生效）。
+- **wait_link_ready()**：`api_->start()` 返回成功仅表示实例启动，与柜台 TCP 链接是异步建立的（`on_link_status` 回调通知）。此函数每 50ms 轮询 `callback_->last_link_status()` 直到就绪或超时（10000ms）。
+- **run_test_plan()**：末尾 `return perf_ok`（反映 perf 状态）；perf 未启用时 `perf_enabled=false` 不算失败。
+- **net_time_map_**（perf_runner）：仅当 `order_insert()` 返回 0（成功）才记录 `(client_seq_id, api_arrive_time_ns)` 映射。
+
+### 37.4 回归测试结果
+
+修复后通过 **--plan 模式** 进行功能 + 性能回归：
+
+| 柜台 | 功能测试 | 性能测试 | 结果 |
+|------|---------|---------|------|
+| **GW (FTE)** | 5/5 通过（登录/委托/成交/撤单/心跳） | 6518 TPS，P50=531ns | 0 失败 ✅ |
+| **GOne** | 5/5 通过（登录/委托/成交/撤单/心跳） | 9216 TPS，P50=411ns，P90=641ns | 0 失败 ✅ |
+
+> 回归数据引用自 mock_client_test.md 与 result_analysis 输出。性能测试在功能测试通过基础上执行，验证 test_plan 模式"功能+性能一体化"设计的正确性。

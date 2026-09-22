@@ -130,9 +130,9 @@ if (DEFINED BUILD_SUM_COUNT)
 endif()
 
 # ================= Mock 组件（可选编译） =================
-option(BUILD_MOCK "构建 Mock 测试组件" OFF)
-if(BUILD_MOCK)
-    message(STATUS "Mock 组件构建已启用")
+set(MOCK_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/mock)
+if(EXISTS ${MOCK_ROOT})
+    message(STATUS "Mock 组件存在，一起编译")
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/client mock_client_build)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/98_counter mock_98_counter_build)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/mock/gone_counter mock_gone_counter_build)

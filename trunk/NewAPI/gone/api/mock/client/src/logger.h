@@ -18,6 +18,7 @@
 #include <mutex>
 #include <fstream>
 #include <sstream>
+#include <atomic>
 
 namespace mock {
 
@@ -49,7 +50,7 @@ public:
     void set_level(LogLevel level);
 
     /// 获取当前最低级别
-    LogLevel level() const { return min_level_; }
+    LogLevel level() const { return static_cast<LogLevel>(min_level_.load(std::memory_order_relaxed)); }
 
     /// 获取日志文件路径
     const std::string& log_file() const { return log_file_; }
@@ -72,7 +73,7 @@ private:
 
     std::mutex mutex_;          ///< 保护文件与控制台输出
     std::ofstream file_;        ///< 日志文件
-    LogLevel min_level_;        ///< 最低输出级别
+    std::atomic<int> min_level_; ///< 最低输出级别（atomic 支持无锁快速路径判级，避免 data race）
     bool console_enabled_;      ///< 是否输出到控制台
     std::string log_file_;      ///< 日志文件路径
 };

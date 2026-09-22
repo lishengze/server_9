@@ -26,7 +26,7 @@ Logger& Logger::instance() {
 }
 
 Logger::Logger()
-    : min_level_(LogLevel::INFO)
+    : min_level_(static_cast<int>(LogLevel::INFO))
     , console_enabled_(true)
 {
 }
@@ -41,7 +41,7 @@ void Logger::init(const std::string& log_file, LogLevel min_level, bool console_
         file_.close();
     }
     log_file_ = log_file;
-    min_level_ = min_level;
+    min_level_.store(static_cast<int>(min_level), std::memory_order_relaxed);
     console_enabled_ = console_enabled;
     if (!log_file_.empty()) {
         file_.open(log_file_.c_str(), std::ios::out | std::ios::trunc);
@@ -49,13 +49,12 @@ void Logger::init(const std::string& log_file, LogLevel min_level, bool console_
 }
 
 void Logger::set_level(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    min_level_ = level;
+    min_level_.store(static_cast<int>(level), std::memory_order_relaxed);
 }
 
 void Logger::log(LogLevel level, const char* file, int line, const std::string& msg) {
-    // 低于最低级别直接丢弃
-    if (static_cast<int>(level) < static_cast<int>(min_level_)) {
+    // 低于最低级别直接丢弃（atomic 无锁快速路径）
+    if (static_cast<int>(level) < min_level_.load(std::memory_order_relaxed)) {
         return;
     }
 

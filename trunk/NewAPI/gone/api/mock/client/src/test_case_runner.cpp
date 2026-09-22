@@ -3,7 +3,6 @@
 #include "api_config.h"
 #include "order_trade_type.h"
 #include "logger.h"
-#include <iostream>
 #include <chrono>
 #include <thread>
 #include <cstring>
@@ -65,6 +64,16 @@ bool TestCaseRunner::load_single_case(const JsonValue& root) {
         JsonValue exp = root["expected_response"];
         test_case.response_type = parse_type(exp["type"].as_string());
 
+        // Unknown 类型：提示配置错误（Unknown 会跳过校验/发送，易被误认为通过）
+        if (test_case.request_type == TestCaseType::Unknown) {
+            LOG_WARN("[Loader] 用例 '" << test_case.name
+                      << "' 的请求类型未知: '" << req["type"].as_string() << "'");
+        }
+        if (test_case.response_type == TestCaseType::Unknown) {
+            LOG_WARN("[Loader] 用例 '" << test_case.name
+                      << "' 的预期回报类型未知: '" << exp["type"].as_string() << "'");
+        }
+
         // 解析预期字段（fields 对象的所有键；值为 null 表示动态字段跳过校验）
         JsonValue fields = exp["fields"];
         if (fields.is_object()) {
@@ -77,16 +86,8 @@ bool TestCaseRunner::load_single_case(const JsonValue& root) {
                 test_case.expected_fields.push_back(fm);
             }
         } else {
-            // 兼容旧格式：validate 数组 + fields 对象
-            JsonValue validate = exp["validate"];
-            for (size_t i = 0; i < validate.size(); i++) {
-                std::string field_name = validate[i].as_string();
-                FieldMatch fm;
-                fm.field_name = field_name;
-                fm.expected_value = fields[field_name];
-                fm.required = true;
-                test_case.expected_fields.push_back(fm);
-            }
+            LOG_WARN("[Loader] 用例 '" << test_case.name
+                      << "' 缺少 expected_response.fields 对象，预期字段校验为空");
         }
 
         test_cases_.push_back(test_case);
@@ -159,6 +160,10 @@ int TestCaseRunner::load_plan(const JsonValue& plan_node, const std::string& bas
                 if (req.is_null()) req = req_root;  // 兼容直接以 type/fields 为顶层
                 test_case.request_type = parse_type(req["type"].as_string());
                 test_case.request_fields = req["fields"];
+                if (test_case.request_type == TestCaseType::Unknown) {
+                    LOG_WARN("[Loader] 场景 '" << name
+                              << "' 的请求类型未知: '" << req["type"].as_string() << "'");
+                }
             } else {
                 test_case.request_type = TestCaseType::None;
             }
@@ -169,6 +174,10 @@ int TestCaseRunner::load_plan(const JsonValue& plan_node, const std::string& bas
                 JsonValue exp = exp_root["expected_response"];
                 if (exp.is_null()) exp = exp_root;
                 test_case.response_type = parse_type(exp["type"].as_string());
+                if (test_case.response_type == TestCaseType::Unknown) {
+                    LOG_WARN("[Loader] 场景 '" << name
+                              << "' 的预期回报类型未知: '" << exp["type"].as_string() << "'");
+                }
 
                 JsonValue fields = exp["fields"];
                 if (fields.is_object()) {
@@ -219,12 +228,13 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     result.passed = false;
 
     auto start = std::chrono::steady_clock::now();
+    // 统一超时：用例未指定时默认 5000ms
+    int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
 
     // 发送请求
     if (tc.response_type == TestCaseType::TradeRtn) {
         // 成交回报(2005)是异步回报：无需发送新请求，等待并校验已存储的成交回报
         LOG_INFO("[Runner] 等待并校验异步成交回报(2005)...");
-        int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
         auto wait_start = std::chrono::steady_clock::now();
         while (!handler_->has_trade_rtn()) {
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -273,7 +283,6 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     } else {
         if (tc.response_type == TestCaseType::OrderCancel) {
             // 撤单应答可能被中间的其他回报(2003)干扰，需等待 cancel_rsp 特定响应
-            int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
             auto wait_start = std::chrono::steady_clock::now();
             while (!handler_->has_cancel_rsp()) {
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -288,8 +297,8 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
                 result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
                 return result;
             }
-        } else if (!handler_->wait_for_response(tc.timeout_ms)) {
-            result.fail_reason = "等待回报超时 (" + std::to_string(tc.timeout_ms) + "ms)";
+        } else if (!handler_->wait_for_response(timeout_ms)) {
+            result.fail_reason = "等待回报超时 (" + std::to_string(timeout_ms) + "ms)";
             auto end = std::chrono::steady_clock::now();
             result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
             return result;
@@ -353,7 +362,8 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 return ret == 0;
             }
 
-            case TestCaseType::OrderInsert: {
+            case TestCaseType::OrderInsert:
+            case TestCaseType::EtfOrderInsert: {
                 lb_api::OrderReq req;
                 std::memset(&req, 0, sizeof(req));
 
@@ -382,8 +392,11 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.client_seq_id = tc.request_fields["client_seq_id"].as_int();
                 req.market_type = tc.request_fields["market_type"].as_int();
 
-                int32_t ret = api_->order_insert(req);
-                LOG_INFO("[Runner] order_insert() 返回: " << ret);
+                // 普通委托走 order_insert，ETF 委托走 etf_order_insert
+                bool is_etf = (tc.request_type == TestCaseType::EtfOrderInsert);
+                int32_t ret = is_etf ? api_->etf_order_insert(req) : api_->order_insert(req);
+                LOG_INFO("[Runner] " << (is_etf ? "etf_order_insert" : "order_insert")
+                          << "() 返回: " << ret);
                 return ret == 0;
             }
 

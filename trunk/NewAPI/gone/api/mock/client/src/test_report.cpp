@@ -6,7 +6,6 @@
 
 #include "test_report.h"
 #include "logger.h"
-#include <iostream>
 #include <fstream>
 
 namespace mock {

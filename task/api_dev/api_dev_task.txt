@@ -280,3 +280,10 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
     2. 所有日志分别输出到屏幕和日志文件中。
     3. 日志需要分级，分为 debug, info, warn, error, fatal 五个级别。
     4. 测试最终的结果分析，输出到独立的结果分析文件中。    
+
+2026年9月22日
+    1. 结果输出整理
+        1. 将 trunk/NewAPI/gone/api/mock/client 中的 markdown 文档整理到 trunk/NewAPI/gone/api/mock/doc 中；
+        2. 当前将 trunk/NewAPI/gone/api/mock/client 中有大量的测试输出的 txt 文件， 
+            将这些输出的结果的路径设置为 trunk/NewAPI/gone/api/mock/client/result，
+            并且将当前的这些文件也转存到 trunk/NewAPI/gone/api/mock/client/result 中。

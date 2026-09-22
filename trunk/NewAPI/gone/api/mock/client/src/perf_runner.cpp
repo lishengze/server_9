@@ -13,7 +13,6 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
-#include <iostream>
 #include <sstream>
 #include <thread>
 
@@ -116,16 +115,16 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
         ++sent_;
         if (ret == 0) {
             ++ok_;
+            // 记录 (client_seq_id, api_arrive_time_ns) 映射，供网卡抓包程序关联分析
+            // 仅成功委托有实际网络包，失败委托不记录（避免 unmatched 条目干扰统计）
+            net_time_map_.emplace_back(req.client_seq_id, req.api_arrive_time_ns);
         } else {
             ++fail_codes_[ret];
         }
 
-        // 计算 api 内耗时（纳秒）
+        // 计算 api 内耗时（纳秒），成功与失败均统计
         uint64_t lat = req.api_leave_time_ns - req.api_arrive_time_ns;
         latencies.push_back(lat);
-
-        // 记录 (client_seq_id, api_arrive_time_ns) 映射，供网卡抓包程序关联分析
-        net_time_map_.emplace_back(req.client_seq_id, req.api_arrive_time_ns);
 
         // 匀速等待
         next_send += interval;

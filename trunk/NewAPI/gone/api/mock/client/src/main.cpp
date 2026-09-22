@@ -11,7 +11,6 @@
 #include "mock_client.h"
 #include "logger.h"
 #include "json_utils.h"
-#include <iostream>
 #include <cstring>
 #include <thread>
 #include <chrono>

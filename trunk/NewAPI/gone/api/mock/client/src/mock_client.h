@@ -54,6 +54,11 @@ public:
     /// @return 是否成功执行
     bool run_perf_test(const JsonValue& perf_node);
 
+    /// 等待柜台链接就绪（轮询 callback_->last_link_status()）
+    /// @param timeout_ms 超时毫秒
+    /// @return 链接是否已就绪
+    bool wait_link_ready(int timeout_ms);
+
     /// 获取测试报告
     const TestReport& report() const { return report_; }
 
