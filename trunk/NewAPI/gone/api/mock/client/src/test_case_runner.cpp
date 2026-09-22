@@ -2,6 +2,7 @@
 #include "api_interface.h"
 #include "api_config.h"
 #include "order_trade_type.h"
+#include "api_event_msg.h"  // LINK_TYPE_SPEED_TRADE
 #include "logger.h"
 #include <chrono>
 #include <thread>
@@ -257,6 +258,19 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
         return result;
     }
 
+    // 委托/撤单需走业务链接(SPEED_TRADE)。GOne 的 Core 链接在登录应答后异步建立，
+    // 发送前等待业务链接就绪，避免 trade_link_connect==0 导致发送失败。
+    if (tc.request_type == TestCaseType::OrderInsert ||
+        tc.request_type == TestCaseType::EtfOrderInsert ||
+        tc.request_type == TestCaseType::OrderCancel) {
+        if (!wait_trade_link_ready(timeout_ms)) {
+            result.fail_reason = "业务链接未就绪";
+            auto end = std::chrono::steady_clock::now();
+            result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+            return result;
+        }
+    }
+
     if (!send_request(tc)) {
         result.fail_reason = "发送请求失败";
         auto end = std::chrono::steady_clock::now();
@@ -314,6 +328,28 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
     auto end = std::chrono::steady_clock::now();
     result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     return result;
+}
+
+// wait_trade_link_ready: 等待业务链接(lb_api::LINK_TYPE_SPEED_TRADE)就绪
+// 委托/撤单走业务链接。GOne(fpga_direct) 的 Core 链接在 GW 登录应答后异步建立，
+// 若在建立前发送委托会因 trade_link_connect==0 返回 LINK_DISCONNECTED(-22)。
+// 轮询 handler_->trade_link_ready() 直到就绪或超时。
+bool TestCaseRunner::wait_trade_link_ready(int timeout_ms) {
+    if (handler_->trade_link_ready()) {
+        return true;
+    }
+    LOG_INFO("[Runner] 等待业务链接(SPEED_TRADE)就绪, 超时 " << timeout_ms << "ms...");
+    auto start = std::chrono::steady_clock::now();
+    while (!handler_->trade_link_ready()) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count() > timeout_ms) {
+            LOG_WARN("[Runner] 等待业务链接就绪超时 (" << timeout_ms << "ms)");
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    LOG_INFO("[Runner] 业务链接已就绪");
+    return true;
 }
 
 bool TestCaseRunner::send_request(const TestCase& tc) {

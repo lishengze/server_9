@@ -96,6 +96,11 @@ private:
     /// 构造请求并发送
     bool send_request(const TestCase& tc);
 
+    /// 等待业务链接（LINK_TYPE_SPEED_TRADE）就绪
+    /// 用于委托/撤单测试：GOne 的 Core 链接在登录应答后异步建立，
+    /// 发送业务请求前需确保业务链接已就绪（避免 trade_link_connect==0 发送失败）
+    bool wait_trade_link_ready(int timeout_ms);
+
     /// 验证回报
     bool validate_response(const TestCase& tc, std::vector<std::string>& details);
 

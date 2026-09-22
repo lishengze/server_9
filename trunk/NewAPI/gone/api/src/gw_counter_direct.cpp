@@ -1054,7 +1054,9 @@ int32 gw_counter_direct::deal_link_connect(int16 link_type, int32 have_switch) {
   if (link_type == LINK_TYPE_SPEED_TRADE) {
     lb_common::atomic_store16(&trade_link_connect_, 1);
     if (cb_mgr_ != nullptr) {
-      cb_mgr_->on_link_status(get_counter_type(), 0, 1);
+      // gw_direct 业务链接即 SPEED_TRADE，link_type 上报须为 LINK_TYPE_SPEED_TRADE，
+      // 供上层（如 mock_client wait_trade_link_ready）识别业务链接就绪
+      cb_mgr_->on_link_status(get_counter_type(), LINK_TYPE_SPEED_TRADE, 1);
     }
   }
   return 0;
@@ -1065,7 +1067,7 @@ void gw_counter_direct::deal_link_close(int16 link_type) {
     lb_common::atomic_store16(&trade_link_connect_, 0);
     lb_common::atomic_store16(&login_state, 0);  // 链接断开重置登录态
     if (cb_mgr_ != nullptr) {
-      cb_mgr_->on_link_status(get_counter_type(), 0, 0);
+      cb_mgr_->on_link_status(get_counter_type(), LINK_TYPE_SPEED_TRADE, 0);
     }
   }
 }

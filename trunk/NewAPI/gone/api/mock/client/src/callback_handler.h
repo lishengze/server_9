@@ -40,6 +40,8 @@ public:
     int32_t last_link_status() const { return last_link_status_; }
     int32_t last_link_type() const { return last_link_type_; }
     int32_t last_counter_type() const { return last_counter_type_; }
+    /// 业务链接（LINK_TYPE_SPEED_TRADE=1，委托/撤单走此链接）是否已就绪
+    bool trade_link_ready() const { return last_trade_link_status_ != 0; }
     std::string last_error_desc() const { return last_error_desc_; }
 
 private:
@@ -57,6 +59,7 @@ private:
     int32_t last_link_status_;
     int32_t last_link_type_;
     int32_t last_counter_type_;
+    int32_t last_trade_link_status_;   ///< 业务链接(SPEED_TRADE)状态 0=断开 1=连接
     int32_t last_error_code_;
     std::string last_error_desc_;
 };

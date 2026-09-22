@@ -13,6 +13,7 @@
 
 #include "callback_handler.h"
 #include "logger.h"
+#include "api_event_msg.h"  // LINK_TYPE_SPEED_TRADE
 
 namespace mock {
 
@@ -23,6 +24,7 @@ CallbackHandler::CallbackHandler()
     , last_link_status_(0)
     , last_link_type_(0)
     , last_counter_type_(0)
+    , last_trade_link_status_(0)
     , last_error_code_(0)
 {
 }
@@ -81,11 +83,16 @@ void CallbackHandler::on_cancel_rsp(const lb_api::StreamInfo& si, const lb_api::
 
 // on_link_status: 链接状态回调
 // 记录柜台类型、链接类型和状态值（0=断开, 1=连接）。
+// 若为业务链接(LINK_TYPE_SPEED_TRADE=1)，同时更新 trade 链接状态，
+// 供委托/撤单测试发送前判断 Core/业务链接是否就绪。
 void CallbackHandler::on_link_status(int32_t counter_type, int32_t link_type, int32_t status) {
     std::lock_guard<std::mutex> lock(mutex_);
     last_counter_type_ = counter_type;
     last_link_type_ = link_type;
     last_link_status_ = status;
+    if (link_type == lb_api::LINK_TYPE_SPEED_TRADE) {
+        last_trade_link_status_ = status;
+    }
     LOG_INFO("[Callback] on_link_status: counter_type=" << counter_type
               << ", link_type=" << link_type
               << ", status=" << status);
