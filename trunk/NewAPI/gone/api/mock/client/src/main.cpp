@@ -14,6 +14,24 @@
 #include <cstring>
 #include <thread>
 #include <chrono>
+#include <sys/stat.h>
+#include <cerrno>
+
+/// 确保输出目录存在（不存在则递归创建），用于 result/ 等输出目录
+void ensure_output_dir(const std::string& path) {
+    if (path.empty()) return;
+    // 取路径的目录部分（去掉最后一个 '/' 之后的内容）
+    std::string dir = path;
+    size_t slash = dir.find_last_of("/\\");
+    if (slash == std::string::npos) return;  // 无目录部分，无需创建
+    dir = dir.substr(0, slash);
+    if (dir.empty() || dir == ".") return;
+    if (::mkdir(dir.c_str(), 0755) == 0) {
+        LOG_INFO("已创建输出目录: " << dir);
+    } else if (errno != EEXIST) {
+        LOG_WARN("创建输出目录失败: " << dir << " (errno=" << errno << ")");
+    }
+}
 
 /// 打印帮助信息
 void print_usage(const char* prog) {
@@ -24,9 +42,9 @@ void print_usage(const char* prog) {
     LOG_INFO("  --lib <path>         liblbapi.so 路径 (默认: ../../build_cmake/lib/liblbapi.so)");
     LOG_INFO("  --testcase <path>    单个测试用例 JSON 文件路径");
     LOG_INFO("  --testdir <path>     测试用例目录 (默认: config/test_cases)");
-    LOG_INFO("  --report <path>      测试报告输出路径 (默认: test_report.txt)");
-    LOG_INFO("  --log <path>         日志文件路径 (默认: mock_client.log)");
-    LOG_INFO("  --analysis <path>    结果分析文件路径 (默认: result_analysis.txt)");
+    LOG_INFO("  --report <path>      测试报告输出路径 (默认: result/test_report.txt)");
+    LOG_INFO("  --log <path>         日志文件路径 (默认: result/mock_client.log)");
+    LOG_INFO("  --analysis <path>    结果分析文件路径 (默认: result/result_analysis.txt)");
     LOG_INFO("  --help               打印帮助信息");
 }
 
@@ -37,9 +55,9 @@ int main(int argc, char* argv[]) {
     std::string lib_path = "../../build_cmake/lib/liblbapi.so";
     std::string testcase_path;
     std::string test_dir = "config/test_cases";
-    std::string report_path = "test_report.txt";
-    std::string log_path = "mock_client.log";
-    std::string analysis_path = "result_analysis.txt";
+    std::string report_path = "result/test_report.txt";
+    std::string log_path = "result/mock_client.log";
+    std::string analysis_path = "result/result_analysis.txt";
 
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
@@ -68,6 +86,11 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+
+    // 确保输出目录存在（result/ 等）
+    ensure_output_dir(report_path);
+    ensure_output_dir(log_path);
+    ensure_output_dir(analysis_path);
 
     // 初始化日志系统（INFO 级别，同时输出到屏幕和日志文件）
     mock::Logger::instance().init(log_path, mock::LogLevel::INFO, true);

@@ -792,7 +792,7 @@ P50/P75/P90/P95/Max/Min/平均值/标准差
 
 | 文件 | 路径 |
 |------|------|
-| 本手册 | `trunk/NewAPI/gone/api/mock/client/api_test_manual.md` |
+| 本手册 | `trunk/NewAPI/gone/api/mock/doc/api_test_manual.md` |
 | gw 单客户配置 | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gw_single.json` |
 | gw 多客户配置 | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gw_multi.json` |
 | GOne 配置 | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` |

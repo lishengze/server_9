@@ -34,7 +34,7 @@ struct PerfConfig {
     int32_t tps = 100;          ///< 发单速率（笔/秒），匀速发单，间隔 = 1/TPS 秒
     int32_t warmup_sec = 3;     ///< 预热/绑核等待时间（秒），确保绑核生效后再发单
     int32_t cpu_id = -1;        ///< CPU 绑定目标，-1 表示不绑定
-    std::string report_file = "perf_report.txt"; ///< 报告输出文件
+    std::string report_file = "result/perf_report.txt"; ///< 报告输出文件
     std::string counter_name = "FTE"; ///< 柜台名称（用于报告标题，FTE/GOne 等）
     std::string net_time_map_file;    ///< 网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns），空则不写
 

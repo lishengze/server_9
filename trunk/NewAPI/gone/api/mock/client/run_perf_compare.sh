@@ -34,7 +34,7 @@ LD_LIBRARY_PATH=$BASE_DIR/build_cmake/lib:$LD_LIBRARY_PATH \
   $MOCK_CLIENT \
   --config config/connection_config.json \
   --testcase config/test_cases/fte_combo.json \
-  --report test_report_fte.txt
+  --report result/test_report_fte.txt
 
 # ============ 2/2 GOne (fpga_direct) 性能测试 ============
 echo ""
@@ -43,11 +43,11 @@ LD_LIBRARY_PATH=$BASE_DIR/build_cmake/lib:$LD_LIBRARY_PATH \
   $MOCK_CLIENT \
   --config config/connection_config_gone.json \
   --testcase config/test_cases/gone_combo.json \
-  --report test_report_gone.txt
+  --report result/test_report_gone.txt
 
 echo ""
 echo "================================================================"
 echo "  性能测试完成"
-echo "  FTE 报告: $CLIENT_DIR/perf_report_fte.txt"
-echo "  GOne 报告: $CLIENT_DIR/perf_report_gone.txt"
+echo "  FTE 报告: $CLIENT_DIR/result/perf_report_fte.txt"
+echo "  GOne 报告: $CLIENT_DIR/result/perf_report_gone.txt"
 echo "================================================================"

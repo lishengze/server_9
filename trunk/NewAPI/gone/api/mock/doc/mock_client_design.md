@@ -750,7 +750,7 @@ sequenceDiagram
 | `--lib <path>` | `../../build_cmake/lib/liblbapi.so` | liblbapi.so 路径 |
 | `--testcase <path>` | （可选） | 单个测试用例 JSON 文件路径 |
 | `--testdir <path>` | `config/test_cases` | 测试用例目录 |
-| `--report <path>` | `test_report.txt` | 测试报告输出路径 |
+| `--report <path>` | `result/test_report.txt` | 测试报告输出路径 |
 | `--help` | - | 打印帮助信息 |
 
 **执行模式**：
@@ -1255,10 +1255,15 @@ A: 设置 `connection_config.json` 的 `log_level` 为 0（调试级别），日
 
 ```
 mock/
-├── client/
+├── doc/
 │   ├── mock_client_design.md          ← 本设计文档
 │   ├── mock_client_test.md            ← 测试记录文档（问题/修复/结果）
+│   ├── api_test_manual.md             ← 测试手册
+│   ├── mock_client_upgrade.md         ← 全面复盘与修复记录
+│   └── api_net_time_design.md         ← 网卡抓包时间方案设计
+├── client/
 │   ├── CMakeLists.txt                  ← 构建文件
+│   ├── result/                         ← 测试输出目录（报告/日志/分析）
 │   ├── src/
 │   │   ├── main.cpp                    ← 入口（解析命令行 + 驱动测试）
 │   │   ├── mock_client.h               ← MockClient 类声明

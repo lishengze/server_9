@@ -467,7 +467,7 @@ P90 (90%) : 5630 ns
 |:---|:---|
 | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp` | 移除 `do_work()` 末尾 `link_.deal_recv()`（数据竞争修复） |
 | `trunk/NewAPI/common/include/aio_tcp.h` | 启用 `heart.on_msg()`（活动保活修复） |
-| `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` | 追加本节记录 |
+| `trunk/NewAPI/gone/api/mock/doc/mock_client_test.md` | 追加本节记录 |
 
 ### 7.6 经验与教训
 
@@ -519,7 +519,7 @@ P90 (90%) : 5630 ns
 | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp` | 移除 `do_work()` 末尾 `link_.deal_recv()`（数据竞争修复） |
 | `trunk/NewAPI/common/include/aio_tcp.h` | 启用 `heart.on_msg()`（活动保活修复） |
 | `trunk/NewAPI/gone/api/mock/client/config/connection_config.json` | 性能测试配置（duration/TPS/warmup/CPU绑定） |
-| `trunk/NewAPI/gone/api/mock/client/mock_client_test.md` | 追加本节记录 |
+| `trunk/NewAPI/gone/api/mock/doc/mock_client_test.md` | 追加本节记录 |
 
 ### 7.11 FTE 回报对象池扩容（2000→32768）
 

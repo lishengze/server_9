@@ -24,7 +24,7 @@
     "tps": 2000,
     "warmup_sec": 2,
     "cpu_id": -1,
-    "report_file": "perf_report_fte_low.txt",
+    "report_file": "result/perf_report_fte_low.txt",
     "order": {
       "fund_account_id": "1000000000000001",
       "branch_id": "0001",
