@@ -287,3 +287,12 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
         2. 当前将 trunk/NewAPI/gone/api/mock/client 中有大量的测试输出的 txt 文件， 
             将这些输出的结果的路径设置为 trunk/NewAPI/gone/api/mock/client/result，
             并且将当前的这些文件也转存到 trunk/NewAPI/gone/api/mock/client/result 中。
+
+    2. 测试结果整理对比，做一个综合的测试对比，对比场景和指标:
+        1. 对比对象: gone , gw 单链接单客户， gw 单链接多客户， 
+        2. 分析场景: api 内部打点延迟即进入api 到在 send() 系统调用成功前这个时间差。 
+                 api 网卡抓包延迟，从进入api,到 被网卡发送出去的 时延。
+        3. 测试配置：5000 tps，持续 10秒；
+        4. 对比指标: 平均时间， 50分位，75分位，90分位；
+        5. 如果测试上述场景需要修改代码，配置，或者案例。进行对应的修改，然后进行调试测试。
+        6. 将对比的进行整理统计，然后以整个表格的形式 输出到 task/api_dev/result_contrast.md 中。
