@@ -43,6 +43,7 @@
 28. **mock_client test_plan 主配置模式** ✅（§35）：`--plan test_plan_*.json` 单文件整合全部功能测试场景 + 性能参数，独立案例放 `config/cases/`（FTE）/`cases_gone/`（GOne）；`connection_config_file` 引用连接配置；场景 `request_file`/`expected_file` 相对主配置目录；`order_file` 独立委托模板；`run_test_plan` 流程含 wait_link_ready + perf 结果返回。GOne vs FTE 预期差异（cust_id、rtn_type、撤单 err_code）
 29. **mock_client 日志系统与结果分析** ✅（§36）：`logger.h/cpp` 五级日志（DEBUG/INFO/WARN/ERROR/FATAL），`std::atomic<int> min_level_` 无锁判级快速路径，双输出（控制台+文件），格式 `[时间戳] [级别] [文件:行] 消息`；`result_analysis.h/cpp` 将功能测试报告 + 性能报告 + 总体结论整合输出到独立分析文件（默认 result_analysis.txt）
 30. **mock_client 全面复盘与修复回归** ✅（§37）：mock_client_upgrade.md 复盘 6 类 18 项（🔴4/🟡8/🟢6），10 项修复 + 1 项撤销（CallbackHandler 数据竞争复查确认不存在）；关键修复：load_api dladdr 定位、wait_link_ready 轮询、run_test_plan 返回 perf 结果、net_time_map_ 仅成功委托、Logger atomic、validate 死代码移除、ETF 委托实现。回归：GW 功能 5/5 + perf 6518TPS(P50=531ns) 0 失败；GOne 功能 5/5 + perf 9216TPS(P50=411ns,P90=641ns) 0 失败
+31. **三对象 5000TPS 对比测试与时延失真根因** ✅（§38）：对 GOne / GW 单客户 / GW 多客户 做 5000TPS 对比，度量两个延迟维度——API 内部延迟（`api_arrive_time_ns`→`send()` 前，perf_runner）和网卡抓包延迟（`api_arrive_time_ns`→网卡发出，`api_net_time_capture` AF_PACKET）。统一绑核 CPU7、系统空闲时结果：GOne P50=321/P90=391，GW单 P50=371/P90=752，GW多 P50=341/P90=561；**时延失真根因**：模拟交易所 tgw_simulator 占 9 核 CPU 导致系统过载，FTE 场景 P90/P95 放大 10~40 倍，须停止 tgw 或绑核隔离后再测；抓包踩坑（mock_client 卡功能测试、抓包 duration 180s、counter98 端口 9003、rmem_max 限制、AF_PACKET 抓 lo 正常）
 
 ## 三、分析框架
 
@@ -167,6 +168,10 @@
 || **日志系统** | `trunk/NewAPI/gone/api/mock/client/src/logger.h/.cpp`（五级日志 + atomic 无锁判级 + 双输出） |
 || **结果分析** | `trunk/NewAPI/gone/api/mock/client/src/result_analysis.h/.cpp`（功能+性能+结论整合输出） |
 || **mock_client 复盘** | `trunk/NewAPI/gone/api/mock/client/mock_client_upgrade.md`（6 类 18 项复盘 + 10 修复 + 1 撤销） |
+|| **网卡抓包工具** | `trunk/NewAPI/gone/api/mock/client/api_net_time_capture.cpp`（AF_PACKET 抓 lo，--iface --port --proto <gw\|gone> --map --duration --report） |
+|| **网卡抓包常量** | `trunk/NewAPI/gone/api/mock/client/api_net_time_common.h`（GOne/FTE 协议偏移、client_seq_id 提取） |
+|| **三对象对比结果** | `task/api_dev/result_contrast.md`（GOne/gw单/gw多 5000TPS 对比 + 时延失真根因） |
+|| **三对象测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` / `_gw_single.json` / `_gw_multi.json` |
 
 ## 五、常见问答模板
 
@@ -531,6 +536,31 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 # 分析文件：result_analysis.txt（功能+性能+总体结论）
 ```
 
+### Q26: 如何做三对象（GOne/gw单/gw多）对比测试？时延失真怎么排查？
+```
+# 对比测试（5000TPS/10s，统一绑核 CPU7，系统空闲）：
+# 1. 服务端：gone_counter_mock --config config/server_config.json（44001/44002）
+#            counter98_mock --port 9003
+#            FTE 33001（start_all.sh）
+# 2. 抓包：api_net_time_capture --iface lo --port <44002|33001> --proto <gone|gw> \
+#            --map /tmp/api_net_time_map_*.txt --duration 180 --report result/capture_*.txt
+# 3. 客户端：LD_LIBRARY_PATH=build_cmake/lib mock_client --config config/connection_config_*.json
+# 4. 两个延迟维度：API 内部（perf_report_*.txt）+ 网卡抓包（capture_*.txt）
+
+# 系统空闲时结果（ns）：
+#   对象        API P50/P90    网卡 P50/P90
+#   GOne        321/391        2124/2525
+#   GW 单客户   371/752        2745/5479
+#   GW 多客户   341/561        2274/3029
+# 结论：GOne < GW多 < GW单；GOne 协议消息短(64B vs 118B)+无 FTE asio 瓶颈
+
+# ⚠️ 时延失真排查（API 代码未变但延迟暴增 10~40 倍）：
+# 1. 先查系统负载（uptime / top）：模拟交易所 tgw_simulator 占约 9 核 CPU → load 13+ → FTE 尾部延迟失真
+# 2. 验证：停止 tgw_simulator 后系统空闲（idle 71%），GW P90 从 16153ns→752ns 恢复正常
+# 3. 结论：FTE 性能测试前必须确保系统空闲（停止 tgw_simulator 或绑核隔离）
+# 详见 task/api_dev/result_contrast.md
+```
+
 ## 六、回答风格要求
 
 1. **准确**：引用具体的类名、方法名、文件路径和行号。
@@ -545,7 +575,7 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-22。知识库 v3.0 在 v2.x（§29~§34：压测算法优化、FTE 卡死根因、复测、新计时口径、单链接单客户、非阻塞发送）基础上新增 §35 mock_client test_plan 主配置模式（--plan + cases/ 目录）、§36 日志系统与结果分析（logger.h/cpp + result_analysis.h/cpp）、§37 mock_client 全面复盘与修复回归（10 项修复 + 1 项撤销，GW/GOne 功能 5/5 + 性能 0 失败）。关键结论速查：FTE 压测卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程）；CPU 绑定须绑整个物理核 2HT（绑单核会饿死）；FTE P95 是 GOne 的 9.4 倍（尾部延迟最大瓶颈）；记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）。
+5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-23。知识库 v3.1 在 v3.0（§35~§37：test_plan 主配置、日志系统、全面复盘）基础上新增 §38 三对象 5000TPS 对比测试与时延失真根因。关键结论速查：FTE 压测卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程）；CPU 绑定须绑整个物理核 2HT（绑单核会饿死）；FTE P95 是 GOne 的 9.4 倍（尾部延迟最大瓶颈）；记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）；**三对象对比时延失真根因是模拟交易所 tgw_simulator 占 9 核 CPU 导致系统过载，FTE 场景 P90/P95 放大 10~40 倍，测试前须确保系统空闲（见 §38 / result_contrast.md）**。
 
 ---
 

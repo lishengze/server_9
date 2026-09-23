@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v3.0（2026-09-22，§35 mock_client test_plan 主配置模式、§36 日志系统与结果分析、§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
+> **版本**：v3.1（2026-09-23，§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
 
 ---
 
@@ -48,6 +48,7 @@
 35. [mock_client test_plan 主配置模式（--plan）](#35-mock_client-test_plan-主配置模式--plan)
 36. [mock_client 日志系统与结果分析](#36-mock_client-日志系统与结果分析)
 37. [mock_client 全面复盘与修复回归](#37-mock_client-全面复盘与修复回归)
+38. [三对象 5000TPS 对比测试与时延失真根因](#38-三对象-5000tps-对比测试与时延失真根因)
 
 ---
 
@@ -2101,3 +2102,80 @@ LOG_DEBUG(...) / LOG_WARN(...) / LOG_ERROR(...) / LOG_FATAL(...)
 | **GOne** | 5/5 通过（登录/委托/成交/撤单/心跳） | 9216 TPS，P50=411ns，P90=641ns | 0 失败 ✅ |
 
 > 回归数据引用自 mock_client_test.md 与 result_analysis 输出。性能测试在功能测试通过基础上执行，验证 test_plan 模式"功能+性能一体化"设计的正确性。
+
+---
+
+## 38. 三对象 5000TPS 对比测试与时延失真根因（2026-09-23）
+
+### 38.1 测试目标与配置
+
+对 **GOne / GW 单链接单客户 / GW 单链接多客户** 三个对象进行 5000 TPS 性能对比，度量**两个维度的延迟**：
+
+| 维度 | 定义 | 度量点 |
+|------|------|--------|
+| **API 内部打点延迟** | 进入 API（`api_arrive_time_ns`）→ `send()` 系统调用成功前（`api_leave_time_ns`） | perf_runner（`perf_report_*.txt`） |
+| **网卡抓包延迟** | 进入 API（`api_arrive_time_ns`）→ 被网卡实际发送出去（AF_PACKET 抓包时间戳） | `api_net_time_capture`（`capture_*.txt`） |
+
+**测试配置**：目标 5000 TPS、持续 10 秒（预热 3 秒）、统一绑定 **CPU 7**（系统最空闲核）、Release 编译、docker 容器 otc（host 网络模式）。
+
+**对比对象**：
+
+| 对象 | 柜台协议 | 端口 | 关键配置 |
+|------|---------|------|---------|
+| gone | GOne（FPGA/软件模拟） | 44002（Core） | `fast_counter_type=2`，单客户 |
+| gw 单链接单客户 | FTE | 33001 | `single_cust_per_link=true`（会话迁成员，不查 map） |
+| gw 单链接多客户 | FTE | 33001 | `single_cust_per_link=false`（GwSessionCache 按 fund_account_id 查 map） |
+
+### 38.2 测试结果（系统空闲状态）
+
+**场景一：API 内部打点延迟（ns）**
+
+| 指标 | GOne | GW 单客户 | GW 多客户 |
+|------|------|----------|----------|
+| 实际 TPS | 4957.28 | 4730.87 | 4963.24 |
+| 平均值 | 422.9 | 1880.0 | 623.4 |
+| **P50** | 321 | 371 | 341 |
+| **P75** | 360 | 501 | 471 |
+| **P90** | 391 | 752 | 561 |
+| P95 | 461 | 2900 | 1242 |
+
+**场景二：网卡抓包延迟（ns）**
+
+| 指标 | GOne | GW 单客户 | GW 多客户 |
+|------|------|----------|----------|
+| 关联成功 | 48821/48821 | 46912/46912 | 49236/49236 |
+| 平均值 | 2594.2 | 4539.8 | 2733.1 |
+| **P50** | 2124 | 2745 | 2274 |
+| **P75** | 2264 | 3397 | 2484 |
+| **P90** | 2525 | 5479 | 3029 |
+| P95 | 3126 | 7875 | 4568 |
+
+**结论**：
+- **API 内部延迟**：GOne < GW多客户 < GW单客户（P50/P90 均成立）
+- **网卡全链路延迟**：GOne < GW多客户 < GW单客户
+- **GOne 优势**：协议消息短（64B vs 118B）、无 FTE 单线程 asio 瓶颈，P50/P90 均最优
+- **系统空闲时 GW 多客户略优于单客户**（P50 341 vs 371，P90 561 vs 752），与高负载时的结论相反；差异均不大，说明 `single_cust_per_link` 优化在系统空闲时收益不明显
+
+### 38.3 ⚠️ 时延失真根因（重要环境注意事项）
+
+**现象**：同 API 代码，首次测试时 GW 场景 P90=8355~8626ns、P95=47504~59101ns，比历史数据（P90~800ns）高 10~40 倍。
+
+**根因**：**模拟交易所 tgw_simulator 正常运行时占用约 9 核 CPU**（3 个进程各 ~300%），加上 FTE 3 核，系统 16 核基本满载（load 13+，idle<30%）。导致：
+1. FTE 单线程 asio 处理变慢（委托处理排队）
+2. 内核调度延迟暴增
+3. mock_client 绑定的 CPU7 可能被未绑核的 tgw 抢占
+
+**验证**：停止 tgw_simulator 后系统空闲（idle 71%），GW 场景 P90 从 16153ns 降到 752ns、P95 从 84105ns 降到 2900ns，完全恢复正常。
+
+**建议**：进行 FTE 性能测试时，应确保系统空闲（停止 tgw_simulator 或将其绑核隔离），否则尾部延迟严重失真。**API 代码未变时延迟暴增，优先排查系统负载。**
+
+### 38.4 抓包与测试踩坑记录
+
+1. **抓包 0 委托包根因**：mock_client 多次重启导致 gone_counter_mock 状态混乱，卡在功能测试未进入性能测试（没发委托）→ 必须先干净重启服务端再测。
+2. **抓包时间窗口**：mock_client 功能测试（含撤单失败等待 10s）会延后性能测试，抓包 duration 必须足够长（180s），否则委托包超时窗口抓不到。
+3. **counter98 端口**：gw_single/gw_multi 配置 counter98 port 原为 **9001**，但 counter98_mock 监听 **9003**（`--port 9003` 覆盖）→ 需改 9003，否则 `api->start()` 失败 -18。
+4. **AF_PACKET 抓 lo 正常**：容器 otc 是 host 网络模式，AF_PACKET 绑定 lo 可正常抓 loopback 流量（UDP 对照测试 4s 抓 41 万包验证）。
+5. **rmem_max 限制**：系统 `rmem_max=208KB` 会限制 SO_RCVBUF，高流量抓包需 `sysctl -w net.core.rmem_max=33554432`。
+6. **pkill 误杀**：`pkill -f <进程名>` 会匹配到含该字符串的 docker exec 命令自身，需用 `pgrep` + `awk` 排除 `bash -c`。
+
+**结果文档**：`task/api_dev/result_contrast.md`（完整表格 + 对比分析 + 时延失真根因）。
