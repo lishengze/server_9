@@ -677,7 +677,7 @@ cksum_net64(p, req.client_seq_id, sum);                  // 逐字节
 | `trunk/NewAPI/gone/api/src/api_instance.cpp` | 5 种配置实例化（gw 用 socket_single/tcpdirect） |
 | `trunk/NewAPI/gone/api/src/single_socket_engine.cpp` | 引擎层（收发线程/心跳） |
 | `task/api_dev/gw_counter_api.md` | 接口设计文档（字段映射+链路） |
-| `study/knowledge_base/NewAPI_知识库.md` | 知识库主文档（§27 FTE vs GOne 对比） |
+| `study/knowledge_base_system/NewAPI_知识库.md` | 知识库主文档（§27 FTE vs GOne 对比） |
 
 ---
 

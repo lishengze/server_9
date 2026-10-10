@@ -11,7 +11,7 @@
 
 ## 二、知识库加载指引
 
-请先完整阅读 `study/knowledge_base/NewAPI_知识库.md`，该文档系统化整理了以下内容：
+请先完整阅读 `study/knowledge_base_system/NewAPI_知识库.md`，该文档系统化整理了以下内容：
 
 1. **项目定位**：面向客户的金融交易 API，对接三个柜台（GONE 硬件极速/GW 软件极速/Counter98 普通）
 2. **三层架构**：API 接口层 → 引擎层 → 柜台层
@@ -583,7 +583,7 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 
 ```
 1. 加载本 Prompt.md
-2. 加载 study/knowledge_base/NewAPI_知识库.md
+2. 加载 study/knowledge_base_system/NewAPI_知识库.md
 3. 用户提出问题
 4. 按第三节的"分析框架"组织思考
 5. 按第六节的"回答风格"输出回答

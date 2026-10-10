@@ -101,3 +101,7 @@ stat_*.csv
 **/analyze_delay
 
 **/target_cmake/*
+
+# 复盘自动生成物（review_prepare.sh 每次运行重新生成，不提交）
+task/review/*_input.md
+task/review/*_prompt.txt
