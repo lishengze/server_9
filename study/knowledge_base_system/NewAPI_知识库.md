@@ -442,7 +442,24 @@ api_impl::start()
 - FTE 定位原单**只用 `orig_clordno`**（按 clordno 查 `order_map_`）；`orig_client_seq_id` 在撤单定位中不被使用。
 - **FTE 用 clordno 定位订单，不是用 order_sys_no（交易所编号 order_id）**。因此 API **不能直接填 `order_sys_no` 作为 `orig_clordno`**，必须通过 `order_sys_no → clordno` 映射反查，否则 FTE 找不到原单。
 
-> 详细字段级分析见 `study/gw_counter.md` §4.3.1/§4.3.2。
+**ID 全景速查（现货全流程）**：
+- **FTE 内部核心 ID**：`clordno`（`GetClOrdNO()` 自增，`order_map_[clordno]` 定位订单主键）；`clordid`（`GetClOrdID(market_id)` 按市场 36 进制递增，报盘给交易所）；`order_id`（交易所确认回报 `base_report.order_id`，API 转 `order_sys_no` 对外）。
+- **客户端 ID**：`client_seq_id`（委托/撤单各自请求号，FTE 回显用于应答关联）；`agw_seq_id`（网关序号，登录设 `(market_id<<32)\|account_role`，API 填 0 预留）。
+- **原单定位 ID**：`orig_clordno`（原单 clordno，FTE 定位原单主键）；`orig_client_seq_id`（原单 client_seq_id，协议保留）；`orig_clordid`（原单 clordid，交易所撤单申报 `orig_cl_ord_id`）。
+- **成交 ID**：`exec_id`（交易所成交编号，去重键）；`index`（FTE 回报序号 `++report_index_`）。
+
+**必填性速查（请求相关 ID，依据代码实现）**：
+
+委托 `OrderReq`：
+- ✅ **必填**：`fund_account_id`（查session）、`branch_id`、`security_id`、`market_type`、`side`、`order_type`、`order_price`、`order_qty`（FTE `CheckParams` 强校验）
+- ⚠️ **建议必填**：`client_seq_id`（FTE 不强制非 0，但用于回报关联）
+- ❌ **不必填**：`account_id`/`cust_id`（session 回填）、`policy_id`/`tgw_id`（API 未使用）、`agw_seq_id`（预留 0）
+
+撤单 `CancelReq`：
+- ✅ **必填**：`client_req_no`（撤单请求号）、`fund_account_id`/`branch_id`（FTE 校验）、`order_sys_no`（反查 `orig_clordno` 定位原单）
+- ❌ **不必填**：`client_seq_id`（预留）、`account_id`/`cust_id`（回填）、`orig_client_seq_id`/`orig_clordno`（API 自动反查）
+
+> 详细字段级分析见 `study/gw_counter.md` §4.3.1/§4.3.2/§4.3.3/§4.3.4。
 
 ---
 

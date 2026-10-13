@@ -455,6 +455,141 @@ FTE 服务端撤单入口为 `DealCancelOrderReq`（`gt_trunk/DYS-FRAMEWORK/fte/
 
 > **结论**：客户**只需保存委托回报里的 `order_sys_no`** 即可完成撤单，无需感知 FTE 内部 `clordno`。该映射由 API 在回报路径自动维护。
 
+#### 4.3.3 FTE 现货交易全流程 ID 全景分析
+
+综合 API 侧（`gw_head.h` 结构 + `gw_counter_direct.cpp` 组包）与 FTE 服务端（`uplink_biz_processor.cpp` + `order_manager.cpp`）代码，现货委托/应答/成交回报/撤单全流程涉及的所有 ID：
+
+**① 委托请求 `TradeOrderReq`（客户端→FTE，外部输入）**
+
+| ID | 类型 | 来源 | 业务含义 |
+|----|------|------|---------|
+| `fund_account_id` | char[16] | 客户输入 | 资金账号 |
+| `branch_id` | char[10] | 客户输入 | 分支机构代码 |
+| `account_id` | char[12] | 客户输入 | 股东账户 |
+| `cust_id` | char[16] | 服务端回填（`fund_data->cust_id_`） | 客户号 |
+| **`client_seq_id`** | int64 | 客户输入 | 客户请求号，关联请求与回报 |
+| **`agw_seq_id`** | int64 | 预留 | 网关序号 |
+| `security_id` | char[8] | 客户输入 | 证券代码 |
+| `market_id` | uint16 | 客户输入 | 市场ID |
+
+**② FTE 服务端生成（委托处理时 `DealOrderReq`）**
+
+| ID | 类型 | 生成机制 | 业务含义 |
+|----|------|---------|---------|
+| **`clordid`** | char[10] | `GetClOrdID(market_id)` 按市场 36 进制递增（`curr_cl_ord_id_sh_/sz_`） | 申报合同号，存 `order_sent_map_[clordid]`，报盘给交易所 |
+| **`clordno`** | int64 | `GetClOrdNO()` = `curr_cl_ord_no_++` 自增（起点 `clordnostart_g_`） | FTE 内部订单编号，存 `order_map_[clordno]`，FTE 定位订单主键 |
+
+**③ 委托应答/成交回报 `TradeOrderER`（FTE→客户端，`FillWithInternalOrderInfo` 填充）**
+
+| ID | 类型 | 来源 | 业务含义 |
+|----|------|------|---------|
+| `client_seq_id` | int64 | 回显委托请求（`trade_order_user`） | 客户请求号 |
+| `agw_seq_id` | int64 | 回显委托请求 | 网关序号 |
+| **`order_id`** | char[16] | 交易所确认回报 `base_report.order_id` | 交易所订单编号（API 取 `strtoll` 作 `order_sys_no`） |
+| **`clordid`** | char[10] | 回显 FTE 生成 | 申报合同号 |
+| **`exec_id`** | char[16] | 交易所确认回报 `report.exec_id` | 成交编号（交易所去重键） |
+| **`orig_clordid`** | char[10] | 撤单时 = 原单 `clordid` | 原申报合同号 |
+| **`clordno`** | int64 | 回显 FTE 生成 | FTE 内部订单编号 |
+| **`orig_clordno`** | int64 | 撤单时 = 原单 `clordno` | 原单 FTE 内部订单编号 |
+| **`index`** | int64 | `++report_index_`（FTE 生成） | 回报序号，区分多笔回报 |
+
+**④ 撤单请求 `CancelOrderReq`（客户端→FTE）**
+
+| ID | 类型 | 来源 | 业务含义 |
+|----|------|------|---------|
+| `client_seq_id` | int64 | 客户输入（`req.client_req_no`） | 撤单请求号 |
+| `agw_seq_id` | int64 | 预留 | 网关序号 |
+| **`orig_client_seq_id`** | int64 | API 反查映射 | 原单客户端序号 |
+| **`orig_clordno`** | int64 | API 反查映射 | 原单 FTE 内部订单编号（**定位原单主键**） |
+
+**⑤ FTE 服务端撤单处理（`DealCancelOrderReq` + `DealCancelOrderReqBusi`）**
+- `GetOrderByNO(orig_clordno)` 按 clordno 定位原单；
+- 撤单本身也生成**新的** `clordid`（`GET_GLOBAL_CL_ORD_ID`）+ `clordno`（`GetClOrdNO`）；
+- `orig_clordid = orig_order->clordid`、`orig_clordno = orig_order->clordno`；
+- `client_seq_id`/`agw_seq_id` 用撤单请求的覆盖 `internal_order`，使撤单应答携带撤单请求号。
+
+**核心 ID 作用机制总结**
+
+| 分组 | ID | 生成方 | 作用环节 | 机制 |
+|------|-----|--------|---------|------|
+| **FTE 内部核心** | `clordno` | FTE 自增 | 订单全生命周期 | `order_map_[clordno]` 定位订单；撤单 `orig_clordno` 是其主键 |
+| | `clordid` | FTE 按市场递增 | 报盘→交易所 | `order_sent_map_[clordid]`；交易所回报按 `cl_ord_id` 匹配 |
+| | `order_id` | 交易所 | 交易所回报 | 交易所侧订单编号，API 转 `order_sys_no` 对外 |
+| **客户端相关** | `client_seq_id` | 客户端 | 请求/应答关联 | 委托/撤单各自生成，FTE 回显 |
+| | `agw_seq_id` | 预留 | 网关账户 | 登录设 `(market_id<<32)\|account_role` |
+| **原单定位** | `orig_clordno` | FTE | 撤单定位原单 | 按 clordno 查 `order_map_` |
+| | `orig_client_seq_id` | 客户端 | 协议保留 | 原单 client_seq_id（审计/日志） |
+| | `orig_clordid` | FTE | 交易所撤单申报 | 填 `orig_cl_ord_id` |
+| **成交相关** | `exec_id` | 交易所 | 成交回报 | 交易所去重键 |
+| | `index` | FTE | 回报 | 回报序号 |
+
+> **关键**：`clordno`（FTE 自增，定位订单）与 `order_id`（交易所编号，对外报单号）是**两套独立编号**。API 以 `order_id` 转出的 `order_sys_no` 为对外键，通过映射表桥接到 `clordno`，供撤单定位原单。
+
+#### 4.3.4 请求相关 ID 必填性分析（依据代码实现）
+
+**① 委托请求 `OrderReq`（API 对外）**
+
+| ID | 必填 | 理由（依据代码实现） |
+|----|------|----------------------|
+| `fund_account_id` | ✅ **必填** | API 用其查 session 回填 account_id/cust_id（`build_order_msg:307`）；FTE 撤单用其查 fund_data 校验（`DealCancelOrderReq:1423`） |
+| `branch_id` | ✅ **必填** | 直接 `pad_copy` 到协议（:318）；FTE 与 fund_account_id 组成元组查 fund_data（:1424） |
+| `security_id` | ✅ **必填** | FTE `CheckParams` 查证券信息，缺失拒单 `kSecurityErr`（:3465） |
+| `market_type` | ✅ **必填** | `map_api_market_id_to_fte` 后写 market_id（:332）；FTE `CheckParams` 校验 101/102（:3444） |
+| `side` | ✅ **必填** | FTE `CheckParams` 校验买卖方向（:3476） |
+| `order_type` | ✅ **必填** | FTE `CheckParams` 校验 SH/SZ 类型（:3446） |
+| `order_price` | ✅ **必填** | FTE `CheckParams` 校验价格（:3501） |
+| `order_qty` | ✅ **必填** | FTE `CheckParams` 校验数量（:3554） |
+| `client_seq_id` | ⚠️ **建议必填** | FTE 不强制非 0，但 `FTE_SAVE_CLIENT_SEQ_ID` 记录并回显（:973）；不填则回报无法关联请求 |
+| `stop_price` | ⚠️ 协议字段 | API 直接写（:338），FTE `CheckParams` **不校验**；普通限价单可忽略 |
+| `account_id` | ❌ **不必填** | API 从 session 回填（:321），客户无需传 |
+| `cust_id` | ❌ **不必填** | API 回填；FTE 服务端覆盖为 `fund_data->cust_id_`（:918） |
+| `policy_id` | ❌ **填了无效** | API `build_order_msg` **未使用**，不会发送 |
+| `tgw_id` | ❌ **填了无效** | API `build_order_msg` **未使用**，不会发送 |
+| `agw_seq_id` | ❌ 预留 | API 固定 `memset` 0（:329） |
+
+**② 撤单请求 `CancelReq`（API 对外）**
+
+| ID | 必填 | 理由（依据代码实现） |
+|----|------|----------------------|
+| `client_req_no` | ✅ **必填** | `build_cancel_msg` 作为 FTE `client_seq_id`（撤单请求号，关联应答，:404） |
+| `fund_account_id` | ✅ **必填** | FTE 撤单校验：`fund_info_manager::GetData(fund_account_id, branch_id)` 查 fund_data（:1423） |
+| `branch_id` | ✅ **必填** | FTE 撤单校验：与 fund_account_id 组成元组（:1424） |
+| `order_sys_no` | ✅ **必填** | API 反查 `orig_clordno`（FTE 定位原单主键，`GetOrderByNO` :1455）+ `orig_client_seq_id` |
+| `client_seq_id` | ❌ 预留 | `CancelReq` 中注释"预留，暂不支持"，API 不使用 |
+| `account_id` | ❌ **不必填** | API 从 session 回填（`build_cancel_msg:404`） |
+| `cust_id` | ❌ **不必填** | API 从 session 回填 |
+| `orig_client_seq_id` | ❌ **不必填** | FTE 撤单**不校验不使用**（协议保留字段） |
+| `orig_clordno` | ❌ **不必填** | API 据 `order_sys_no` 自动反查，不来自客户 |
+
+**关键结论（必填性）**：
+- **FTE 服务端真正强校验的是交易参数**（`market_id`/`security_id`/`side`/`order_type`/`order_price`/`order_qty`），而非账户 ID 字段。
+- **账户类 ID**：委托/撤单都需 `fund_account_id` + `branch_id`（API 查会话、FTE 查 fund_data）；`account_id`/`cust_id` 由 API 从 session 回填，客户不必填。
+- **`client_seq_id`**（委托请求号）/ **`client_req_no`**（撤单请求号）：FTE 不强制非 0，但建议必填——回报/应答靠它关联请求。
+- **撤单定位原单靠 `orig_clordno`**（FTE `GetOrderByNO`）；`orig_client_seq_id` 在撤单中完全不被使用。
+- **`policy_id` / `tgw_id`** 填了无效（API 未实现，`build_order_msg` 不读取）。
+
+#### 4.3.5 撤单中间缓存可优化性分析（可否去掉 order_locators）
+
+**当前机制**：
+- `OrderRtn.order_sys_no` 填 `strtoll(er.order_id)`（**交易所编号**，非 clordno，`deal_order_rtn:735`）。
+- 撤单时客户端传 `order_sys_no`，API 用 `order_locators` 映射反查 `clordno`（填 `orig_clordno`）+ `client_seq_id`（填 `orig_client_seq_id`）。
+- `order_locators` **仅用于撤单**（`get_clordno` + `get_orig_client_seq_id`），无其他用途。
+
+**优化方案（去掉中间缓存）**：
+1. `OrderRtn.order_sys_no` 改为直接填 `er.clordno`（FTE 内部编号，`deal_order_rtn:735` 改 `rtn.order_sys_no = er.clordno`）。
+2. 客户端保存的 `order_sys_no` 即 clordno，撤单时 API 直接把 `order_sys_no` 填 `orig_clordno`，**无需反查**。
+3. `orig_client_seq_id` 填 0（FTE 撤单定位**不用**它，`DealCancelOrderReq` 只 `GetOrderByNO(orig_clordno)`）——或由客户端传原单 `client_seq_id`（`OrderRtn.client_seq_id` 已返回，第732行）。
+
+**收益**：
+- 撤单路径从 **3 次查找**（`get_session` + `get_orig_client_seq_id` + `get_clordno`）降为 **1 次**（`get_session` 回填 account_id/cust_id）。
+- 去掉 `order_locators` 映射表的写入/维护/内存开销（含多客户模式全局 `GwSessionCache`）。
+
+**权衡**：
+- **`order_sys_no` 语义变更**：从"交易所编号 order_id"变为"FTE 内部 clordno"。FTE 场景撤单需要 clordno，返回 clordno 更直接；但与其他柜台（fpga/counter98）的编号体系一致性需评估。
+- **去掉防御性抽象**：当前用 order_id 作对外键是"对外报单号/对内单号分离"的设计；直接暴露 clordno 简化桥接，但失去这层抽象。
+
+> **结论**：因 FTE 撤单定位原单只用 `orig_clordno`，且 `OrderRtn` 已返回 `client_seq_id`，**将 `OrderRtn.order_sys_no` 改为返回 clordno 后，确可去掉 `order_locators` 中间缓存**。属合理优化，落地需评估 order_sys_no 语义变更对多柜台一致性的影响。
+
 ### 4.4 ETF 委托链路
 
 `deal_etf_order_req` 与委托几乎一致，仅 msg_id 用 1010（`kPktETFReq`），结构体同为 `TradeOrderReq`。回报为 2010（`kPktEtfOrderMatch`），解析 `TradeOrderER` 固定部分后映射为 `OrderRtn`（成分券 `ConstituentStock[]` 不展开使用）。
