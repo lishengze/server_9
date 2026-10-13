@@ -50,4 +50,4 @@ Obsidian(知识图谱)、ripgrep(全文检索)、Mermaid(图表)、知识保鲜�
 - **分场景专项规范**：文档/代码开发/测试运维各有专项 SOP。详见 `task/task_rule.md` §8。
 - **工程纪律**（参考 lsz-skills-real-engineers）：`study/knowledge_base_system/11_工程纪律.md`。核心：TDD红绿重构、六阶段Bug诊断（先建反馈回路→再假设→再修复）、双轴CodeReview+Fowler坏味道、DeepModule设计、writing-for-agents文档规范、领域建模GLOSSARY+ADR。已融入 `task/task_rule.md`（§3双轴审查/§4.1文档写作/§5.1Bug诊断）。
 - **复盘自动化**（cron 半自动）：Agent 被动响应式，无法自醒做日/周/月复盘（无 headless CLI）。方案= cron 跑 `task/review/review_prepare.sh` 自动聚合 work_log 生成复盘输入，用户一键触发 agent 反思。单任务复盘全自动；日/周/月复盘半自动。详见 `task/task_rule.md` §7.4、`task/task_upgrade.md` §7.4。
-  - **一句话触发指令**：用户说"进行daily/weekly/monthly复盘"即可。agent 收到后**先主动运行 `bash task/review/review_prepare.sh <周期>` 刷新输入文件**（不依赖 cron 预生成，防过时），再执行核心五问→成果五转化→更新知识库+Prompt.md→写报告。详见 `task/task_prompt.md` §7。
+  - **一句话触发指令**：用户说"进行daily/weekly/monthly复盘"即可。agent 收到后**先主动运行 `bash task/review/review_prepare.sh <周期>` 刷新输入文件**（不依赖 cron 预生成，防过时），再执行核心五问→成果五转化→更新知识库+Prompt.md→写报告。**复盘后必须核查"当日经验教训是否已融合到知识库"**（逐条核对 input 中每条经验教训是否已写入 knowledge_base/knowledge_base_system/memory，未沉淀的补写并同步 MEMORY.md+Prompt.md），确认闭环（task_rule.md §8.4）。详见 `task/task_prompt.md` §7。

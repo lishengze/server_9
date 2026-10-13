@@ -174,6 +174,8 @@ agent 收到后，自动执行 §7.2 的完整流程。
 - 优质案例 → 标杆案例库
 
 第三步：更新知识库 + Prompt.md，写复盘报告到 task/review/<周期>_<日期>_report.md
+
+第四步：核查知识库融合（必做）：逐条核对复盘输入中的"经验教训"是否都已写入知识库（study/knowledge_base_system/、study/knowledge_base/ 或 memory/），未沉淀的立即补写并同步 MEMORY.md 索引 + Prompt.md，确认闭环后在复盘报告中记录核查结果。
 ```
 
 > **为什么第零步关键**：`review_prepare.sh` 每次运行都会基于最新 work_log 重新生成输入文件，确保复盘不漏最后几小时的工作。cron 预生成的文件只是"兜底"，agent 触发时应主动刷新。
