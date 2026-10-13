@@ -410,6 +410,40 @@ api_impl::start()
 
 与委托几乎同构：先 fast 后降级 98。回报走 `deal_cancel_rsp` → `cb_mgr_->on_cancel_rsp`。
 
+**FTE 撤单消息** = `PktNewHeader`(8) + `CancelOrderReq`(64) + 校验和(4) = **76B**（`build_cancel_msg` 组包）。
+
+**`CancelOrderReq` 各字段填充逻辑与业务含义**：
+
+| 字段 | 字节 | 填充逻辑 | 业务含义 |
+|------|------|---------|---------|
+| `fund_account_id` | 16 | `pad_copy(req.fund_account_id)` | 资金账号（客户必填） |
+| `branch_id` | 10 | `pad_copy(req.branch_id)` | 分支机构（客户必填） |
+| `account_id` | 12 | session 回填（`LogOnAns`） | 股东账户，API 自动回填 |
+| `cust_id` | 16 | session 回填（`LogOnAns`） | 客户号，API 自动回填 |
+| `client_seq_id` | 8 | `req.client_req_no` | 撤单请求号（关联 `CancelRsp`） |
+| `agw_seq_id` | 8 | 0 | 预留 |
+| `orig_client_seq_id` | 8 | 反查 order_locator | **原委托** client_seq_id |
+| `orig_clordno` | 8 | 反查 order_locator | **原委托** FTE 内部单号 |
+
+**原单定位机制**：API 在收到 FTE 回报（`deal_order_ans`/`deal_order_rtn`/`deal_trade_rtn`）时，用 `strtoll(er.order_id)` 取 `order_sys_no`，配合 `er.clordno`/`er.client_seq_id` 写入映射 `order_sys_no → {clordno, client_seq_id}`（单客户模式存 counter 成员 `local_session_.order_locators`，多客户存全局 `GwSessionCache`）。
+
+**客户撤单所需信息**：客户只需保存委托回报 `OrderRtn.order_sys_no`，构造 `CancelReq{client_req_no, fund_account_id, branch_id, order_sys_no}` 即可。`orig_clordno`/`orig_client_seq_id` 由 API 据 `order_sys_no` 反查自动填充，`account_id`/`cust_id` 由登录会话回填，**客户无需感知 FTE 内部单号**。
+
+**FTE 服务端视角（四个 ID 作用）**：撤单入口 `DealCancelOrderReq`（`gt_trunk/DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp:1388`）：
+
+| ID | FTE 服务端处理 | 作用 |
+|----|--------------|------|
+| `client_seq_id` | 覆盖 internal_order（:1581），应答回传 | 标识**本次撤单请求**，关联撤单应答 |
+| `agw_seq_id` | 覆盖 internal_order（:1580）；登录设 `(market_id<<32)\|account_role` | 网关序号/账户角色，API 侧填 0 预留 |
+| `orig_client_seq_id` | **未用于定位原单**（协议保留字段） | 原单客户端序号（审计/日志） |
+| `orig_clordno` | **定位原单唯一主键**：`GetOrderByNO(orig_clordno)` 按 clordno 查 `order_map_`（:1451） | 原单 FTE 内部订单编号 |
+
+**⭐ 关键结论（FTE 定位机制）**：
+- FTE 定位原单**只用 `orig_clordno`**（按 clordno 查 `order_map_`）；`orig_client_seq_id` 在撤单定位中不被使用。
+- **FTE 用 clordno 定位订单，不是用 order_sys_no（交易所编号 order_id）**。因此 API **不能直接填 `order_sys_no` 作为 `orig_clordno`**，必须通过 `order_sys_no → clordno` 映射反查，否则 FTE 找不到原单。
+
+> 详细字段级分析见 `study/gw_counter.md` §4.3.1/§4.3.2。
+
 ---
 
 ## 12. 查询链路

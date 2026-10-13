@@ -383,6 +383,78 @@ sequenceDiagram
 
 > **注意**：撤单每次触发 **3 次** GwSessionCache 全局查找（get_session + get_orig_client_seq_id + get_clordno），是撤单热路径的明显开销，见 §6。
 
+#### 4.3.1 撤单消息字段填充逻辑与业务含义
+
+FTE 现货撤单消息 = `PktNewHeader`(8) + `CancelOrderReq`(64) + 校验和(4) = **76 字节**，由 `build_cancel_msg`（`gw_counter_direct.cpp`）组包。
+
+**① 消息头 `PktNewHeader`（8B，大端）**
+
+| 字段 | 字节 | 填充逻辑 | 业务含义 |
+|------|------|---------|---------|
+| `msg_id` | 4 | `ByteSwap32(kPktCancelOrderReq)` = 1004 | 撤单请求消息类型标识 |
+| `msg_len` | 4 | `ByteSwap32(sizeof(CancelOrderReq))` = 64 | 消息体长度（不含头/校验和） |
+
+**② 消息体 `CancelOrderReq`（64B，主机序小端）**
+
+| 字段 | 字节 | 填充逻辑 | 业务含义 |
+|------|------|---------|---------|
+| `fund_account_id` | 16 | `pad_copy(req.fund_account_id)` | 资金账号（客户必填，空格填充） |
+| `branch_id` | 10 | `pad_copy(req.branch_id)` | 分支机构代码（客户必填） |
+| `account_id` | 12 | **session→account_id 回填**（登录应答 `LogOnAns` 回填） | 股东账户，API 自动回填，客户无需传 |
+| `cust_id` | 16 | **session→cust_id 回填**（登录应答回填） | 客户号，API 自动回填 |
+| `client_seq_id` | 8 | `req.client_req_no` | 撤单请求号（客户生成，用于关联 `CancelRsp`） |
+| `agw_seq_id` | 8 | 0（memset） | 预留，未使用 |
+| `orig_client_seq_id` | 8 | `get_orig_client_seq_id(fa, order_sys_no)` | **原委托**的 client_seq_id，API 从 order_locator 映射反查 |
+| `orig_clordno` | 8 | `get_clordno(fa, order_sys_no)` | **原委托**的 FTE 内部订单号，API 从 order_locator 映射反查 |
+
+**③ 校验和（4B，大端）**：`checksum_bytes(头+体) % 256`。
+
+> **关键**：`orig_client_seq_id` / `orig_clordno` 两个"原单定位"字段**不来自客户请求**，而是 API 内部根据 `req.order_sys_no` 从 `order_locators` 映射表反查得到；`account_id` / `cust_id` 也由 API 从登录会话自动回填。客户侧仅需提供 `client_req_no`、`fund_account_id`、`branch_id`、`order_sys_no`。
+
+#### 4.3.1b FTE 服务端视角：CancelOrderReq 四个 ID 的作用
+
+FTE 服务端撤单入口为 `DealCancelOrderReq`（`gt_trunk/DYS-FRAMEWORK/fte/src/business/uplink_biz_processor.cpp:1388`）+ `DealCancelOrderReqBusi`（:1574）。四个 ID 在服务端的实际作用：
+
+| ID | API 填充 | FTE 服务端处理 | 作用 |
+|----|---------|--------------|------|
+| `client_seq_id` | `req.client_req_no` | `DealCancelOrderReqBusi` 用撤单请求的 client_seq_id **覆盖** internal_order（:1581），撤单应答 `TradeOrderER` 回传此值 | **标识本次撤单请求**，客户端据此关联撤单应答与撤单请求 |
+| `agw_seq_id` | 0（memset） | **覆盖** internal_order 的 agw_seq_id（:1580）；登录时 FTE 设 `(market_id<<32)\|account_role`（:299） | **网关序号/账户角色**（统一接入场景），API 侧预留填 0 |
+| `orig_client_seq_id` | `get_orig_client_seq_id(order_sys_no)` | **TCP direct 撤单路径未用于定位原单**（结构注释"原用户系统消息序号"） | **原单客户端序号**，协议保留字段（审计/日志），FTE 定位不依赖 |
+| `orig_clordno` | `get_clordno(order_sys_no)` | **定位原单的唯一主键**：`GetOrderByNO(orig_clordno)` 按 clordno 查 `order_map_`（:1451） | **原单 FTE 内部订单编号**，FTE 定位原单的关键字段 |
+
+**关键结论（FTE 定位机制）**：
+- FTE 服务端 `DealCancelOrderReq` 用 `OrderManager::GetOrderByNO(orig_clordno)` **按 clordno（FTE 内部订单编号）查找原单**，`order_map_` 以 clordno 为键（`order_manager.cpp:72`）。
+- **FTE 定位原单只用 `orig_clordno`**；`orig_client_seq_id` 在撤单定位中不被使用（协议保留字段）。
+- **FTE 用 clordno 定位订单，不是用 order_sys_no（交易所编号 order_id）**（`fte_api_数据结构补齐.md:161`）。因此 API 必须通过 `order_sys_no → clordno` 映射反查正确的 clordno 填 `orig_clordno`，否则 FTE 找不到原单。
+- 这解释了为何 API **不能直接填 `order_sys_no` 作为 `orig_clordno`**：`order_sys_no` 源自交易所编号 `order_id`，与 FTE 内部 `clordno` 是不同编号体系，需映射桥接。
+
+#### 4.3.2 客户如何获取撤单所需信息（原单定位机制）
+
+**原单定位映射 `order_locators`**：`order_sys_no → OrderLocator{clordno, client_seq_id}`，在收到 FTE 回报时由 `record_order_locator(fa, order_sys_no, clordno, client_seq_id)` 写入：
+
+| 记录字段 | 来源 | 说明 |
+|---------|------|------|
+| `order_sys_no` | `strtoll(er.order_id, 10)` | 从 `TradeOrderER.order_id`（16 字节数字字符串）转数字 |
+| `clordno` | `er.clordno` | FTE 内部订单编号（撤单填 `orig_clordno`） |
+| `client_seq_id` | `er.client_seq_id` | 原委托请求号（撤单填 `orig_client_seq_id`） |
+
+**记录时机（3 处，均解析 `TradeOrderER` 后调用）**：
+- `deal_order_ans`（委托应答 2003）
+- `deal_order_rtn`（委托回报，exec_type='0' New / '8' Reject）
+- `deal_trade_rtn`（成交回报 2005）
+
+**存储位置**：
+- 单客户模式（`single_cust_per_link_`）：counter 成员 `local_session_.order_locators[order_sys_no]`
+- 多客户模式：全局单例 `GwSessionCache::instance().order_locators[order_sys_no]`
+
+**客户撤单完整流程**：
+1. 客户先发委托 `api->order_insert(OrderReq)`。
+2. FTE 回报到达 → `deal_order_rtn`/`deal_order_ans` 解析 `TradeOrderER` → 写入 order_locator → 构造 `OrderRtn` 回调客户，其中 **`rtn.order_sys_no = order_sys_no`**（第 735 行）。
+3. 客户需撤单时，从收到的 `OrderRtn.order_sys_no` 取出柜台报单编号，构造 `CancelReq{client_req_no, fund_account_id, branch_id, order_sys_no}` 调用 `api->order_cancel()`。
+4. API 内部据 `order_sys_no` 反查 `orig_clordno` + `orig_client_seq_id`，回填 `account_id`/`cust_id`，组包发送。
+
+> **结论**：客户**只需保存委托回报里的 `order_sys_no`** 即可完成撤单，无需感知 FTE 内部 `clordno`。该映射由 API 在回报路径自动维护。
+
 ### 4.4 ETF 委托链路
 
 `deal_etf_order_req` 与委托几乎一致，仅 msg_id 用 1010（`kPktETFReq`），结构体同为 `TradeOrderReq`。回报为 2010（`kPktEtfOrderMatch`），解析 `TradeOrderER` 固定部分后映射为 `OrderRtn`（成分券 `ConstituentStock[]` 不展开使用）。

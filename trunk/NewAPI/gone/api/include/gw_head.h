@@ -12,20 +12,21 @@
 //
 // 二、与 FTE 服务端的一致性
 //   - 本文件（命名空间 gw_message::*）与服务端所用 gw_external_message.h
-//     （命名空间 message::*）的 #pragma pack(1) 内存布局、大端字节序约定完全一致，
+//     （命名空间 message::*）的 #pragma pack(1) 内存布局、字节序约定完全一致，
 //     数据可互通（如 sizeof(LogOnReq)=1230、sizeof(TradeOrderER)=324 等已实测一致）。
-//   - 字节序约定：多字节整型(>=2字节)按大端(网络序)传输；字符数组(std::array<char,N>)
-//     按原字节序传输。
+//   - 字节序约定：消息头 PktNewHeader 按大端(网络序)传输（ByteSwap32 显式交换）；
+//     消息体多字节整型按主机字节序(小端)传输（HostToNetwork 为 no-op，与 FTE 服务端
+//     FTE_MEMCOPY 宏一致）；字符数组(std::array<char,N>)按原字节序传输。
 //
 // 三、序列化接口说明（encode=发送 / decode=接收）
 //   每个消息结构均提供以下两个接口：
 //     size_t encode(char* dest, size_t cap) const
-//       将对象序列化为网络字节序(大端)字节流写入 dest。
+//       将对象序列化为主机字节序字节流写入 dest（数值字段经 HostToNetwork 处理，当前为 no-op）。
 //       参数：dest 输出缓冲区；cap 缓冲区容量。
 //       返回：实际写入字节数；若 cap < sizeof(本结构) 返回 0（表示失败）。
 //       【注意】encode 不修改源对象，可安全复用同一对象多次发送。
 //     bool decode(const char* data, size_t len)
-//       从网络字节序(大端)字节流 data 反序列化到本对象。
+//       从主机字节序字节流 data 反序列化到本对象（数值字段经 HostToNetwork 处理，当前为 no-op）。
 //       参数：data 报文体起始地址；len 报文体长度(通常取 PktNewHeader::msg_len)。
 //       返回：成功 true；len < sizeof(本结构) 返回 false。
 //       【注意】decode 前建议先调用 reset() 清空，避免残留脏数据。
