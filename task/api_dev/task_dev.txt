@@ -315,6 +315,10 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
     3. 分析所有冲突的文件，形成一个分析文档，输出到 task/svn/svn_conflict.md 中。
     4. 并提出合理的整合方案，如何合理的解决这些冲突，也输出到 task/svn/svn_conflict.md 中。
 
+    5. 按照 svn_conflict.md  中列举的方案，进行相关的冲突解决。
+    6. 文件的冲突解决后，记得调用 svn resolve 和可能的 svn add ,先不调用 svn commit 
+    7. 解决后，进行对应的编译和功能回归测试，确保修改的正确性。
+
     任务：合并问题分析与解决；
     1. 框架的开发人员在合并时，出现过多冲突，没有完全的解决，然后将整个框架代码文件转存到了 
         trunk/NewAPI/gone/api-compare 中。
