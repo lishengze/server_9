@@ -86,3 +86,4 @@
     1. 在其他项目中已经建立了一套完整的 模型自我提升复盘体系，深入 task/review/review_prepare.sh 文件，task 中的 task_rule.md, task_prompt.md, task_upgrade.md 等等文件。
     2. 将当前项目的 study/knowledge_base 知识库里的内容，统一迁移,融合到 study/knowledge_base_system 知识库中。
     3. 完全掌握整个一套新的 模型自我提升复盘体系，并且将这套体系应用到当前项目中。
+    新增一条工作规范， 如果遇到因为工具调用次数而询问用户是否继续的情况， 直接继续工作。

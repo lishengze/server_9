@@ -1,19 +1,25 @@
 #include "client_session.h"
-#include <iostream>
+
 #include <unistd.h>
+#include <cstring>
+#include <cstdio>
+#include <ctime>
 #include <sys/socket.h>
-#include <vector>
-#include <algorithm>
+
+// ============================================================
+// ClientSession 实现
+// 使用 Archforce AGW 协议处理所有消息
+// ============================================================
 
 namespace mock_98 {
 
 ClientSession::ClientSession(int fd, AccountManager* acct_mgr)
     : fd_(fd)
     , acct_mgr_(acct_mgr)
-    , last_heartbeat_(std::time(nullptr))
-    , agw_logged_in_(false)
-    , account_logged_in_(false)
+    , last_heartbeat_(time(nullptr))
     , disconnected_(false)
+    , closed_(false)
+    , agw_logged_in_(false)
 {
 }
 
@@ -21,228 +27,493 @@ ClientSession::~ClientSession() {
     close();
 }
 
-int ClientSession::feed_data(const char* data, size_t len) {
-    if (!data || len == 0) return 0;
-
-    // 防止缓冲区溢出
-    if (recv_buf_.size() + len > MAX_RECV_BUF) {
-        std::cerr << "[Session] 接收缓冲区溢出, 清空缓冲区" << std::endl;
-        recv_buf_.clear();
-        return -2;
-    }
-
-    // 追加到接收缓冲区
-    recv_buf_.insert(recv_buf_.end(), data, data + len);
-
-    // 循环处理缓冲区中所有完整消息
-    while (recv_buf_.size() >= sizeof(c98_msg_head_tmp)) {
-        // 解析消息头
-        c98_msg_head_tmp head;
-        std::memcpy(&head, recv_buf_.data(), sizeof(c98_msg_head_tmp));
-
-        size_t msg_total = sizeof(c98_msg_head_tmp) + head.msg_len;
-        if (recv_buf_.size() < msg_total) {
-            // 消息体尚未收全，等待更多数据
-            break;
-        }
-
-        // 处理完整消息
-        int ret = handle_message(recv_buf_.data(), msg_total);
-        if (ret < 0) {
-            recv_buf_.clear();
-            return ret;
-        }
-
-        // 从缓冲区移除已处理的消息
-        recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + msg_total);
-    }
-
-    return 0;
-}
-
-int ClientSession::handle_message(const char* data, size_t len) {
-    if (len < sizeof(c98_msg_head_tmp)) {
-        std::cerr << "[Session] 数据长度不足: " << len << std::endl;
-        return -2;
-    }
-
-    c98_msg_head_tmp head;
-    if (!MessageParser::parse_header(data, len, head)) {
-        std::cerr << "[Session] 消息头解析失败" << std::endl;
-        return -2;
-    }
-
-    size_t expected = sizeof(c98_msg_head_tmp) + head.msg_len;
-    if (len < expected) {
-        std::cerr << "[Session] 消息体不完整: 需要 " << expected
-                  << ", 实际 " << len << std::endl;
-        return -2;
-    }
-
-    const char* body = MessageParser::get_body(data, len, head);
-    std::cout << "[Session] 收到消息: " << MessageParser::msg_type_name(head.msg_id)
-              << ", msg_len=" << head.msg_len << ", seq_no=" << head.seq_no << std::endl;
-
-    switch (head.msg_id) {
-        case C98_MSG_AGW_LOGIN_REQ:
-            if (body && head.msg_len >= sizeof(c98_agw_login_req)) {
-                return handle_agw_login(reinterpret_cast<const c98_agw_login_req*>(body));
-            }
-            break;
-
-        case C98_MSG_ACC_LOGIN_REQ:
-            if (body && head.msg_len >= sizeof(c98_acc_login_req)) {
-                return handle_acc_login(reinterpret_cast<const c98_acc_login_req*>(body));
-            }
-            break;
-
-        case C98_MSG_HEART_REQ:
-            return handle_heartbeat();
-
-        default:
-            std::cout << "[Session] 忽略未知消息: " << head.msg_id << std::endl;
-            return 0;
-    }
-
-    return 0;
-}
-
-bool ClientSession::is_timeout(int timeout_sec) const {
-    return (std::time(nullptr) - last_heartbeat_) > timeout_sec;
-}
-
 void ClientSession::close() {
+    if (closed_) return;
+    closed_ = true;
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
     }
-    disconnected_ = true;
-    std::cout << "[Session] 会话已关闭"
-              << ", agw_user=" << agw_user_
-              << ", fund_account=" << fund_account_id_ << std::endl;
 }
 
-int ClientSession::handle_agw_login(const c98_agw_login_req* req) {
-    std::string user(req->agw_user, strnlen(req->agw_user, sizeof(req->agw_user)));
-    std::string password(req->agw_user_password, strnlen(req->agw_user_password, sizeof(req->agw_user_password)));
+bool ClientSession::is_timeout(int timeout_sec) const {
+    return (time(nullptr) - last_heartbeat_) > timeout_sec;
+}
 
-    std::cout << "[Session] AGW 登录请求: user=" << user
-              << ", client_req_no=" << req->client_req_no << std::endl;
+// ============================================================
+// 数据收发
+// ============================================================
 
-    if (acct_mgr_->verify_agw_user(user, password)) {
-        agw_user_ = user;
-        session_id_ = acct_mgr_->generate_session_id();
+int ClientSession::feed_data(const char* data, size_t len) {
+    last_heartbeat_ = time(nullptr);
+
+    // 追加到接收缓冲区
+    if (recv_buf_.size() + len > MAX_RECV_BUF) {
+        fprintf(stderr, "recv buffer overflow, closing\n");
+        return -2;
+    }
+    recv_buf_.insert(recv_buf_.end(), data, data + len);
+
+    // 处理完整消息
+    size_t offset = 0;
+    while (offset + AGW_HEADER_SIZE <= recv_buf_.size()) {
+        raw_agw_header hdr;
+        std::memcpy(&hdr, recv_buf_.data() + offset, sizeof(hdr));
+        int32_t msg_total = sizeof(hdr) + static_cast<int32_t>(hdr.body_length) + static_cast<int32_t>(sizeof(uint32_t));
+        if (offset + static_cast<size_t>(msg_total) > recv_buf_.size()) {
+            break; // 数据不完整, 等下次
+        }
+        const char *body = recv_buf_.data() + offset + AGW_HEADER_SIZE;
+        int32_t body_len = static_cast<int32_t>(hdr.body_length);
+        handle_message(hdr, body, body_len);
+        offset += msg_total;
+    }
+
+    // 移除已处理数据
+    if (offset > 0) {
+        recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + offset);
+    }
+
+    return 0;
+}
+
+void ClientSession::send_data(const char *data, int32_t len) {
+    if (closed_) return;
+    ssize_t n = ::send(fd_, data, len, MSG_NOSIGNAL);
+    if (n != len) {
+        fprintf(stderr, "send failed: sent=%zd, expected=%d\n", n, len);
+    }
+}
+
+void ClientSession::send_agw_msg(uint32_t msg_type, uint16_t msg_ver,
+                                  const char *body, uint32_t body_len) {
+    char buf[4096];
+    int32_t total = write_agw_msg(buf, msg_type, msg_ver, body, body_len);
+    if (total > 0) {
+        send_data(buf, total);
+    }
+}
+
+void ClientSession::send_agw_msg(uint32_t msg_type, uint16_t msg_ver,
+                                  const lb_counter98::SerializeBuffer &buf) {
+    send_agw_msg(msg_type, msg_ver,
+                 reinterpret_cast<const char *>(buf.Begin()),
+                 static_cast<uint32_t>(buf.Size()));
+}
+
+// ============================================================
+// 消息分发
+// ============================================================
+
+void ClientSession::handle_message(const raw_agw_header &hdr,
+                                    const char *body, int32_t body_len) {
+    printf("recv msg: %s (type=%u, ver=%u, body_len=%d)\n",
+           agw_msg_type_name(hdr.msg_type), hdr.msg_type, hdr.msg_ver, body_len);
+
+    switch (hdr.msg_type) {
+    // ---- 登录/心跳 ----
+    case lb_counter98::kAgwMsgLogin:                  handle_agw_login(body, body_len); break;
+    case lb_counter98::kAgwMsgCustLoginReq:           handle_cust_login(body, body_len); break;
+    case lb_counter98::kAgwMsgHeartBeat:              handle_heartbeat(body, body_len); break;
+    // ---- 委托/撤单 ----
+    case lb_counter98::kAgwMsgCashAuctionOrder:       handle_order(body, body_len); break;
+    case lb_counter98::kAgwMsgCancelOrder:            handle_cancel(body, body_len); break;
+    // ---- 查询 ----
+    case lb_counter98::kAgwMsgExtQueryOrder:          handle_query_order(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryTradeOrder:     handle_query_trade(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryFund:           handle_query_fund(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQuerySelfShare:      handle_query_position(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryMaxOrderQty:    handle_query_max_order_qty(body, body_len); break;
+    case lb_counter98::kAgwMsgExternalQueryTotalFundAsset: handle_query_total_fund(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryFundMaxdraw:    handle_query_fund_maxdraw(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryCustMarginAvl:  handle_query_cust_margin_avl(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryAssetDebts:     handle_query_asset_debts(body, body_len); break;
+    case lb_counter98::kAgwMsgExtQueryCreditMaxOrderQty: handle_query_credit_max_order_qty(body, body_len); break;
+    default:
+        printf("unknown msg_type=%u, ignored\n", hdr.msg_type);
+        break;
+    }
+}
+
+// ============================================================
+// 登录/心跳
+// ============================================================
+
+void ClientSession::handle_agw_login(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgLogin req;
+    if (!decode_body(req, body, body_len)) {
+        fprintf(stderr, "AgwUserLogin decode failed\n");
+        return;
+    }
+
+    std::string agw_user(req.sender_comp_id.data(), strnlen(req.sender_comp_id.data(), req.sender_comp_id.size()));
+    std::string agw_pwd(req.password.data(), strnlen(req.password.data(), req.password.size()));
+
+    bool ok = acct_mgr_->verify_agw_user(agw_user, agw_pwd);
+
+    lb_counter98::AgwMsgLogin ans;
+    ans.heart_bt_int = req.heart_bt_int;
+    ans.spec_cust_flag = req.spec_cust_flag;
+    if (ok) {
         agw_logged_in_ = true;
-        last_heartbeat_ = std::time(nullptr);
-
-        std::cout << "[Session] AGW 登录成功, session=" << session_id_ << std::endl;
-        send_agw_login_ans(req->client_req_no, 0, "OK");
+        agw_session_ = "mock_session_" + std::to_string(fd_);
+        // sender_comp_id 在应答中携带 session (counter98.cpp deal_agwuser_login_ans 读取此字段)
+        std::memset(ans.sender_comp_id.data(), ' ', ans.sender_comp_id.size());
+        std::memcpy(ans.sender_comp_id.data(), agw_session_.c_str(),
+                    std::min(agw_session_.size(), ans.sender_comp_id.size()));
+        printf("AGW login success: user=%s\n", agw_user.c_str());
     } else {
-        std::cout << "[Session] AGW 登录失败: 用户名或密码错误" << std::endl;
-        send_agw_login_ans(req->client_req_no, 1001, "Invalid AGW user or password");
+        fprintf(stderr, "AGW login failed: user=%s\n", agw_user.c_str());
     }
 
-    return 0;
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgLogin, 0, buf);
+    }
 }
 
-int ClientSession::handle_acc_login(const c98_acc_login_req* req) {
-    if (!agw_logged_in_) {
-        std::cout << "[Session] 账户登录失败: AGW 未登录" << std::endl;
-        send_acc_login_ans(req, 1002, "AGW not logged in");
-        return 0;
+void ClientSession::handle_cust_login(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgCustLoginReq req;
+    if (!decode_body(req, body, body_len)) {
+        fprintf(stderr, "CustLogin decode failed\n");
+        return;
     }
 
-    std::string fund_account(req->fund_account_id, strnlen(req->fund_account_id, sizeof(req->fund_account_id)));
-    std::string password(req->password, strnlen(req->password, sizeof(req->password)));
+    std::string fund_account(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), req.fund_account_id.size()));
+    std::string password(req.password);
 
-    std::cout << "[Session] 账户登录请求: fund_account=" << fund_account
-              << ", password=[" << password << "] password_len=" << password.size()
-              << ", client_req_no=" << req->client_req_no << std::endl;
+    bool ok = acct_mgr_->verify_account(fund_account, password);
 
-    if (acct_mgr_->verify_account(fund_account, password)) {
-        fund_account_id_ = fund_account;
-        account_logged_in_ = true;
-        last_heartbeat_ = std::time(nullptr);
-
-        std::cout << "[Session] 账户登录成功: " << fund_account << std::endl;
-        send_acc_login_ans(req, 0, "OK");
+    lb_counter98::AgwMsgCustLoginResp ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.pwd_ciphertext = password;
+    if (ok) {
+        // 填充 fund_account_array (counter98.cpp deal_cust_login_ans 读取此字段)
+        atp::gw::AgwMsgCustLoginRespFundAccountUnit fa_unit;
+        fa_unit.fund_account_id = req.fund_account_id;
+        fa_unit.branch_id = req.branch_id;
+        ans.fund_account_array.push_back(fa_unit);
+        ans.key_error_code = "";
+        ans.key_error_msg = "";
+        logged_accounts_.insert(fund_account);
+        printf("CustLogin success: fund_account=%s\n", fund_account.c_str());
     } else {
-        std::cout << "[Session] 账户登录失败: 账号或密码错误" << std::endl;
-        send_acc_login_ans(req, 1003, "Invalid account or password");
+        ans.key_error_code = "1";
+        ans.key_error_msg = "invalid fund account or password";
+        fprintf(stderr, "CustLogin failed: fund_account=%s\n", fund_account.c_str());
     }
 
-    return 0;
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgCustLoginResp, 2, buf);
+    }
 }
 
-int ClientSession::handle_heartbeat() {
-    last_heartbeat_ = std::time(nullptr);
-    send_message(C98_MSG_HEART_ANS, nullptr, 0);
-    return 0;
+void ClientSession::handle_heartbeat(const char *body, int32_t body_len) {
+    (void)body;
+    (void)body_len;
+    // 心跳: 直接回送空心跳
+    send_agw_msg(lb_counter98::kAgwMsgHeartBeat, 2, nullptr, 0);
 }
 
-bool ClientSession::send_message(uint32_t msg_id, const void* body, uint32_t body_len) {
-    size_t total = sizeof(c98_msg_head_tmp) + body_len;
-    char* buf = new char[total];
+// ============================================================
+// 委托/撤单
+// ============================================================
 
-    int n = MessageParser::build_message(buf, total, msg_id, body, body_len, 0);
-    if (n < 0) {
-        delete[] buf;
-        return false;
+void ClientSession::handle_order(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgCashAuctionOrder req;
+    if (!decode_body(req, body, body_len)) {
+        fprintf(stderr, "CashAuctionOrder decode failed\n");
+        return;
     }
 
-    ssize_t sent = ::send(fd_, buf, total, 0);
-    delete[] buf;
+    std::string fund_account(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), req.fund_account_id.size()));
+    printf("Order: fund_account=%s, security=%s, side=%c, qty=%lld, price=%lld, client_seq_id=%lld\n",
+           fund_account.c_str(),
+           std::string(req.security_id.data(), strnlen(req.security_id.data(), req.security_id.size())).c_str(),
+           req.side, (long long)req.order_qty, (long long)req.price, (long long)req.client_seq_id);
 
-    if (sent < 0 || (size_t)sent != total) {
-        std::cerr << "[Session] 发送消息失败: msg_id=" << msg_id << std::endl;
-        return false;
+    // 构造委托确认回报
+    lb_counter98::AgwMsgCashAuctionTradeER er;
+    er.client_seq_id = req.client_seq_id;
+    er.cust_id = req.cust_id;
+    er.fund_account_id = req.fund_account_id;
+    er.branch_id = req.branch_id;
+    er.account_id = req.account_id;
+    er.security_id = req.security_id;
+    er.side = req.side;
+    er.price = req.price;
+    er.order_qty = req.order_qty;
+    er.market_id = req.market_id;
+    {
+        std::string id_str = std::to_string(req.client_seq_id);
+        std::memset(er.order_id.data(), 0, er.order_id.size());
+        std::memcpy(er.order_id.data(), id_str.c_str(), std::min(id_str.size(), er.order_id.size()));
+    } // 模拟柜台编号
+    er.order_status = '2';               // 2=已报
+    er.key_error_code = "";
+    er.key_error_msg = "";
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(er, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgCashAuctionTradeER, 2, buf);
     }
-
-    std::cout << "[Session] 发送消息: " << MessageParser::msg_type_name(msg_id)
-              << ", len=" << total << std::endl;
-    return true;
 }
 
-bool ClientSession::send_agw_login_ans(int64_t client_req_no, int32_t err_code, const char* err_msg) {
-    c98_agw_login_ans ans;
-    std::memset(&ans, 0, sizeof(ans));
-
-    ans.client_req_no = client_req_no;
-    std::memcpy(ans.agw_user, agw_user_.c_str(),
-                std::min(agw_user_.size(), sizeof(ans.agw_user)));
-    std::memcpy(ans.session, session_id_.c_str(),
-                std::min(session_id_.size(), sizeof(ans.session)));
-    ans.err_code = err_code;
-    if (err_msg) {
-        std::memcpy(ans.err_msg, err_msg, std::min(strlen(err_msg), sizeof(ans.err_msg) - 1));
+void ClientSession::handle_cancel(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgCancelOrder req;
+    if (!decode_body(req, body, body_len)) {
+        fprintf(stderr, "CancelOrder decode failed\n");
+        return;
     }
 
-    return send_message(C98_MSG_AGW_LOGIN_ANS, &ans, sizeof(ans));
+    printf("Cancel: client_seq_id=%lld, orig_cli_ord_no=%lld\n",
+           (long long)req.client_seq_id, (long long)req.orig_cli_ord_no);
+
+    // 构造撤单确认回报 (撤单应答使用 OrderStatusAck, msg_type 同撤单请求)
+    lb_counter98::AgwMsgOrderStatusAck er;
+    er.client_seq_id = req.client_seq_id;
+    er.cust_id = req.cust_id;
+    er.fund_account_id = req.fund_account_id;
+    er.branch_id = req.branch_id;
+    er.account_id = req.account_id;
+    er.orig_cli_ord_no = req.orig_cli_ord_no;
+    {
+        std::string id_str = std::to_string(req.orig_cli_ord_no);
+        std::memset(er.order_id.data(), 0, er.order_id.size());
+        std::memcpy(er.order_id.data(), id_str.c_str(), std::min(id_str.size(), er.order_id.size()));
+    }
+    er.order_status = '2'; // 2=已报
+    er.key_error_code = "";
+    er.key_error_msg = "";
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(er, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgCancelOrder, 2, buf);
+    }
 }
 
-bool ClientSession::send_acc_login_ans(const c98_acc_login_req* req, int32_t err_code, const char* err_msg) {
-    c98_acc_login_ans ans;
-    std::memset(&ans, 0, sizeof(ans));
+// ============================================================
+// 查询处理 (返回模拟数据)
+// ============================================================
 
-    ans.client_req_no = req->client_req_no;
-    std::memcpy(ans.cust_id, req->cust_id, sizeof(ans.cust_id));
-    std::memcpy(ans.fund_account_id, req->fund_account_id, sizeof(ans.fund_account_id));
-    std::memcpy(ans.branch_id, req->branch_id, sizeof(ans.branch_id));
-    std::memcpy(ans.account_id, req->account_id, sizeof(ans.account_id));
-    std::memcpy(ans.password, req->password, sizeof(ans.password));
-    std::memcpy(ans.session, session_id_.c_str(),
-                std::min(session_id_.size(), sizeof(ans.session)));
-    std::memcpy(ans.end_code, req->end_code, sizeof(ans.end_code));
-    ans.market_type = req->market_type;
-    ans.heart_bt_int = req->heart_bt_int;
-    std::memcpy(ans.order_way_ext, req->order_way, sizeof(ans.order_way_ext));
-    ans.err_code = err_code;
-    if (err_msg) {
-        std::memcpy(ans.err_msg, err_msg, std::min(strlen(err_msg), sizeof(ans.err_msg) - 1));
+void ClientSession::handle_query_order(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryOrder req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryOrder decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultOrder ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    ans.total_num = 1;
+
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultOrder, 2, buf);
     }
-    ans.login_time = static_cast<int32_t>(std::time(nullptr));
+    printf("QueryOrder: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
 
-    return send_message(C98_MSG_ACC_LOGIN_ANS, &ans, sizeof(ans));
+void ClientSession::handle_query_trade(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryTradeOrder req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryTrade decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultTradeOrder ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    ans.total_num = 0;
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultTradeOrder, 2, buf);
+    }
+    printf("QueryTrade: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_fund(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryFund req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryFund decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultFund ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    // 模拟资金数据
+    ans.leaves_value = 100000000;    // 资金余额: 1亿
+    ans.available_tall = 80000000;   // 可用资金: 8千万
+    ans.frozen_all = 20000000;       // 冻结资金: 2千万
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultFund, 2, buf);
+    }
+    printf("QueryFund: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_position(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQuerySelfShare req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryPosition decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultSelfShare ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    ans.total_num = 0;
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultSelfShare, 2, buf);
+    }
+    printf("QueryPosition: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_max_order_qty(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryMaxOrderQty req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryMaxOrderQty decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryMaxOrderQtyResult ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    ans.max_order_qty = 100000; // 模拟最大可委托数
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryMaxOrderQtyResult, 2, buf);
+    }
+    printf("QueryMaxOrderQty: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_total_fund(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExternalQueryTotalFundAsset req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryTotalFund decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultTotalFundAsset ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultTotalFundAsset, 2, buf);
+    }
+    printf("QueryTotalFund: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_fund_maxdraw(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryFundMaxdraw req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryFundMaxdraw decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultFundMaxdraw ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultFundMaxdraw, 2, buf);
+    }
+    printf("QueryFundMaxdraw: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_cust_margin_avl(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryCustMarginAvl req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryCustMarginAvl decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultCustMarginAvl ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    // 模拟可用保证金数据
+    ans.margin_avl = 50000000;      // 保证金可用余额
+    ans.credit_bal = 100000000;     // 授信额度
+    ans.credit_avl = 80000000;      // 可用额度
+    ans.margin_rate = 50;           // 保证金比例
+    ans.fund_avl = 30000000;        // 资金可用数
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultCustMarginAvl, 2, buf);
+    }
+    printf("QueryCustMarginAvl: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_asset_debts(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryAssetDebts req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryAssetDebts decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryResultAssetDebts ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.currency = req.currency;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    // 模拟资产负债数据
+    ans.asset = 300000000;          // 总资产
+    ans.liability = 100000000;      // 总负债
+    ans.fund_bal = 100000000;       // 资金余额
+    ans.fund_avl = 80000000;        // 资金可用数
+    ans.keep_rate = 300;            // 维持担保比例 300%
+    ans.credit_status = '0';        // 信用状态正常
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryResultAssetDebts, 2, buf);
+    }
+    printf("QueryAssetDebts: client_seq_id=%lld\n", (long long)req.client_seq_id);
+}
+
+void ClientSession::handle_query_credit_max_order_qty(const char *body, int32_t body_len) {
+    lb_counter98::AgwMsgExtQueryCreditMaxOrderQty req;
+    if (!decode_body(req, body, body_len)) { fprintf(stderr, "ExtQueryCreditMaxOrderQty decode failed\n"); return; }
+
+    lb_counter98::AgwMsgExtQueryCreditMaxOrderQtyResult ans;
+    ans.client_seq_id = req.client_seq_id;
+    ans.cust_id = req.cust_id;
+    ans.fund_account_id = req.fund_account_id;
+    ans.branch_id = req.branch_id;
+    ans.key_error_code = "";
+    ans.key_error_msg = "";
+    // 模拟两融最大可委托数
+    ans.max_order_qty = 50000;        // 最大可委托数
+    ans.theoretical_order_qty = 60000; // 理论可委托数
+    ans.fund_credit_avl = 30000000;   // 买券还券可用资金
+    ans.stk_debts_avl = 20000000;     // 融券负债可用额度
+
+    lb_counter98::SerializeBuffer buf;
+    if (encode_body(ans, buf)) {
+        send_agw_msg(lb_counter98::kAgwMsgExtQueryCreditMaxOrderQtyResult, 2, buf);
+    }
+    printf("QueryCreditMaxOrderQty: client_seq_id=%lld\n", (long long)req.client_seq_id);
 }
 
 } // namespace mock_98

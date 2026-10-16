@@ -28,7 +28,8 @@ enum class err_event_type : int32_t {
   none_type = 0,         ///< 无效类型
   agw_user_login = 1,    ///< agw 用户登陆处理错误
   fast_user_offline = 2, ///< 极速柜台用户下线
-  get_sec_info = 3       ///< 获取证券信息错误
+  get_sec_info = 3,      ///< 获取证券信息错误
+  send_error = 4         ///< 消息发送失败
 };
 
 /// API回调接口类
@@ -71,6 +72,24 @@ public:
 
   /// 持仓查询应答回调
   virtual void on_position_query_ans(const CustPositionInfo *ans_arr, const QueryAnsCtl &ctl) {}
+
+  /// 最大可委托数查询应答回调
+  virtual void on_max_order_qty_query_ans(const CustMaxOrderQtyInfo &info) {}
+
+  /// 客户总资产查询应答回调
+  virtual void on_total_fund_asset_query_ans(const CustTotalFundAssetInfo *ans_arr, const QueryAnsCtl &ctl) {}
+
+  /// 可取资金查询应答回调
+  virtual void on_fund_maxdraw_query_ans(const CustFundMaxdrawInfo *ans_arr, const QueryAnsCtl &ctl) {}
+
+  /// 融资融券信用数据（可用保证金）查询应答回调
+  virtual void on_cust_margin_avl_query_ans(const CustMarginAvlInfo &info) {}
+
+  /// 资产负债查询应答回调
+  virtual void on_asset_debts_query_ans(const AssetDebtsInfo &info) {}
+
+  /// 两融最大可委托数查询应答回调
+  virtual void on_credit_max_order_qty_query_ans(const CreditMaxOrderQtyInfo &info) {}
 
   /// 链接状态变化通知回调
   /// @param counter_type  柜台类型: 0=98柜台, 1=极速柜台

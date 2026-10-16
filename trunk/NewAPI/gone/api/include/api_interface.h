@@ -83,9 +83,39 @@ public:
   virtual int32_t fund_query(const FundQueryReq &req) = 0;
 
   /// 客户持仓查询(发送到98柜台)
-  /// @param req  持仓查询请求
+  /// @param req  持仓查询请求(含分页参数)
   /// @return api_errno, LBAPI_OK=成功
   virtual int32_t position_query(const PositionQueryReq &req) = 0;
+
+  /// 最大可委托数查询(发送到98柜台)
+  /// @param req  最大可委托数查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t max_order_qty_query(const MaxOrderQtyQueryReq &req) = 0;
+
+  /// 客户总资产查询(发送到98柜台)
+  /// @param req  客户总资产查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t total_fund_asset_query(const TotalFundAssetQueryReq &req) = 0;
+
+  /// 可取资金查询(发送到98柜台)
+  /// @param req  可取资金查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t fund_maxdraw_query(const FundMaxdrawQueryReq &req) = 0;
+
+  /// 融资融券信用数据（可用保证金）查询(发送到98柜台)
+  /// @param req  可用保证金查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t cust_margin_avl_query(const CustMarginAvlQueryReq &req) = 0;
+
+  /// 资产负债查询(发送到98柜台)
+  /// @param req  资产负债查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t asset_debts_query(const AssetDebtsQueryReq &req) = 0;
+
+  /// 两融最大可委托数查询(发送到98柜台)
+  /// @param req  两融最大可委托数查询请求
+  /// @return api_errno, LBAPI_OK=成功
+  virtual int32_t credit_max_order_qty_query(const CreditMaxOrderQtyQueryReq &req) = 0;
 
   /// 启动所有链接和线程
   /// @return api_errno, LBAPI_OK=成功

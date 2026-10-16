@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <map>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 namespace lb_common {
@@ -66,15 +67,20 @@ private:
      * @brief 列名-值映射表
      *
      * key: csv 文件第一个有效的行，该行表示每列的名称
-     * val: 解析每行数据的按逗号分割后的每项指针，指向read_buf中的位置
+     * val: 解析每行数据的按逗号分割后的每项字符串
+     *
+     * 旧指针悬空，业务连续 read() 时拿到错位数据。改为 std::string，每次
+     * 解析时拷贝入字符串，杜绝悬空。
+     *
+     * 导致非字典序表头（如 "z,a"）与数据列错位绑定。改为 vector 保留顺序。
      */
-  std::map<std::string, char *> kv_map;
+  std::vector<std::pair<std::string, std::string>> kv_list;
 
   int32 read_len;  ///< 每次实际读取的长度
   int32 parse_len; ///< 本次读取的已解析长度
   int64 read_off;  ///< 已读到的文件位置，可用于检查是否已读到文件末尾
 
-  char read_buf[CSV_FILE_READ_LEN]; ///< CSV文件读取缓冲区（64KB）
+  char read_buf[CSV_FILE_READ_LEN + 1]; ///< CSV文件读取缓冲区（64KB + 1字节，用于在 read_len==CSV_FILE_READ_LEN 时安全写入 \0）
 
   std::FILE *m_file; ///< 文件句柄
 
@@ -83,7 +89,7 @@ private:
 	 * @param[in] item_name 列名
 	 * @return 列值指针
 	 */
-  char *find_col_value(const char *item_name);
+  const char *find_col_value(const char *item_name);
 
 public:
   /**
@@ -265,6 +271,13 @@ class csv_writer {
 private:
   cmutex m_lock;     ///< 互斥锁，保护文件写入
   std::FILE *m_file; ///< 文件句柄
+
+  /**
+   * @brief 关闭文件（不加锁版本）
+   *
+   * 供 open() 在已持锁时调用，避免对非递归 cmutex 重入加锁导致死锁。
+   */
+  void close_unlocked();
 
 public:
   /**

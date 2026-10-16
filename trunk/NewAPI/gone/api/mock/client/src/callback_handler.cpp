@@ -126,6 +126,123 @@ void CallbackHandler::reset() {
     response_received_ = false;
     cancel_rsp_received_ = false;
     trade_rtn_received_ = false;
+    // 清空查询结果
+    order_query_results_.clear();
+    trade_query_results_.clear();
+    position_query_results_.clear();
+    total_fund_asset_results_.clear();
+    fund_maxdraw_results_.clear();
+}
+
+// ============================================================
+// 查询回调实现
+// ============================================================
+
+void CallbackHandler::on_order_query_ans(const lb_api::OrderRtn* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (int32_t i = 0; i < ctl.count; i++) {
+        order_query_results_.push_back(ans_arr[i]);
+    }
+    if (ctl.is_last) {
+        response_received_ = true;
+        cv_.notify_one();
+    }
+    std::cout << "[Callback] on_order_query_ans: count=" << ctl.count
+              << ", is_last=" << ctl.is_last << std::endl;
+}
+
+void CallbackHandler::on_trade_query_ans(const lb_api::TradeInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (int32_t i = 0; i < ctl.count; i++) {
+        trade_query_results_.push_back(ans_arr[i]);
+    }
+    if (ctl.is_last) {
+        response_received_ = true;
+        cv_.notify_one();
+    }
+    std::cout << "[Callback] on_trade_query_ans: count=" << ctl.count
+              << ", is_last=" << ctl.is_last << std::endl;
+}
+
+void CallbackHandler::on_fund_query_ans(const lb_api::CustFundInfo& info) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fund_query_result_ = info;
+    response_received_ = true;
+    cv_.notify_one();
+    std::cout << "[Callback] on_fund_query_ans: avail_amount=" << info.avail_amount
+              << ", token_amount=" << info.token_amount << std::endl;
+}
+
+void CallbackHandler::on_position_query_ans(const lb_api::CustPositionInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (int32_t i = 0; i < ctl.count; i++) {
+        position_query_results_.push_back(ans_arr[i]);
+    }
+    if (ctl.is_last) {
+        response_received_ = true;
+        cv_.notify_one();
+    }
+    std::cout << "[Callback] on_position_query_ans: count=" << ctl.count
+              << ", is_last=" << ctl.is_last << std::endl;
+}
+
+void CallbackHandler::on_max_order_qty_query_ans(const lb_api::CustMaxOrderQtyInfo& info) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    max_order_qty_result_ = info;
+    response_received_ = true;
+    cv_.notify_one();
+    std::cout << "[Callback] on_max_order_qty_query_ans: max_order_qty=" << info.max_order_qty << std::endl;
+}
+
+void CallbackHandler::on_total_fund_asset_query_ans(const lb_api::CustTotalFundAssetInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (int32_t i = 0; i < ctl.count; i++) {
+        total_fund_asset_results_.push_back(ans_arr[i]);
+    }
+    if (ctl.is_last) {
+        response_received_ = true;
+        cv_.notify_one();
+    }
+    std::cout << "[Callback] on_total_fund_asset_query_ans: count=" << ctl.count
+              << ", is_last=" << ctl.is_last << std::endl;
+}
+
+void CallbackHandler::on_fund_maxdraw_query_ans(const lb_api::CustFundMaxdrawInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (int32_t i = 0; i < ctl.count; i++) {
+        fund_maxdraw_results_.push_back(ans_arr[i]);
+    }
+    if (ctl.is_last) {
+        response_received_ = true;
+        cv_.notify_one();
+    }
+    std::cout << "[Callback] on_fund_maxdraw_query_ans: count=" << ctl.count
+              << ", is_last=" << ctl.is_last << std::endl;
+}
+
+void CallbackHandler::on_cust_margin_avl_query_ans(const lb_api::CustMarginAvlInfo& info) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cust_margin_avl_result_ = info;
+    response_received_ = true;
+    cv_.notify_one();
+    std::cout << "[Callback] on_cust_margin_avl_query_ans: margin_avl=" << info.margin_avl << std::endl;
+}
+
+void CallbackHandler::on_asset_debts_query_ans(const lb_api::AssetDebtsInfo& info) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    asset_debts_result_ = info;
+    response_received_ = true;
+    cv_.notify_one();
+    std::cout << "[Callback] on_asset_debts_query_ans: asset=" << info.asset
+              << ", liability=" << info.liability << std::endl;
+}
+
+void CallbackHandler::on_credit_max_order_qty_query_ans(const lb_api::CreditMaxOrderQtyInfo& info) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    credit_max_order_qty_result_ = info;
+    response_received_ = true;
+    cv_.notify_one();
+    std::cout << "[Callback] on_credit_max_order_qty_query_ans: max_order_qty=" << info.max_order_qty << std::endl;
 }
 
 } // namespace mock

@@ -5,6 +5,22 @@
 >
 > **三层文档分工**：README「分类详解」= 单分类导航（语义+源码地图）；`使用范式/*.md` = 组级深度手册（选型+配对+避坑）；`架构范式.md` = 跨组系统组装。
 
+## 🤖 AI 智能体入口
+
+> **你是 AI 智能体吗**？先读 [onboarding/00-AI-QUICKSTART.md](onboarding/00-AI-QUICKSTART.md)—— 30 秒获取铁律表 + 路由表 + 不支持项。
+>
+> 业务项目（与 common/ 同级，`add_subdirectory` 引入）中的 AI 应通过 `../common/docs/onboarding/` 路径访问该目录。
+>
+> onboarding 目录提供 8 个聚焦小文件：
+> - `00-AI-QUICKSTART.md` — 入口铁律（必读）
+> - `01-getting-started.md` — 30 行 hello TCP server
+> - `02-integration-guide.md` — CMake/链接/命名空间
+> - `03-glossary.md` — lbcommon 专用术语表
+> - `04-decision-trees.md` — 按业务意图选组件
+> - `05-business-recipes.md` — 3 个跨组组装可粘贴模板
+> - `06-pitfalls-index.md` — 跨模块坑点单页索引
+> - `07-limitations.md` — 不支持项汇总
+
 ## 模块总览
 
 | 编号 | 分类 | 核心能力 | 头文件数 | 使用范式 |
@@ -18,7 +34,7 @@
 | 07 | 特殊数据结构 | 哈希函数/表/向量、哈希环、有序窗口、平滑扩展数组 | 6 | [哈希与数据结构.md](使用范式/哈希与数据结构.md) |
 | 08 | 异步事件与线程 | 事件/定时器回调、线程封装、epoll+事件队列线程、线程池、定时器线程 | 6 | [线程.md](使用范式/线程.md) |
 | 09 | 日志 | 同步/异步日志、流式 API、按日期/行数切换文件 | 1 | — |
-| 10 | 网络异步IO | 套接字工具、TCP/UDP 通道、AIO 框架(三种缓存策略)、心跳管理 | 10 | [网络.md](使用范式/网络.md) |
+| 10 | 网络异步IO | 套接字工具、TCP/UDP 通道、AIO 框架(三种缓存策略)、心跳管理、断线重连 | 11 | [网络.md](使用范式/网络.md) |
 
 ## 场景速查（跨组业务需求 → 推荐类）
 
@@ -143,7 +159,7 @@
 
 | 头文件 | 类/组件 | 职责 |
 |--------|---------|------|
-| mutils.h | comm_utils(静态类) | SIMD 内存操作、时间函数、对齐内存、共享内存映射、文件操作 |
+| mutils.h | comm_utils(静态类) | SIMD 内存操作、字符串复制/格式化(`_safe` 后缀保证 NUL 终止，其余截断不保证)、时间函数、对齐内存、共享内存映射、文件操作 |
 | cstr_utils.h | cstr_utils(静态类) | 就地修改的 C 字符串 split/trim/lower |
 | lib_loader.h | lib_loader | dlopen/dlsym/dlclose 封装(禁止拷贝，析构自动 close) |
 | sort_comm.h | sort_cmp_*/lb_sort_func | 比较器 + 希尔排序(直接修改 vector，非稳定) |
@@ -323,6 +339,15 @@
 docs/
 ├── README.md                          (本文件：总览 + 场景速查 + 分类详解 + 命名/分层)
 ├── 架构范式.md                        (跨组系统组装)
+├── onboarding/                        (AI 智能体入口 — 业务项目开发必读)
+│   ├── 00-AI-QUICKSTART.md
+│   ├── 01-getting-started.md
+│   ├── 02-integration-guide.md
+│   ├── 03-glossary.md
+│   ├── 04-decision-trees.md
+│   ├── 05-business-recipes.md
+│   ├── 06-pitfalls-index.md
+│   └── 07-limitations.md
 └── 使用范式/                          (组级深度手册)
     ├── 队列.md
     ├── 内存池.md

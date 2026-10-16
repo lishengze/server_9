@@ -50,7 +50,7 @@ private:
   int32 state;           ///< 线程状态：0=未初始化，1=已初始化，2=运行中，3=停止中，4=已停止
   pthread_t threadid;    ///< 线程ID
   timer_order_list list; ///< 定时器有序链表
-  wait_poll_one epollfd; ///< epoll轮询器
+  wait_poll_multi epollfd; ///< epoll轮询器（wait_poll_one 已删除，统一改用 multi）
 
   /**
    * @brief 关闭定时器线程资源

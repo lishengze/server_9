@@ -359,6 +359,24 @@ template <class TF, class TE> int32 api_impl<TF, TE>::fund_query(const FundQuery
 template <class TF, class TE> int32 api_impl<TF, TE>::position_query(const PositionQueryReq &req) {
   return c98_.deal_position_query(req);
 }
+template <class TF, class TE> int32 api_impl<TF, TE>::max_order_qty_query(const MaxOrderQtyQueryReq &req) {
+  return c98_.deal_max_order_qty_query(req);
+}
+template <class TF, class TE> int32 api_impl<TF, TE>::total_fund_asset_query(const TotalFundAssetQueryReq &req) {
+  return c98_.deal_total_fund_asset_query(req);
+}
+template <class TF, class TE> int32 api_impl<TF, TE>::fund_maxdraw_query(const FundMaxdrawQueryReq &req) {
+  return c98_.deal_fund_maxdraw_query(req);
+}
+template <class TF, class TE> int32 api_impl<TF, TE>::cust_margin_avl_query(const CustMarginAvlQueryReq &req) {
+  return c98_.deal_cust_margin_avl_query(req);
+}
+template <class TF, class TE> int32 api_impl<TF, TE>::asset_debts_query(const AssetDebtsQueryReq &req) {
+  return c98_.deal_asset_debts_query(req);
+}
+template <class TF, class TE> int32 api_impl<TF, TE>::credit_max_order_qty_query(const CreditMaxOrderQtyQueryReq &req) {
+  return c98_.deal_credit_max_order_qty_query(req);
+}
 
 // ---- 构造 / 析构 (基类 api_interface 已有默认实现) ----
 

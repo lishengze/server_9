@@ -79,7 +79,8 @@ struct alignas(CACHE_ALIGN_SIZE) que_proc_buf_info {
 
 class que_proc_buf {
 protected:
-#define PROC_BUF_PID_INVALID    -11
+// 使用 -111111111 作为崩溃标记
+#define PROC_BUF_PID_INVALID    -111111111
 #define PROC_BUF_PID_INIT       0
 #define PROC_BUF_YIELD_NOTEXIST 10
 #define PROC_BUF_YIELD_EXIST    15
@@ -240,7 +241,7 @@ public:
    * 根据数据头部中的内存长度更新读位置计数器
    */
   FORCE_INLINE void read_cmt() {
-    proc_buf_head *thead = (proc_buf_head *)(pbuf + ((que->rdcmt) & mask));
+    proc_buf_head *thead = (proc_buf_head *)(pbuf + ((atomic_load64(&que->rdcmt)) & mask));
     atomic_fetch_add64(&que->rdcmt, thead->mem_len);
   }
 
@@ -300,7 +301,7 @@ public:
    * @param[in] next_pos 下一个位置
    */
   FORCE_INLINE void read_cmt_pos(int64 next_pos) {
-    if (likely(que->rdcmt < next_pos)) {
+    if (likely(atomic_load64(&que->rdcmt) < next_pos)) {
       atomic_store64(&que->rdcmt, next_pos);
     }
   }

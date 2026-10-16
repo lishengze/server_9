@@ -28,7 +28,9 @@ int32 cstr_utils::split(std::vector<char *> &o_splits, char *line_buf, char spli
   while ((*tp) != '\0' && (*tp) != '\n' && (*tp) != '\r') {
     if (NULL == ts) {
       //去除开头的空格
-      if (std::isspace(*tp)) {
+      // S8: std::isspace 入参要求 unsigned char 可表示值（0..255），
+      // 直接传 char（高位为1时为负）是 UB。trim/lower 已 cast，这里补齐。
+      if (std::isspace(static_cast<unsigned char>(*tp))) {
         (*tp) = '\0';
         tp++;
         rn++;
@@ -44,31 +46,54 @@ int32 cstr_utils::split(std::vector<char *> &o_splits, char *line_buf, char spli
         rn++;
         have_flag = 1;
       }
-    } else if ((*tp) != split_c) {
-      if (have_flag == 1 && (*tp) == '"') {
-        flag_end = tp;
-      }
-      tp++;
-      rn++;
     } else {
-      (*tp) = '\0';
-      if (have_flag == 1 && flag_end != NULL) {
-        *flag_end = '\0';
+      // 在字段内
+      if (have_flag == 1) {
+        // 引号内：分隔符不分割字段，只有右引号才关闭引号状态
+        if (*tp == '"') {
+          // 关闭引号：标记引号位置，后续字段结束时截断
+          flag_end = tp;
+          have_flag = 0;
+          tp++;
+          rn++;
+          continue;
+        }
+        // 引号内其他字符：继续累积
+        tp++;
+        rn++;
+      } else {
+        // 非引号字段内
+        if ((*tp) != split_c) {
+          tp++;
+          rn++;
+        } else {
+          // 字段结束
+          (*tp) = '\0';
+          if (flag_end != NULL) {
+            *flag_end = '\0';
+          }
+          o_splits.push_back(ts);
+          ts = NULL;
+          flag_end = NULL;
+          tp++;
+          rn++;
+        }
       }
-      o_splits.push_back(ts);
-      ts = NULL;
-      have_flag = 0;
-      flag_end = NULL;
-      tp++;
-      rn++;
     }
   }
 
   if ((*tp) == '\n' || (*tp) == '\r') {
+    // 行终止符规则：
+    //   - 标准 CRLF（\r\n，Windows 行尾）：消费 2 字节，作为 1 个终止符。
+    //   - 单个 \n（Unix 行尾）或 单个 \r（经典 Mac）：消费 1 字节，作为 1 个终止符。
+    //   - 其他连续序列（\n\n、\r\r、\n\r）：仅消费首个字节，剩余字符留给下一次 split() 调用。
+    //   这种规则避免了原代码中"任何连续的 \n/\r 都合并为 1 个终止符"导致的 \n\n 被
+    //   误吞 2 字节、或 \r\n\r\n 只吞 1 个 \r\n 的不一致行为。
+    char c1 = *tp;
     (*tp) = '\0';
     tp++;
     rn++;
-    if ((*tp) == '\n' || (*tp) == '\r') {
+    if (c1 == '\r' && *tp == '\n') {
       (*tp) = '\0';
       tp++;
       rn++;
@@ -79,6 +104,10 @@ int32 cstr_utils::split(std::vector<char *> &o_splits, char *line_buf, char spli
   }
 
   if (ts != NULL) {
+    // 行尾结束：若最后一个字段是被引号包裹的，需截断尾部引号
+    if (flag_end != NULL) {
+      *flag_end = '\0';
+    }
     o_splits.push_back(ts);
   }
   return rn;
@@ -111,8 +140,10 @@ void cstr_utils::lower(char *str) {
   if (NULL == str || str[0] == '\0')
     return;
 
+  // P2-03: std::tolower 接受 int 且要求输入为 unsigned char 可表示值（0..255）。
+  // 直接传入 char（可能为负）触发 UB。先 cast 到 unsigned char 再扩展。
   for (int32 i = 0; str[i] != '\0'; ++i) {
-    str[i] = std::tolower(str[i]);
+    str[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(str[i])));
   }
 }
 

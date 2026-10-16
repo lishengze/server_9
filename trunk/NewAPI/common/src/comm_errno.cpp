@@ -6,16 +6,24 @@
  */
 
 #include "comm_errno.h"
+#include "comm_sys.h"
 #include <cerrno>
 #include <string>
 
 namespace lb_common {
 
 static int cpy_err_str(char *buf, const char *src, int dstoff) {
+  // dstoff 表示目标缓冲中已有数据长度，避免在 dstoff 较大时越界写入
+  // buf[LBCOMM_ERRMSG_MAX_LEN]。第二次调用时 dstoff=tlen，tlen 可达 254，
+  // 旧版逻辑会写穿 err_msg[256] 边界。
   int i = dstoff;
-  int e = LBCOMM_ERRMSG_MAX_LEN - 2;
+  int avail = LBCOMM_ERRMSG_MAX_LEN - 1 - dstoff; // 剩余可写空间
+  if (unlikely(avail <= 0)) {
+    buf[LBCOMM_ERRMSG_MAX_LEN - 1] = '\0';
+    return dstoff;
+  }
   char *dst = buf + dstoff;
-  for (; i < e; i++) {
+  for (; i < dstoff + avail; i++) {
     char c = *src;
     *dst = c;
     if (c == '\0')
@@ -23,14 +31,15 @@ static int cpy_err_str(char *buf, const char *src, int dstoff) {
     dst++;
     src++;
   }
-  dst[i] = '\0';
-  dst[i + 1] = '\0';
+  buf[i] = '\0';
   return i;
 }
 
-#define LBERR_SEQNO_MAX 40
+#define LBERR_SEQNO_MAX 40 // 索引 0 = "成功"，索引 1~39 对应 LBERR_ARGV_WRONG(-1) ~ LBERR_CH_LINK_BROKEN(-39)
 
 void perror_lb(lb_comm_err &o_errmsg, int err_code) {
+  // 在函数入口即保存 errno，避免后续 strerror 等调用修改全局 errno 导致消息不一致
+  int saved_errno = errno;
   static const char *g_lberr_msg[LBERR_SEQNO_MAX] = {
       "成功",                   // 索引0 ok
       "参数错误",               // 索引1 LBERR_ARGV_WRONG (-1)
@@ -63,7 +72,7 @@ void perror_lb(lb_comm_err &o_errmsg, int err_code) {
       "获取时间失败",           // 索引28 LBERR_TIME_TAKE_FAIL (-28)
       "映射共享内存失败",       // 索引29 LBERR_SHM_MAP_FAIL (-29)
       "锁不一致",               // 索引30   LBERR_LOCK_NOT_CONSIST (-30)
-      "锁自恢复故障",           // 索引31 LBERR_LOCK_NOT_RECOVE (-31)
+      "锁自恢复故障",           // 索引31 LBERR_LOCK_NOT_RECOVER (-31)
       "锁获取失败",             // 索引32 LBERR_LOCK_TAKE_FAIL (-32)
       "增加引用计数失败",       // LBERR_REF_ADD_FAIL    -33
       "通道链接失败",           // LBERR_CH_CONNECT_FAIL  -34
@@ -76,18 +85,32 @@ void perror_lb(lb_comm_err &o_errmsg, int err_code) {
 
   o_errmsg.err_code = err_code;
 
-  int i = (err_code < 0) ? (0 - err_code) : 0;
+  // 用 int64 承接取反结果：err_code=INT_MIN 时 -err_code 对 int 是有符号溢出（UB），
+  // 回绕为负数会通过 i<LBERR_SEQNO_MAX 检查并以负索引访问 g_lberr_msg 导致越界。
+  int64 i = (err_code < 0) ? -(int64)err_code : (int64)0;
   const char *tmsg = NULL;
   if (i < LBERR_SEQNO_MAX) {
     tmsg = g_lberr_msg[i];
     int tlen = cpy_err_str(o_errmsg.err_msg, tmsg, 0);
 
-    if (errno != 0 && tlen < LBCOMM_ERRMSG_MAX_LEN - 16) {
+    if (saved_errno != 0 && tlen < LBCOMM_ERRMSG_MAX_LEN - 16) {
       o_errmsg.err_msg[tlen] = ',';
       tlen++;
-      // char tsys_errmsg[128] = {0};
-      // strerror_r(errno, tsys_errmsg, sizeof(tsys_errmsg));
-      std::string tsys_errmsg = std::strerror(errno);
+      // M11: std::strerror 返回指向静态缓冲区的指针，多线程并发调用会互相覆盖。
+      // 改用线程安全的 strerror_r。版本判定：g++ 在 C++ 模式下恒预定义 _GNU_SOURCE，
+      // features.h 随之定义 _POSIX_C_SOURCE/_XOPEN_SOURCE，因此不能用"未定义
+      // _POSIX_C_SOURCE"来识别 GNU 版本；__USE_GNU（features.h 内部宏，包含
+      // <string.h> 后可用）才是 GNU 版（返回 char*）的可靠标志，否则为 XSI 版（返回 int）。
+      char tbuf[128] = {0};
+      const char *pmsg = NULL;
+#if defined(__GLIBC__) && defined(__USE_GNU)
+      pmsg = strerror_r(saved_errno, tbuf, sizeof(tbuf)); // GNU 版本返回 char*
+#else
+      if (strerror_r(saved_errno, tbuf, sizeof(tbuf)) != 0) // XSI 版本返回 int
+        tbuf[0] = '\0';
+      pmsg = tbuf;
+#endif
+      std::string tsys_errmsg(pmsg != NULL ? pmsg : "");
       o_errmsg.err_msg_len = cpy_err_str(o_errmsg.err_msg, tsys_errmsg.c_str(), tlen);
     } else {
       o_errmsg.err_msg_len = tlen;

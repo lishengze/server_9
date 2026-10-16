@@ -31,6 +31,7 @@ struct GwSessionInfo {
   std::array<char, 10> branch_id;        ///< 分支机构代码
   std::array<char, 2> order_way_ext;     ///< 客户委托方式
   std::array<char, 64> user_info;        ///< 用户私有信息
+  std::array<char, 256> password;        ///< 客户登录密码（登录成功后缓存，供后续请求回填）
   int16_t market_type = 0;               ///< 市场类型
 
   /// 原单定位映射表：order_sys_no → {clordno, client_seq_id}
@@ -43,6 +44,7 @@ struct GwSessionInfo {
     branch_id.fill(' ');
     order_way_ext.fill(' ');
     user_info.fill(' ');
+    password.fill('\0');
     market_type = 0;
     order_locators.clear();
   }
@@ -61,6 +63,9 @@ public:
 
   /// 获取会话信息（找不到返回 nullptr）
   GwSessionInfo* get_session(const std::string& fund_account_id);
+
+  /// 清除所有会话（链接关闭时调用）
+  void clear_all();
 
   /// 记录原单定位信息（收到 OrderRtn/TradeRtn 时记录）
   void record_order_locator(const std::string& fund_account_id,
@@ -100,9 +105,12 @@ inline void GwSessionCache::create_session(const acc_login_event_info& login_req
   GwSessionInfo& info = sessions_[key];
   info.reset();
   memcpy(info.fund_account_id.data(), login_req.fund_account_id, sizeof(info.fund_account_id));
+  memcpy(info.cust_id.data(), login_req.cust_id, sizeof(info.cust_id));
+  memcpy(info.account_id.data(), login_req.account_id, sizeof(info.account_id));
   memcpy(info.branch_id.data(), login_req.branch_id, sizeof(info.branch_id));
   memcpy(info.order_way_ext.data(), login_req.order_way_ext, sizeof(info.order_way_ext));
   memcpy(info.user_info.data(), login_req.user_info, sizeof(info.user_info));
+  memcpy(info.password.data(), login_req.password, sizeof(login_req.password));
 }
 
 inline void GwSessionCache::fill_session_from_ans(const gw_message::LogOnAns& ans) {
@@ -117,6 +125,11 @@ inline GwSessionInfo* GwSessionCache::get_session(const std::string& fund_accoun
   auto it = sessions_.find(fund_account_id);
   if (it != sessions_.end()) return &it->second;
   return nullptr;
+}
+
+inline void GwSessionCache::clear_all() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  sessions_.clear();
 }
 
 inline void GwSessionCache::record_order_locator(const std::string& fund_account_id,

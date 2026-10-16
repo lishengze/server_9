@@ -60,6 +60,12 @@ public:
   int32 trade_batch_query(const TradeBatchQueryReq &req) override;
   int32 fund_query(const FundQueryReq &req) override;
   int32 position_query(const PositionQueryReq &req) override;
+  int32 max_order_qty_query(const MaxOrderQtyQueryReq &req) override;
+  int32 total_fund_asset_query(const TotalFundAssetQueryReq &req) override;
+  int32 fund_maxdraw_query(const FundMaxdrawQueryReq &req) override;
+  int32 cust_margin_avl_query(const CustMarginAvlQueryReq &req) override;
+  int32 asset_debts_query(const AssetDebtsQueryReq &req) override;
+  int32 credit_max_order_qty_query(const CreditMaxOrderQtyQueryReq &req) override;
   int32 start() override;
   void stop() override;
 

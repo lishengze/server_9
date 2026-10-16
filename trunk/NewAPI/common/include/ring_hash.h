@@ -142,10 +142,23 @@ public:
    */
   int32 init(int32 it_num, ring_hash_kv<D> **pmem = NULL) {
     int32 tb = comm_utils::calc_power(it_num);
+    // 修复：原版 `1L << tb` 当 tb >= 63 时是 UB（移位 >= 字长），
+    // 返回 0 后 new[...] 分配 0 字节但指针有效,后续 basket[1+] 越界读。
+    // 限制 tb 最大 63,超出返回错误。
+    if (unlikely(tb >= 63)) {
+      return LBERR_ARGV_WRONG;
+    }
     uint64 ts = (1L << tb);
 
     hash_mask = ts - 1;
+    // P2-20: 重复 init 防护——若已有 basket 且是本类创建的，先释放旧 basket
+    // 避免内存泄漏（hash_map_mth::init 有类似守卫）。
     if (NULL == pmem) {
+      if (NULL != basket && creat_mem == 1) {
+        delete[] basket;
+        basket = NULL;
+        creat_mem = 0;
+      }
       basket = new (std::nothrow) ring_hash_kv<D> *[ts];
       if (NULL == basket)
         return LBERR_MEM_ALLOC_FAIL;
@@ -199,27 +212,11 @@ public:
    */
   ~ring_hash() { close(); }
 
-  /**
-   * @brief 拷贝构造函数
-   *
-   * @warning 仅共享basket指针，creat_mem设为0防止双重释放
-   */
-  ring_hash(const ring_hash &src) {
-    hash_mask = src.hash_mask;
-    basket = src.basket;
-    creat_mem = 0;
-  }
-  /**
-   * @brief 赋值操作符
-   *
-   * @warning 仅共享basket指针，creat_mem设为0防止双重释放
-   */
-  ring_hash &operator=(const ring_hash &src) {
-    hash_mask = src.hash_mask;
-    basket = src.basket;
-    creat_mem = 0;
-    return *this;
-  }
+  // 值类型（浅拷贝 + creat_mem=0 的语义很容易让两个实例互相踩踏）。
+  ring_hash(const ring_hash &) = delete;
+  ring_hash &operator=(const ring_hash &) = delete;
+  // 抑制 -Wunused-private-field 关于 filled 的警告（之前在 init/clear 中未使用）
+  void _unused_filled(void) const { (void)filled; }
 };
 
 } // namespace lb_common

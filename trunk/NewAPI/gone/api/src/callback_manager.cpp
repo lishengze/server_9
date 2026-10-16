@@ -295,6 +295,150 @@ void callback_manager::on_position_query_ans(const CustPositionInfo *ans_arr, co
   trigger();
 }
 
+void callback_manager::on_max_order_qty_query_ans(const CustMaxOrderQtyInfo &info) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_max_order_qty_query_ans(info);
+    return;
+  }
+  int32_t data_len = sizeof(CustMaxOrderQtyInfo);
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=max_order_qty_query,ret=" << pos << ",client_req_no=" << info.client_req_no
+                   << ",fund_account_id=" << info.fund_account_id.data() << ",branch_id=" << info.branch_id.data() << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::max_order_qty_query;
+  head->data_len = data_len;
+  *reinterpret_cast<CustMaxOrderQtyInfo *>(data + sizeof(cb_event_head)) = info;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_total_fund_asset_query_ans(const CustTotalFundAssetInfo *ans_arr, const QueryAnsCtl &ctl) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_total_fund_asset_query_ans(ans_arr, ctl);
+    return;
+  }
+  int32_t arr_bytes = ctl.count * sizeof(CustTotalFundAssetInfo);
+  int32_t data_len = sizeof(QueryAnsCtl) + arr_bytes;
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=total_fund_asset_query,ret=" << pos << ",client_req_no=" << ctl.client_req_no
+                   << ",count=" << ctl.count << ",is_last=" << ctl.is_last << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::total_fund_asset_query;
+  head->data_len = data_len;
+  *reinterpret_cast<QueryAnsCtl *>(data + sizeof(cb_event_head)) = ctl;
+  if (arr_bytes > 0)
+    std::memcpy(data + sizeof(cb_event_head) + sizeof(QueryAnsCtl), ans_arr, arr_bytes);
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_fund_maxdraw_query_ans(const CustFundMaxdrawInfo *ans_arr, const QueryAnsCtl &ctl) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_fund_maxdraw_query_ans(ans_arr, ctl);
+    return;
+  }
+  int32_t arr_bytes = ctl.count * sizeof(CustFundMaxdrawInfo);
+  int32_t data_len = sizeof(QueryAnsCtl) + arr_bytes;
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=fund_maxdraw_query,ret=" << pos << ",client_req_no=" << ctl.client_req_no
+                   << ",count=" << ctl.count << ",is_last=" << ctl.is_last << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::fund_maxdraw_query;
+  head->data_len = data_len;
+  *reinterpret_cast<QueryAnsCtl *>(data + sizeof(cb_event_head)) = ctl;
+  if (arr_bytes > 0)
+    std::memcpy(data + sizeof(cb_event_head) + sizeof(QueryAnsCtl), ans_arr, arr_bytes);
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_cust_margin_avl_query_ans(const CustMarginAvlInfo &info) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_cust_margin_avl_query_ans(info);
+    return;
+  }
+  int32_t data_len = sizeof(CustMarginAvlInfo);
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=cust_margin_avl_query,ret=" << pos << ",client_req_no=" << info.client_req_no
+                   << ",fund_account_id=" << info.fund_account_id.data() << ",branch_id=" << info.branch_id.data() << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::cust_margin_avl_query;
+  head->data_len = data_len;
+  *reinterpret_cast<CustMarginAvlInfo *>(data + sizeof(cb_event_head)) = info;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_asset_debts_query_ans(const AssetDebtsInfo &info) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_asset_debts_query_ans(info);
+    return;
+  }
+  int32_t data_len = sizeof(AssetDebtsInfo);
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=asset_debts_query,ret=" << pos << ",client_req_no=" << info.client_req_no
+                   << ",fund_account_id=" << info.fund_account_id.data() << ",branch_id=" << info.branch_id.data() << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::asset_debts_query;
+  head->data_len = data_len;
+  *reinterpret_cast<AssetDebtsInfo *>(data + sizeof(cb_event_head)) = info;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_credit_max_order_qty_query_ans(const CreditMaxOrderQtyInfo &info) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_credit_max_order_qty_query_ans(info);
+    return;
+  }
+  int32_t data_len = sizeof(CreditMaxOrderQtyInfo);
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=credit_max_order_qty_query,ret=" << pos << ",client_req_no=" << info.client_req_no
+                   << ",fund_account_id=" << info.fund_account_id.data() << ",branch_id=" << info.branch_id.data() << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::credit_max_order_qty_query;
+  head->data_len = data_len;
+  *reinterpret_cast<CreditMaxOrderQtyInfo *>(data + sizeof(cb_event_head)) = info;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
 void callback_manager::on_link_status(int32_t counter_type, int32_t link_type, int32_t status) {
   if (mode_ == callback_mode::direct) {
     user_callback_->on_link_status(counter_type, link_type, status);
@@ -409,6 +553,38 @@ void callback_manager::do_work() {
       const QueryAnsCtl &ctl = *reinterpret_cast<const QueryAnsCtl *>(event_data);
       const CustPositionInfo *arr = reinterpret_cast<const CustPositionInfo *>(event_data + sizeof(QueryAnsCtl));
       user_callback_->on_position_query_ans(arr, ctl);
+      break;
+    }
+    case cb_event_type::max_order_qty_query: {
+      const CustMaxOrderQtyInfo &info = *reinterpret_cast<const CustMaxOrderQtyInfo *>(event_data);
+      user_callback_->on_max_order_qty_query_ans(info);
+      break;
+    }
+    case cb_event_type::total_fund_asset_query: {
+      const QueryAnsCtl &ctl = *reinterpret_cast<const QueryAnsCtl *>(event_data);
+      const CustTotalFundAssetInfo *arr = reinterpret_cast<const CustTotalFundAssetInfo *>(event_data + sizeof(QueryAnsCtl));
+      user_callback_->on_total_fund_asset_query_ans(arr, ctl);
+      break;
+    }
+    case cb_event_type::fund_maxdraw_query: {
+      const QueryAnsCtl &ctl = *reinterpret_cast<const QueryAnsCtl *>(event_data);
+      const CustFundMaxdrawInfo *arr = reinterpret_cast<const CustFundMaxdrawInfo *>(event_data + sizeof(QueryAnsCtl));
+      user_callback_->on_fund_maxdraw_query_ans(arr, ctl);
+      break;
+    }
+    case cb_event_type::cust_margin_avl_query: {
+      const CustMarginAvlInfo &info = *reinterpret_cast<const CustMarginAvlInfo *>(event_data);
+      user_callback_->on_cust_margin_avl_query_ans(info);
+      break;
+    }
+    case cb_event_type::asset_debts_query: {
+      const AssetDebtsInfo &info = *reinterpret_cast<const AssetDebtsInfo *>(event_data);
+      user_callback_->on_asset_debts_query_ans(info);
+      break;
+    }
+    case cb_event_type::credit_max_order_qty_query: {
+      const CreditMaxOrderQtyInfo &info = *reinterpret_cast<const CreditMaxOrderQtyInfo *>(event_data);
+      user_callback_->on_credit_max_order_qty_query_ans(info);
       break;
     }
     case cb_event_type::link_status: {

@@ -70,7 +70,7 @@ typedef std::uint64_t uint64;
  * @note 可通过 sysconf(_SC_LEVEL1_DCACHE_LINESIZE) 在运行时获取
  */
 #ifndef CACHE_ALIGN_SIZE
-#if defined(__x86_64__) || defined(__amd64__) || defined(__x86_64)
+#if defined(__x86_64__) || defined(__amd64__)
 #define CACHE_ALIGN_SIZE 64 //__builtin_ia32_cacheline_size()
 
 #elif defined(__aarch64__) || defined(__ARM_ARCH_8A__) || defined(__ARM_ARCH_9A__) // ARM CPU
@@ -140,7 +140,7 @@ typedef std::uint64_t uint64;
  * - riscv64: 16 字节
  */
 #ifndef SIMD_ALIGN_SIZE
-#if defined(__x86_64__) || defined(__amd64__) || defined(__x86_64)
+#if defined(__x86_64__) || defined(__amd64__)
 #define SIMD_ALIGN_SIZE 32
 
 #elif defined(__aarch64__) || defined(__ARM_ARCH_8A__) || defined(__ARM_ARCH_9A__) // ARM CPU
@@ -209,14 +209,17 @@ typedef std::uint64_t uint64;
  * @warning 在自旋锁循环中使用可降低功耗并提高 SMT 性能
  */
 #ifndef CPU_PAUSE
-#if defined(__x86_64__) || defined(__amd64__) || defined(__x86_64)
+#if defined(__x86_64__) || defined(__amd64__)
 #define CPU_PAUSE() __builtin_ia32_pause()
 
 #elif defined(__aarch64__) || defined(__ARM_ARCH_8A__) || defined(__ARM_ARCH_9A__) // ARM CPU
 #define CPU_PAUSE() __asm__ __volatile__("yield\n" : : : "memory")
 
 #elif defined(__riscv) && (__riscv_xlen == 64)
-#define CPU_PAUSE() __asm__ __volatile__("wfi\n" : : : "memory")
+// RISC-V 自旋暂停：U-mode 下 wfi 在标准实现中作为 nop，
+// 但若 mstatus.TW=1 则真的会休眠导致自旋锁挂死，故采用更安全的 nop。
+// 当启用 Zihintpause 扩展时可改用 .long 0x0100000F（pause hint）。
+#define CPU_PAUSE() __asm__ __volatile__("nop\n" : : : "memory")
 
 #else
 #define CPU_PAUSE() ((void)0)

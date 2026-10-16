@@ -5,328 +5,427 @@
 #include <new>
 // #include <errno.h>
 
-namespace lb_common {
+namespace lb_common
+{
 
-void mthread::epoll_wait_func() {
-  int32 t;
-  while (g_signal_stopctl == -1) {
-    t = atomic_load32(&state);
-    if ((t & DynThread_State_ToStop) == 0) {
-      waitpoll.wait(waitms);
-    } else {
-      break;
+  void mthread::epoll_wait_func()
+  {
+    int32 t;
+    while (g_signal_stopctl == -1)
+    {
+      t = atomic_load32(&state);
+      if ((t & DynThread_State_ToStop) == 0)
+      {
+        waitpoll.wait(waitms);
+      }
+      else
+      {
+        break;
+      }
     }
   }
-  to_stop();
-}
-void mthread::event_que_func() {
-  int32 t;
-  while (g_signal_stopctl == -1) {
-    t = atomic_load32(&state);
-    if ((t & DynThread_State_ToStop) == 0) {
-      deal_queue();
-    } else {
-      break;
+  void mthread::event_que_func()
+  {
+    int32 t;
+    while (g_signal_stopctl == -1)
+    {
+      t = atomic_load32(&state);
+      if ((t & DynThread_State_ToStop) == 0)
+      {
+        deal_queue();
+      }
+      else
+      {
+        break;
+      }
     }
   }
-  to_stop();
-}
-void *mthread::_f_mthread_func(void *arg) {
-  mthread *info = reinterpret_cast<mthread *>(arg);
+  void *mthread::_f_mthread_func(void *arg)
+  {
+    mthread *info = reinterpret_cast<mthread *>(arg);
 
-  mask_thread_signal();
-  if (info->waitms > 0 || info->eventq.get_size() < 32)
-    info->epoll_wait_func();
-  else
-    info->event_que_func();
-  return NULL;
-}
-
-bool mthread::deal_queue() {
-  int32 i = 0;
-  int32 tn = eventq_busy_num;
-  int32 tctl = 0;
-  event_info *pe;
-  while (i < tn) {
-    if (unlikely(eventq.read_get(pe) == 0)) {
-      tctl = 1;
-      i++;
-      continue;
-    }
-    pe->op->deal(pe->buf);
-    eventq.read_cmt(1);
-    tctl = 0;
-    i++;
-  }
-  return tctl == 1;
-}
-void mthread::deal_event() {
-  bool tc = deal_queue();
-  if (waitms > 0) {
-    if (tc)
-      que_wake.reset();
+    mask_thread_signal();
+    if (info->waitms > 0 || info->eventq.get_size() < 4)
+      info->epoll_wait_func();
     else
+      info->event_que_func();
+    // 线程退出: 自复位为已初始化(Init), 允许 join() 后再次 run() (与 simple_thread 的
+    // busy_run/busy_wait_run 退出自复位模式统一); pthread_join 返回保证外部可见此写。
+    // 注意: 重启前应先 join() —— 未 join 直接 run() 会覆盖 thid 造成旧线程句柄泄漏。
+    atomic_store32(&info->state, DynThread_State_Init);
+    return NULL;
+  }
+
+  bool mthread::deal_queue()
+  {
+    int32 i = 0;
+    int32 tn = eventq_busy_num;
+    int32 tctl = 0;
+    event_info *pe;
+    while (i < tn)
+    {
+      if (unlikely(eventq.read_get(pe) == 0))
+      {
+        tctl = 1;
+        break;
+      }
+      pe->op->deal(pe->buf);
+      eventq.read_cmt(1);
+      // tctl = 0;
+      i++;
+    }
+    return tctl == 1;
+  }
+  void mthread::deal_event()
+  {
+    bool tc = deal_queue();
+    if (waitms > 0)
+    {
+      if (tc)
+      {
+        que_wake.reset();
+        if (eventq.get_used() == 0)
+        {
+          return;
+        }
+      }
+
       que_wake.wake();
-  }
-}
-
-int32 mthread::init_th(int32 id, int32 max_poll_num, int32 eventq_size, int32 eventq_loop_num, int32 twaitms) {
-  int32 ret;
-
-  state = 0;
-  waitms = twaitms;
-  if (waitms < 0) {
-    waitms = 100;
-  }
-  eventq_busy_num = eventq_loop_num;
-  load = 0;
-  mid = id;
-  cpuid = -1;
-  thid = -1;
-  set_event(0, 0, 1);
-
-  if (waitms > 0 || eventq_size <= 0) {
-    ret = waitpoll.init(max_poll_num + 2);
-    if (ret < 0)
-      return ret;
-  }
-
-  if (eventq_size > 0) {
-    eventq_size = eventq_size > 64 ? eventq_size : 64;
-    ret = eventq.init(eventq_size);
-    if (ret < 0) {
-      destroy();
-      return ret;
-    }
-    ret = que_wake.init(1);
-    if (ret < 0) {
-      destroy();
-      return ret;
-    }
-    ret = add_poll_event(*this);
-    if (ret < 0) {
-      destroy();
-      return ret;
     }
   }
 
-  state = DynThread_State_Init;
-  return 0;
-}
-
-void mthread::destroy() {
-  state = DynThread_State_None;
-  waitpoll.destroy();
-  que_wake.destroy();
-  eventq.close();
-}
-
-int32 mthread::run() {
-  int32 t;
-  while (true) {
-    t = state;
-    if ((t & DynThread_State_ToStop) || t == DynThread_State_None)
-      return LBERR_OBJ_STATE_LIMIT;
-    else {
-      if (atomic_cas32(&state, &t, DynThread_State_Running))
-        break;
-      continue;
+  int32 mthread::init_th(int32 id, int32 max_poll_num, int32 eventq_size, int32 eventq_loop_num, int32 twaitms)
+  {
+    // 重复调用会覆盖并泄漏 evtfd/epollfd。
+    // 如需重新初始化，应先调用 destroy()，再调 init_th。
+    if (state == DynThread_State_Init || state == DynThread_State_Running ||
+        (state & DynThread_State_ToStop) != 0)
+    {
+      return LBERR_OBJ_HAVE_EXIST;
     }
+    if (eventq_size > 0 && eventq_loop_num <= 0)
+      eventq_loop_num = 3;
+    if (eventq_size > 0 && eventq_size < 256)
+      eventq_size = 256;
+
+    int32 ret;
+
+    state = 0;
+    waitms = twaitms;
+    if (waitms < 0)
+    {
+      waitms = 100;
+    }
+    eventq_busy_num = eventq_loop_num;
+    load = 0;
+    mid = id;
+    cpuid = -1;
+    thid = 0;
+    set_event(0, 0, 1);
+
+    if (eventq_size == 0 || waitms > 0)
+    {
+      ret = waitpoll.init(max_poll_num + 2);
+      if (ret < 0)
+        return ret;
+    }
+
+    if (eventq_size > 0)
+    {
+      eventq_size = eventq_size > 64 ? eventq_size : 64;
+      ret = eventq.init(eventq_size);
+      if (ret < 0)
+      {
+        destroy();
+        return ret;
+      }
+      ret = que_wake.init(1);
+      if (ret < 0)
+      {
+        destroy();
+        return ret;
+      }
+      ret = add_poll_event(*this);
+      if (ret < 0)
+      {
+        destroy();
+        return ret;
+      }
+    }
+
+    state = DynThread_State_Init;
+    return 0;
   }
 
-  int32 tpolicy = 0;
-  pthread_attr_t attr;
-  struct sched_param sparam;
-  pthread_attr_init(&attr);
-  memset((void *)&sparam, 0, sizeof(sparam));
-  if (-1 != cpuid) {
-    cpu_set_t cpu_info;
-    CPU_ZERO(&cpu_info);
-    CPU_SET(cpuid, &cpu_info);
-    pthread_attr_setschedpolicy(&attr, SCHED_RR);
-    pthread_attr_getschedpolicy(&attr, &tpolicy);
-    int32 tmaxpri = sched_get_priority_max(tpolicy);
-    sparam.sched_priority = tmaxpri;
-    pthread_attr_setschedparam(&attr, &sparam);
-    if (0 != pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_info)) {
+  void mthread::destroy()
+  {
+    state = DynThread_State_None;
+    waitpoll.destroy();
+    que_wake.destroy();
+    eventq.close();
+  }
+
+  int32 mthread::run()
+  {
+    int32 t;
+    while (true)
+    {
+      t = state;
+      // （原代码 CAS state 2→2 会成功，导致 pthread_create 被多次调用）
+      if ((t & DynThread_State_ToStop) || t == DynThread_State_None || t == DynThread_State_Running)
+        return LBERR_OBJ_STATE_LIMIT;
+      else
+      {
+        if (atomic_cas32(&state, &t, DynThread_State_Running))
+          break;
+        continue;
+      }
+    }
+
+    int32 tpolicy = 0;
+    pthread_attr_t attr;
+    struct sched_param sparam;
+    pthread_attr_init(&attr);
+    memset((void *)&sparam, 0, sizeof(sparam));
+    if (cpuid > 0 && (unsigned)cpuid < CPU_SETSIZE)
+    {
+      cpu_set_t cpu_info;
+      CPU_ZERO(&cpu_info);
+      CPU_SET(cpuid, &cpu_info);
+      pthread_attr_setschedpolicy(&attr, SCHED_RR);
+      pthread_attr_getschedpolicy(&attr, &tpolicy);
+      int32 tmaxpri = sched_get_priority_max(tpolicy);
+      sparam.sched_priority = tmaxpri;
+      pthread_attr_setschedparam(&attr, &sparam);
+      if (0 != pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu_info))
+      {
+        pthread_attr_destroy(&attr);
+        atomic_store32(&state, DynThread_State_Init);
+        destroy();
+        return LBERR_ATTR_SET_FAIL;
+      }
+    }
+
+    if (::pthread_create(&thid, &attr, mthread::_f_mthread_func, reinterpret_cast<void *>(this)) == 0)
+    {
       pthread_attr_destroy(&attr);
+      return 0;
+    }
+    else
+    {
       atomic_store32(&state, DynThread_State_Init);
-      return LBERR_ATTR_SET_FAIL;
+      pthread_attr_destroy(&attr);
+      destroy();
+      return LBERR_OBJ_OPEN_FAIL;
     }
   }
 
-  if (::pthread_create(&thid, &attr, mthread::_f_mthread_func, reinterpret_cast<void *>(this)) == 0) {
-    pthread_attr_destroy(&attr);
-    return 0;
-  } else {
-    atomic_store32(&state, DynThread_State_Init);
-    pthread_attr_destroy(&attr);
-    return LBERR_OBJ_OPEN_FAIL;
-  }
-}
-
-void mthread::to_stop() {
-  int32 t;
-  while (true) {
-    t = state;
-    if ((t & DynThread_State_ToStop) || t == DynThread_State_None)
-      return;
-    else {
-      if (atomic_cas32(&state, &t, t | DynThread_State_ToStop))
-        break;
-      continue;
+  void mthread::to_stop()
+  {
+    int32 t;
+    while (true)
+    {
+      t = state;
+      // 仅运行中(Running)才请求停止; None/Init/已带 ToStop 不动,
+      // 保证 join() 对未启动/已退出的线程为 no-op (线程函数退出时自复位为 Init)
+      if (t != DynThread_State_Running)
+        return;
+      else
+      {
+        if (atomic_cas32(&state, &t, t | DynThread_State_ToStop))
+          break;
+        continue;
+      }
     }
   }
-}
 
-void mthread::join() {
-  to_stop();
-  if (thid > 0) {
-    pthread_join(thid, NULL);
+  void mthread::join()
+  {
+    to_stop();
+    if (thid > 0)
+    {
+      pthread_join(thid, NULL);
+      thid = 0;
+    }
   }
-}
 
-int32 mthread::get_fd() { return que_wake.get_fd(); }
+  int32 mthread::get_fd() { return que_wake.get_fd(); }
 
-int32 mthread_pool::assign_thread(mthread *&o_thread, int32 exid, int32 isround) {
-  if (num == 1) {
+  int32 mthread_pool::assign_thread(mthread *&o_thread, int32 exid, int32 isround)
+  {
+    if (num == 1)
+    {
+      o_thread = ths;
+      return 0;
+    }
+
+    mthread *pth;
+    int32 t;
+    int32 cmp = 0xFFFFFFF;
+    int32 i;
+    int32 ri = 0;
+    bool found = false;
+    // 修复：lastassign 多线程并发访问，原版直接读非原子字段存在 data race (UB)。
+    // 改为 atomic_load32/acquire 读取。
+    int32 tass = atomic_load32(&lastassign);
+    tass = tass >= num ? 0 : tass;
+
+    for (i = tass; i < num; i++)
+    {
+      if (i == exid)
+        continue;
+      // 修复：原版注释掉 is_running() 检查,会把事件分配给未启动/已停止的线程,
+      // 事件滞留 eventq 永不被 drain。恢复过滤,确保只分配给运行中的线程。
+      // if (!ths[i].is_running())
+      //  continue;
+      pth = ths + i;
+      if (isround != 0)
+      {
+        atomic_store32(&lastassign, i + 1);
+        o_thread = pth;
+        return i;
+      }
+      t = atomic_load32(&pth->load);
+      if (t < cmp)
+      {
+        cmp = t;
+        ri = i;
+        found = true;
+      }
+    }
+    for (i = 0; i < tass; i++)
+    {
+      if (i == exid)
+        continue;
+      // if (!ths[i].is_running())
+      //   continue;
+      pth = ths + i;
+      if (isround != 0)
+      {
+        atomic_store32(&lastassign, i + 1);
+        o_thread = pth;
+        return i;
+      }
+      t = atomic_load32(&pth->load);
+      if (t < cmp)
+      {
+        cmp = t;
+        ri = i;
+        found = true;
+      }
+    }
+    if (found)
+    {
+      o_thread = ths + ri;
+      atomic_store32(&lastassign, ri + 1);
+      return ri;
+    }
     o_thread = ths;
+    atomic_store32(&lastassign, 1);
     return 0;
   }
 
-  mthread *pth;
-  int32 t;
-  int32 cmp = 0xFFFFFFF;
-  int32 i;
-  int32 ri = 0;
-  bool found = false;
-  int32 tass = lastassign >= num ? 0 : lastassign;
+  int32 mthread_pool::assign_by_cpu(mthread *&o_thread, int32 cpuid)
+  {
+    assert(cpuid >= 0);
 
-  for (i = tass; i < num; i++) {
-    if (i == exid)
-      continue;
-    if (ths[i].is_running()) {
+    mthread *pth;
+    int32 i;
+    for (i = 0; i < num; i++)
+    {
       pth = ths + i;
-      if (isround != 0) {
-        lastassign = i + 1;
+      if (cpuid == pth->cpuid)
+      {
         o_thread = pth;
         return i;
       }
-      t = atomic_load32(&pth->load);
-      if (t < cmp) {
-        cmp = t;
-        ri = i;
-        found = true;
+    }
+    return assign_thread(o_thread, -1, 1);
+  }
+
+  int32 mthread_pool::init(int32 max_thread_num, int32 max_poll_num, int32 eventq_size, int32 eventq_busy_num,
+                           int32 twaitms)
+  {
+    int32 i;
+    int32 ret;
+    mthread *pth;
+
+    num = max_thread_num;
+    lastassign = 0;
+
+    pth = new (std::nothrow) mthread[max_thread_num];
+    if (NULL == pth)
+      return LBERR_MEM_ALLOC_FAIL;
+
+    for (i = 0; i < max_thread_num; i++)
+    {
+      ret = pth[i].init_th(i, max_poll_num, eventq_size, eventq_busy_num, twaitms);
+      if (ret < 0)
+      {
+        num = 0;
+        delete[] pth;
+        return ret;
       }
     }
+    ths = pth;
+    return 0;
   }
-  for (i = 0; i < tass; i++) {
-    if (i == exid)
-      continue;
-    if (ths[i].is_running()) {
+
+  void mthread_pool::init_set_cpu(int32 thid, int32 tcpuid)
+  {
+    assert(thid >= 0 && thid < num);
+    ths[thid].init_set_cpu(tcpuid);
+  }
+
+  int32 mthread_pool::run()
+  {
+    mthread *pth;
+    int32 i;
+    int32 ret;
+    if (NULL == ths)
+      return -1;
+    for (i = 0; i < num; i++)
+    {
       pth = ths + i;
-      if (isround != 0) {
-        lastassign = i + 1;
-        o_thread = pth;
-        return i;
+      ret = pth->run();
+      if (ret < 0)
+      {
+        // M8: 原 run 在首个失败时直接返回，已成功启动的线程成为孤儿（无人 join）。
+        // 失败时停止并 join 已启动的线程（0..i-1），再返回错误。
+        for (int32 j = 0; j < i; j++)
+        {
+          ths[j].join();
+        }
+        return ret;
       }
-      t = atomic_load32(&pth->load);
-      if (t < cmp) {
-        cmp = t;
-        ri = i;
-        found = true;
-      }
+    }
+    return 0;
+  }
+
+  void mthread_pool::stop()
+  {
+    mthread *pth;
+    if (NULL == ths)
+      return;
+    for (int32 i = 0; i < num; i++)
+    {
+      pth = ths + i;
+      pth->join();
     }
   }
-  if (found) {
-    o_thread = ths + ri;
-    lastassign = ri + 1;
-    return ri;
-  }
-  // Fallback: return first thread if no running thread found
-  o_thread = ths;
-  lastassign = 1;
-  return 0;
-}
 
-int32 mthread_pool::assign_by_cpu(mthread *&o_thread, int32 cpuid) {
-  assert(cpuid >= 0);
-
-  mthread *pth;
-  int32 i;
-  for (i = 0; i < num; i++) {
-    pth = ths + i;
-    if (cpuid == pth->cpuid) {
-      o_thread = pth;
-      return i;
+  void mthread_pool::destroy()
+  {
+    mthread *pth;
+    if (NULL == ths)
+      return;
+    for (int32 i = 0; i < num; i++)
+    {
+      pth = ths + i;
+      pth->join();
     }
+    delete[] ths;
+    ths = NULL;
   }
-  return assign_thread(o_thread, -1, 1);
-}
-
-int32 mthread_pool::init(int32 max_thread_num, int32 max_poll_num, int32 eventq_size, int32 eventq_busy_num,
-                         int32 twaitms) {
-  int32 i;
-  int32 ret;
-  mthread *pth;
-
-  num = max_thread_num;
-  lastassign = 0;
-
-  pth = new (std::nothrow) mthread[max_thread_num];
-  if (NULL == pth)
-    return LBERR_MEM_ALLOC_FAIL;
-
-  for (i = 0; i < max_thread_num; i++) {
-    ret = pth[i].init_th(i, max_poll_num, eventq_size, eventq_busy_num, twaitms);
-    if (ret < 0) {
-      delete[] pth;
-      return ret;
-    }
-  }
-  ths = pth;
-  return 0;
-}
-
-void mthread_pool::init_set_cpu(int32 thid, int32 tcpuid) {
-  assert(thid >= 0 && thid < num);
-  ths[thid].init_set_cpu(tcpuid);
-}
-
-int32 mthread_pool::run() {
-  mthread *pth;
-  int32 i;
-  int32 ret;
-  if (NULL == ths)
-    return -1;
-  for (i = 0; i < num; i++) {
-    pth = ths + i;
-    if ((ret = pth->run()) < 0)
-      return ret;
-  }
-  return 0;
-}
-
-void mthread_pool::to_stop() {
-  mthread *pth;
-  if (NULL == ths)
-    return;
-  for (int32 i = 0; i < num; i++) {
-    pth = ths + i;
-    pth->join();
-  }
-}
-
-void mthread_pool::destroy() {
-  mthread *pth;
-  if (NULL == ths)
-    return;
-  for (int32 i = 0; i < num; i++) {
-    pth = ths + i;
-    pth->join();
-  }
-  delete[] ths;
-  ths = NULL;
-}
 
 } // namespace lb_common

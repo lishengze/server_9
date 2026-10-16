@@ -25,7 +25,7 @@ void csv_reader::close() {
     std::fclose(m_file);
     m_file = NULL;
   }
-  kv_map.clear();
+  kv_list.clear();
   read_len = 0;
   parse_len = 0;
   read_off = 0;
@@ -60,11 +60,27 @@ int32 csv_reader::open(const char *filename) {
   // 解析表头（第一个有效行）
   char *line_start = read_buf;
   char *line_end = NULL;
-  // 找第一个完整行（换行符\n为行结束）
+  // 找第一个完整行（换行符\n为行结束）。
+  // 同时支持 CRLF（截断 \r）。
   while (parse_len < read_len) {
     line_end = static_cast<char *>(std::memchr(line_start, '\n', read_len - parse_len));
     if (line_end == NULL) {
-      return LBERR_OBJ_NOT_HAVE;
+      // 末行无 \n（文件可能刚好 read_len 字节且末行无终止符），当作最后一行处理
+      char *tend = read_buf + read_len;
+      // 去掉末尾 \r（兼容 CRLF）
+      if (tend > line_start && *(tend - 1) == '\r') {
+        *(tend - 1) = '\0';
+      } else {
+        *tend = '\0';
+      }
+      parse_len = read_len;
+      line_start = cstr_utils::trim(line_start);
+      if (line_start[0] != '\0') {
+        line_end = tend; // 让后续代码识别为"已找到有效表头"
+        break;
+      }
+      // 末行是空白，没有有效表头
+      break;
     }
     parse_len = (line_end - read_buf + 1);
 
@@ -79,7 +95,7 @@ int32 csv_reader::open(const char *filename) {
     line_start = read_buf + parse_len;
   }
 
-  // 无有效表头（文件为空），视为正常
+  // 无有效表头（文件为空或全部空白），视为正常
   if (line_end == NULL) {
     return 0;
   }
@@ -95,7 +111,7 @@ int32 csv_reader::open(const char *filename) {
   // 遍历分割后的列
   for (size_t i = 0; i < cols.size(); i++) {
     char *tpi = cstr_utils::trim(cols[i]); // 列名去空白
-    kv_map[std::string(tpi)] = NULL;
+    kv_list.push_back({std::string(tpi), std::string()});
   }
 
   return 0;
@@ -138,12 +154,28 @@ int32 csv_reader::parse_line() {
     }
 
     if (is_eof) {
-      // 无换行符 + 已到文件末尾
+      // 现在把缓冲剩余部分当成最后一行处理（不要求 \n 结尾）。
+      if (unparse_len > 0) {
+        char *tend = unparse_start + unparse_len;
+        // 去掉末尾 \r（兼容 CRLF）
+        if (tend > unparse_start && *(tend - 1) == '\r') {
+          *(tend - 1) = '\0';
+        } else {
+          *tend = '\0';
+        }
+        parse_len = read_len;
+        line_start = cstr_utils::trim(unparse_start);
+        if (line_start[0] != '\0') {
+          break;
+        }
+      }
       return 0;
     }
 
     if (CSV_FILE_READ_LEN - unparse_len <= 0) {
       // 缓存已满且无换行符解析失败（超长行）
+      // 推进 parse_len 到缓存末尾，让下次调用能继续读取新数据
+      parse_len = read_len;
       return LBERR_OBJ_IS_FULL;
     }
 
@@ -173,26 +205,27 @@ int32 csv_reader::parse_line() {
   assert(NULL != line_start);
   std::vector<char *> cols;
   cstr_utils::split(cols, line_start, ',');
-  if (cols.size() < kv_map.size()) {
+  if (cols.size() < kv_list.size()) {
     return LBERR_OBJ_NUM_LIMIT;
   }
 
-  // 更新kv_map：列名对应该行的列数据指针
-  auto kv_iter = kv_map.begin();
-  for (size_t i = 0; i < cols.size() && kv_iter != kv_map.end(); ++i, ++kv_iter) {
+  // 更新列值：按插入顺序而非字典序。
+  for (size_t i = 0; i < cols.size() && i < kv_list.size(); ++i) {
     char *tpi = cstr_utils::trim(cols[i]);
-    kv_iter->second = tpi;
+    kv_list[i].second = std::string(tpi);
   }
 
   return 1; // 解析成功
 }
 
 // 辅助函数：查找列名对应的字符串
-char *csv_reader::find_col_value(const char *item_name) {
-  // 列名转小写匹配（和表头统一规则）
-  std::string key(item_name);
-  auto iter = kv_map.find(key);
-  return (iter != kv_map.end()) ? iter->second : NULL;
+const char *csv_reader::find_col_value(const char *item_name) {
+  for (const auto &kv : kv_list) {
+    if (kv.first == item_name) {
+      return kv.second.c_str();
+    }
+  }
+  return NULL;
 }
 
 // 读取char类型
@@ -201,7 +234,7 @@ int32 csv_reader::read(const char *iterm_name, char &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(iterm_name);
+  char *val_str = const_cast<char *>(find_col_value(iterm_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
@@ -213,7 +246,7 @@ int32 csv_reader::read(const char *iterm_name, unsigned char &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(iterm_name);
+  char *val_str = const_cast<char *>(find_col_value(iterm_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
@@ -227,7 +260,7 @@ int32 csv_reader::read(const char *item_name, char *o_val, int32 val_size) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE;
   }
@@ -244,14 +277,15 @@ int32 csv_reader::read(const char *item_name, int16 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long val = std::strtol(val_str, &end_ptr, 10);
-  if (end_ptr == val_str || val < INT16_MIN || val > INT16_MAX) {
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0' || val < INT16_MIN || val > INT16_MAX) {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<int16>(val);
@@ -262,14 +296,15 @@ int32 csv_reader::read(const char *item_name, uint16 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long val = std::strtol(val_str, &end_ptr, 10);
-  if (end_ptr == val_str || val < 0 || val > UINT16_MAX) {
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0' || val < 0 || val > UINT16_MAX) {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<uint16>(val);
@@ -282,14 +317,15 @@ int32 csv_reader::read(const char *item_name, int32 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long val = std::strtol(val_str, &end_ptr, 10);
-  if (end_ptr == val_str || val < INT32_MIN || val > INT32_MAX) {
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0' || val < INT32_MIN || val > INT32_MAX) {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<int32>(val);
@@ -300,14 +336,16 @@ int32 csv_reader::read(const char *item_name, uint32 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long val = std::strtol(val_str, &end_ptr, 10);
-  if (end_ptr == val_str || val < 0 || val > UINT32_MAX) {
+  // P2-01: 同 ini_reader，加 ERANGE 与尾随检查。
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0' || val < 0 || val > UINT32_MAX) {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<uint32>(val);
@@ -320,14 +358,15 @@ int32 csv_reader::read(const char *item_name, int64 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long long val = std::strtoll(val_str, &end_ptr, 10);
-  if (end_ptr == val_str) {
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0') {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<int64>(val);
@@ -338,14 +377,15 @@ int32 csv_reader::read(const char *item_name, uint64 &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
 
   char *end_ptr = NULL;
+  errno = 0;
   long long val = std::strtoll(val_str, &end_ptr, 10);
-  if (end_ptr == val_str) {
+  if (end_ptr == val_str || errno == ERANGE || *end_ptr != '\0' || val < 0) {
     return LBERR_OBJ_NUM_LIMIT;
   }
   o_val = static_cast<uint64>(val);
@@ -358,7 +398,7 @@ int32 csv_reader::read(const char *item_name, float &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
@@ -379,7 +419,7 @@ int32 csv_reader::read(const char *item_name, double &o_val) {
     return LBERR_ARGV_WRONG;
   }
 
-  char *val_str = find_col_value(item_name);
+  char *val_str = const_cast<char *>(find_col_value(item_name));
   if (val_str == NULL) {
     return LBERR_OBJ_NOT_HAVE; // 列名不存在
   }
@@ -399,9 +439,12 @@ int32 csv_writer::open(const char *filename, int32 is_add) {
     return LBERR_ARGV_WRONG;
   }
 
-  close();
-
+  // M4: 原代码先 close()（内部加锁再解锁），再重新加锁 fopen，二者之间存在
+  // 窗口：并发 write_line 在此窗口内拿到 m_file==NULL 而丢写。
+  // 改为先持锁，在持锁期间 close_unlocked() + fopen，消除窗口
+  // （cmutex 非递归，不能在持锁时再调会加锁的 close()）。
   clock_guard<cmutex> tlg(m_lock);
+  close_unlocked();
 
   // 打开文件
   if (is_add == 0) {
@@ -421,10 +464,8 @@ int32 csv_writer::open(const char *filename, int32 is_add) {
   return 0;
 }
 
-// 关闭文件，刷新缓冲区（关键：防止缓冲数据丢失）
-void csv_writer::close() {
-  clock_guard<cmutex> tlg(m_lock);
-
+// 关闭文件（不加锁版本，供 open() 在已持锁时调用）
+void csv_writer::close_unlocked() {
   if (m_file != NULL) {
     // 先刷新库缓冲到内核
     std::fflush(m_file);
@@ -434,9 +475,15 @@ void csv_writer::close() {
   }
 }
 
+// 关闭文件，刷新缓冲区（关键：防止缓冲数据丢失）
+void csv_writer::close() {
+  clock_guard<cmutex> tlg(m_lock);
+  close_unlocked();
+}
+
 // 写入一行完整数据，平衡Linux下的完整性和性能
 int32 csv_writer::write_line(char *line_data, int32 data_len) {
-  if (line_data == NULL || data_len <= 0) {
+  if (line_data == NULL || data_len <= 0 || data_len > (1 << 20)) {
     return LBERR_ARGV_WRONG; // 参数非法
   }
 
@@ -467,7 +514,10 @@ int32 csv_writer::write_line(char *line_data, int32 data_len) {
   return 0;
 }
 void csv_writer::sync_line() {
+  // 且与 write_line/close 并发时不安全。
+  clock_guard<cmutex> tlg(m_lock);
   if (m_file != NULL) {
+    std::fflush(m_file);
     fsync(fileno(m_file));
   }
 }

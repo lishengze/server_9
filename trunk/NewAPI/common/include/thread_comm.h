@@ -10,6 +10,7 @@
 
 #include "comm_sys.h"
 #include <pthread.h>
+#include <signal.h>
 
 namespace lb_common {
 
@@ -27,8 +28,12 @@ typedef void *(*f_thread_comfunc)(void *arg);
  * @brief 全局信号停止控制变量
  *
  * 用于控制线程的停止状态，-1表示正常运行
+ *
+ *       确保信号处理函数中的写与工作线程中的读是定义行为
+ *       （C++ 内存模型下非 atomic 的跨线程读写是 UB，虽然 x86 上 int
+ *       读写天然原子，但严格说需用 sig_atomic_t）。
  */
-extern int32 g_signal_stopctl;
+extern volatile sig_atomic_t g_signal_stopctl;
 
 /**
  * @brief 屏蔽线程信号
@@ -54,11 +59,12 @@ void install_signal_hand();
  *
  * 创建一个新线程并启动执行
  *
+ * @param[out] o_thid 输出参数，成功时返回线程ID
  * @param[in] pfunc 线程入口函数指针
  * @param[in] th_arg 传递给线程的参数
- * @return pthread_t 线程ID，失败返回错误码
+ * @return int32 0=成功，<0=错误码
  */
-pthread_t run_thread(f_thread_comfunc pfunc, void *th_arg);
+int32 run_thread(pthread_t &o_thid, f_thread_comfunc pfunc, void *th_arg);
 
 /**
  * @brief 等待线程结束

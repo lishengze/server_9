@@ -65,7 +65,12 @@ public:
    * @return int32 0表示成功，LBERR_OBJ_WRITE_FAIL表示写入失败
    */
   FORCE_INLINE int32 wake(int64 ctl = 1) {
-    if (write(ev_fd, &ctl, sizeof(int64)) > 0) {
+    // 检查 ev_fd 有效性，避免未初始化时 write() 触发 errno 副作用
+    if (unlikely(ev_fd < 0)) {
+      return LBERR_OBJ_WRITE_FAIL;
+    }
+    int32 ret = write(ev_fd, &ctl, sizeof(int64));
+    if (ret == (int32)sizeof(int64)) {
       return 0;
     }
     return LBERR_OBJ_WRITE_FAIL;
@@ -78,6 +83,11 @@ public:
    * 该函数为非阻塞操作，如果没有数据可读会立即返回。
    */
   FORCE_INLINE void reset() {
+    // M12: 与 wake() 一致，校验 ev_fd 有效性。未初始化时 read(-1) 会置 errno
+    // 并返回 -1，虽无 crash 但有副作用且语义不清。
+    if (unlikely(ev_fd < 0)) {
+      return;
+    }
     int64 data;
     read(ev_fd, &data, sizeof(int64));
   }

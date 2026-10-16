@@ -20,8 +20,14 @@ enum class cb_event_type : int32_t {
   trade_query = 5,
   fund_query = 6,
   position_query = 7,
-  link_status = 8,
-  error = 9
+  max_order_qty_query = 8,
+  total_fund_asset_query = 9,
+  fund_maxdraw_query = 10,
+  link_status = 11,
+  cust_margin_avl_query = 12,
+  asset_debts_query = 13,
+  credit_max_order_qty_query = 14,
+  error = 15
 };
 
 /// 回调事件头(每个回调事件开头)
@@ -99,6 +105,32 @@ public:
   /// @param ans_arr  持仓数组(由 c98 柜台分配, callback_manager 不负责释放)
   /// @param ctl      本次应答控制(条数+是否结束+客户请求号)
   void on_position_query_ans(const CustPositionInfo *ans_arr, const QueryAnsCtl &ctl);
+
+  /// 最大可委托数查询应答回调
+  /// @param info  最大可委托数信息
+  void on_max_order_qty_query_ans(const CustMaxOrderQtyInfo &info);
+
+  /// 客户总资产查询应答回调
+  /// @param ans_arr  总资产数组(由 c98 柜台分配, callback_manager 不负责释放)
+  /// @param ctl      本次应答控制(条数+是否结束+客户请求号)
+  void on_total_fund_asset_query_ans(const CustTotalFundAssetInfo *ans_arr, const QueryAnsCtl &ctl);
+
+  /// 可取资金查询应答回调
+  /// @param ans_arr  可取资金数组(由 c98 柜台分配, callback_manager 不负责释放)
+  /// @param ctl      本次应答控制(条数+是否结束+客户请求号)
+  void on_fund_maxdraw_query_ans(const CustFundMaxdrawInfo *ans_arr, const QueryAnsCtl &ctl);
+
+  /// 融资融券信用数据（可用保证金）查询应答回调
+  /// @param info  可用保证金信息(单条)
+  void on_cust_margin_avl_query_ans(const CustMarginAvlInfo &info);
+
+  /// 资产负债查询应答回调
+  /// @param info  资产负债信息(单条)
+  void on_asset_debts_query_ans(const AssetDebtsInfo &info);
+
+  /// 两融最大可委托数查询应答回调
+  /// @param info  两融最大可委托数信息(单条)
+  void on_credit_max_order_qty_query_ans(const CreditMaxOrderQtyInfo &info);
 
   /// 链接状态变化通知回调
   /// @param counter_type  柜台类型: 0=98柜台, 1=极速柜台

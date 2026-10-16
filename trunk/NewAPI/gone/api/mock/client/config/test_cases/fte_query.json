@@ -1,0 +1,351 @@
+{
+  "test_cases": [
+    {
+      "test_case": {
+        "name": "登录测试",
+        "description": "登录 counter98 柜台，后续查询的前置条件",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "login",
+        "fields": {
+          "client_req_no": 1001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "account_id": "A12345678901",
+          "cust_id": "C000000000000001",
+          "password": "TEST000000001",
+          "order_way_ext": "7",
+          "user_info": "mock_client"
+        }
+      },
+      "expected_response": {
+        "type": "login",
+        "fields": {
+          "cust_id": "C000000000000001",
+          "fund_account_id": "1000000000000001",
+          "account_id": "A12345678901",
+          "branch_id": "0001",
+          "err_code": 0
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "资金查询",
+        "description": "查询资金账户余额、可用、冻结等信息",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "fund_query",
+        "fields": {
+          "client_req_no": 7001,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001"
+        }
+      },
+      "expected_response": {
+        "type": "fund_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0,
+          "avail_amount": null,
+          "token_amount": null,
+          "frozen_amount": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "持仓查询",
+        "description": "查询证券持仓信息",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "position_query",
+        "fields": {
+          "client_req_no": 7002,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "market_type": 1,
+          "security_id": "600007",
+          "query_index": 0,
+          "return_num": 50
+        }
+      },
+      "expected_response": {
+        "type": "position_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "委托查询",
+        "description": "查询当日委托记录",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "order_query",
+        "fields": {
+          "client_req_no": 7003,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "order_sys_no": 0,
+          "user_seq_id": 0
+        }
+      },
+      "expected_response": {
+        "type": "order_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "成交查询",
+        "description": "查询当日成交记录",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "trade_query",
+        "fields": {
+          "client_req_no": 7004,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "order_sys_no": 0,
+          "user_seq_id": 0
+        }
+      },
+      "expected_response": {
+        "type": "trade_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "最大可委托数查询",
+        "description": "查询指定证券的最大可委托数量",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "max_order_qty_query",
+        "fields": {
+          "client_req_no": 7005,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "market_type": 1,
+          "security_id": "600007",
+          "business_type": 0,
+          "side": "1",
+          "price": 250200,
+          "sh_account_id": "A12345678901",
+          "sz_account_id": ""
+        }
+      },
+      "expected_response": {
+        "type": "max_order_qty_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "security_id": "600007",
+          "err_code": 0,
+          "max_order_qty": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "总资产查询",
+        "description": "查询客户总资产信息（资金+证券市值）",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "total_fund_asset_query",
+        "fields": {
+          "client_req_no": 7006,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001"
+        }
+      },
+      "expected_response": {
+        "type": "total_fund_asset_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0,
+          "total_asset": null,
+          "fund_bal": null,
+          "stk_value": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "可取资金查询",
+        "description": "查询可取资金金额",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "fund_maxdraw_query",
+        "fields": {
+          "client_req_no": 7007,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "currency": "0"
+        }
+      },
+      "expected_response": {
+        "type": "fund_maxdraw_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0,
+          "fund_maxdraw": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "可用保证金查询",
+        "description": "查询信用账户可用保证金信息",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "cust_margin_avl_query",
+        "fields": {
+          "client_req_no": 7008,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "currency": "0",
+          "market_id": 1,
+          "security_id": "600007",
+          "credit_direct": "0"
+        }
+      },
+      "expected_response": {
+        "type": "cust_margin_avl_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0,
+          "margin_avl": null,
+          "credit_bal": null,
+          "credit_avl": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "资产负债查询",
+        "description": "查询信用账户资产负债信息",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "asset_debts_query",
+        "fields": {
+          "client_req_no": 7009,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "currency": "0"
+        }
+      },
+      "expected_response": {
+        "type": "asset_debts_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "err_code": 0,
+          "asset": null,
+          "liability": null,
+          "fund_bal": null,
+          "fund_avl": null,
+          "keep_rate": null
+        },
+        "validate": ["err_code"]
+      }
+    },
+    {
+      "test_case": {
+        "name": "两融最大可委托数查询",
+        "description": "查询两融业务最大可委托数量",
+        "counter_type": "gw_direct",
+        "timeout_ms": 5000
+      },
+      "request": {
+        "type": "credit_max_order_qty_query",
+        "fields": {
+          "client_req_no": 7010,
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "market_type": 1,
+          "security_id": "600007",
+          "business_type": 0,
+          "side": "1",
+          "price": 250200
+        }
+      },
+      "expected_response": {
+        "type": "credit_max_order_qty_query_ans",
+        "fields": {
+          "fund_account_id": "1000000000000001",
+          "branch_id": "0001",
+          "cust_id": "C000000000000001",
+          "security_id": "600007",
+          "err_code": 0,
+          "max_order_qty": null
+        },
+        "validate": ["err_code"]
+      }
+    }
+  ]
+}

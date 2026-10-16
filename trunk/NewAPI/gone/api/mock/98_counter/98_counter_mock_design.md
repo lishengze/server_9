@@ -1,17 +1,17 @@
 # 98_counter_mock 设计文档
 
-> **目的**：模拟 98 柜台服务端，为 API 的 98_counter 模块提供连接、登录、心跳等基础功能的测试支持。
+> **目的**：模拟 98 柜台服务端，为 API 的 98_counter 模块提供连接、登录、心跳、委托、撤单、查询等全功能测试支持。
 > **输出目录**：`mock/98_counter/`
-> **参考协议**：`c98msg_tmp.h`（临时 98 协议定义）
+> **参考协议**：`lb_counter98_protocol.h`（Archforce AGW 协议，位于 `gone/counter98/`）
 > **参考实现**：`counter98.h` / `counter98.cpp`
-> **参考 CMakeLists**：`trunk/NewAPI/gone/api/CMakeLists.txt`
+> **协议源文件**：`gone/counter98/` 目录下的 AGW 协议编解码源文件
 
 ---
 
 ## 目录
 
 1. [模块定位与架构](#1-模块定位与架构)
-2. [98 协议分析](#2-98-协议分析)
+2. [AGW 协议分析](#2-agw-协议分析)
 3. [API 98_counter 模块考察](#3-api-98_counter-模块考察)
 4. [功能清单](#4-功能清单)
 5. [UML 类图](#5-uml-类图)
@@ -36,7 +36,7 @@
 │  │  mock_client     │────→│  liblbapi.so (被测 API)      │  │
 │  │  (测试驱动)       │     │  ┌───────────────────────┐  │  │
 │  └──────────────────┘     │  │ counter98 模块         │  │  │
-│                           │  │ (98 协议处理)          │  │  │
+│                           │  │ (AGW 协议处理)         │  │  │
 │                           │  └───────────┬───────────┘  │  │
 │                           └──────────────┼──────────────┘  │
 │                                          │                  │
@@ -46,7 +46,8 @@
 │                           │  ┌───────────────────────┐  │  │
 │                           │  │ TCP Server            │  │  │
 │                           │  │ (AGW 登录 + 账户登录   │  │  │
-│                           │  │  + 心跳)              │  │  │
+│                           │  │  + 心跳 + 委托/撤单    │  │  │
+│                           │  │  + 各类查询)           │  │  │
 │                           │  └───────────────────────┘  │  │
 │                           └──────────────────────────────┘  │
 │                                                              │
@@ -59,22 +60,34 @@
 counter98 (API 侧)
     │
     │ ① deal_agw_login() → build_agw_login_msg()
-    │    ── TCP send ──→ c98_msg_head_tmp(C98_MSG_AGW_LOGIN_REQ) + c98_agw_login_req
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgLogin) + AgwMsgLogin(编码体) + check_sum
     │
-    │ ② ←── TCP recv ── c98_msg_head_tmp(C98_MSG_AGW_LOGIN_ANS) + c98_agw_login_ans
+    │ ② ←── TCP recv ── raw_agw_header(kAgwMsgLogin) + AgwMsgLogin(应答体) + check_sum
     │    deal_agwuser_login_ans()
     │
     │ ③ deal_login_req() → build_cust_login_event() → LINK_EVENT_TYPE_ACCOUNT_LOGIN
-    │    ── TCP send ──→ c98_msg_head_tmp(C98_MSG_ACC_LOGIN_REQ) + c98_acc_login_req
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgCustLoginReq) + AgwMsgCustLoginReq(编码体) + check_sum
     │
-    │ ④ ←── TCP recv ── c98_msg_head_tmp(C98_MSG_ACC_LOGIN_ANS) + c98_acc_login_ans
+    │ ④ ←── TCP recv ── raw_agw_header(kAgwMsgCustLoginResp) + AgwMsgCustLoginResp(应答体) + check_sum
     │    deal_cust_login_ans()
     │
     │ ⑤ build_heart_msg()
-    │    ── TCP send ──→ c98_msg_head_tmp(C98_MSG_HEART_REQ)
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgHeartBeat) + check_sum
     │
-    │ ⑥ ←── TCP recv ── c98_msg_head_tmp(C98_MSG_HEART_ANS)
+    │ ⑥ ←── TCP recv ── raw_agw_header(kAgwMsgHeartBeat) + check_sum
     │    deal_heart_msg_ans()
+    │
+    │ ⑦ build_order_msg() → 委托
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgCashAuctionOrder) + AgwMsgCashAuctionOrder + check_sum
+    │    ←── TCP recv ── raw_agw_header(kAgwMsgCashAuctionTradeER) + AgwMsgCashAuctionTradeER + check_sum
+    │
+    │ ⑧ build_cancel_msg() → 撤单
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgCancelOrder) + AgwMsgCancelOrder + check_sum
+    │    ←── TCP recv ── raw_agw_header(kAgwMsgCancelOrder) + AgwMsgOrderStatusAck + check_sum
+    │
+    │ ⑨ 各类查询（资金/持仓/委托/成交/最大可委托数等）
+    │    ── TCP send ──→ raw_agw_header(kAgwMsgExtQuery*) + 查询请求体 + check_sum
+    │    ←── TCP recv ── raw_agw_header(kAgwMsgExtQueryResult*) + 查询结果体 + check_sum
     │
     ▼
 98_counter_mock (本组件)
@@ -82,93 +95,101 @@ counter98 (API 侧)
 
 ---
 
-## 2. 98 协议分析
+## 2. AGW 协议分析
 
 ### 2.1 报文格式
 
+Mock 使用 Archforce AGW 协议（与 API 侧 `counter98.cpp` 完全一致），线格式如下：
+
 ```
-┌──────────────────────┬──────────────────────┐
-│ c98_msg_head_tmp 16B │ 消息体 msg_len B     │
-│ msg_id(4) | msg_len(4) | seq_no(8)         │
-└──────────────────────┴──────────────────────┘
-whole_msg_len = sizeof(c98_msg_head_tmp) + msg_len
+┌──────────────────────┬──────────────────────┬──────────────────┐
+│ raw_agw_header 16B   │ Body (变长)           │ CheckSum 4B      │
+│ msg_type(4) |        │ (MessageEncoder 编码) │ (网络字节序)      │
+│ msg_ver(2)  |        │                      │                  │
+│ reserver(2) |        │                      │                  │
+│ seq_num(4)  |        │                      │                  │
+│ body_length(4)       │                      │                  │
+└──────────────────────┴──────────────────────┴──────────────────┘
+whole_msg_len = sizeof(raw_agw_header) + body_length + sizeof(uint32_t)
 ```
+
+**关键说明**：
+- `body_length` 仅含 Body 长度，不含 Header 和 CheckSum
+- CheckSum 覆盖 Header + Body，逐字节累加后 `% 256`，以 4 字节网络字节序传输
+- Body 使用 `lb_counter98::MessageEncoder` / `MessageDecoder` 进行编解码
+- `raw_agw_header` 定义在 `agw_protocol.h` 中，与 `gone/counter98/` 协议层共用
 
 ### 2.2 消息类型定义
 
-| 消息号 | 宏定义 | 方向 | 消息体 | 说明 |
-|--------|--------|------|--------|------|
-| 10001 | `C98_MSG_AGW_LOGIN_REQ` | API→Mock | `c98_agw_login_req` | AGW 登录请求 |
-| 20001 | `C98_MSG_AGW_LOGIN_ANS` | Mock→API | `c98_agw_login_ans` | AGW 登录应答 |
-| 10002 | `C98_MSG_ACC_LOGIN_REQ` | API→Mock | `c98_acc_login_req` | 账户登录请求 |
-| 20002 | `C98_MSG_ACC_LOGIN_ANS` | Mock→API | `c98_acc_login_ans` | 账户登录应答 |
-| 10003 | `C98_MSG_HEART_REQ` | API→Mock | 无消息体 | 心跳请求 |
-| 20003 | `C98_MSG_HEART_ANS` | Mock→API | 无消息体 | 心跳应答 |
+消息类型常量定义在 `lb_counter98_protocol.h`（re-export 自 `constants_agw_external.h`）：
 
-### 2.3 数据结构
+#### 2.2.1 登录 / 心跳
+
+| 常量 | 方向 | 消息体 | 说明 |
+|------|------|--------|------|
+| `lb_counter98::kAgwMsgLogin` | API→Mock / Mock→API | `AgwMsgLogin` | AGW 登录请求/应答（同消息类型双向使用） |
+| `lb_counter98::kAgwMsgCustLoginReq` | API→Mock | `AgwMsgCustLoginReq` | 客户登录请求 |
+| `lb_counter98::kAgwMsgCustLoginResp` | Mock→API | `AgwMsgCustLoginResp` | 客户登录应答 |
+| `lb_counter98::kAgwMsgHeartBeat` | API→Mock / Mock→API | 无消息体 | 心跳请求/应答 |
+
+#### 2.2.2 委托 / 撤单
+
+| 常量 | 方向 | 消息体 | 说明 |
+|------|------|--------|------|
+| `lb_counter98::kAgwMsgCashAuctionOrder` | API→Mock | `AgwMsgCashAuctionOrder` | 普通竞价委托请求 |
+| `lb_counter98::kAgwMsgCashAuctionTradeER` | Mock→API | `AgwMsgCashAuctionTradeER` | 委托成交回报 |
+| `lb_counter98::kAgwMsgCancelOrder` | API→Mock | `AgwMsgCancelOrder` | 撤单请求 |
+| `lb_counter98::kAgwMsgCancelOrder` | Mock→API | `AgwMsgOrderStatusAck` | 撤单应答（同消息类型，不同消息体） |
+
+#### 2.2.3 查询
+
+| 常量 | 方向 | 消息体 | 说明 |
+|------|------|--------|------|
+| `lb_counter98::kAgwMsgExtQueryOrder` | API→Mock | `AgwMsgExtQueryOrder` | 当日委托查询 |
+| `lb_counter98::kAgwMsgExtQueryResultOrder` | Mock→API | `AgwMsgExtQueryResultOrder` | 委托查询结果 |
+| `lb_counter98::kAgwMsgExtQueryTradeOrder` | API→Mock | `AgwMsgExtQueryTradeOrder` | 当日成交查询 |
+| `lb_counter98::kAgwMsgExtQueryResultTradeOrder` | Mock→API | `AgwMsgExtQueryResultTradeOrder` | 成交查询结果 |
+| `lb_counter98::kAgwMsgExtQueryFund` | API→Mock | `AgwMsgExtQueryFund` | 资金查询 |
+| `lb_counter98::kAgwMsgExtQueryResultFund` | Mock→API | `AgwMsgExtQueryResultFund` | 资金查询结果 |
+| `lb_counter98::kAgwMsgExtQuerySelfShare` | API→Mock | `AgwMsgExtQuerySelfShare` | 持仓查询 |
+| `lb_counter98::kAgwMsgExtQueryResultSelfShare` | Mock→API | `AgwMsgExtQueryResultSelfShare` | 持仓查询结果 |
+| `lb_counter98::kAgwMsgExtQueryMaxOrderQty` | API→Mock | `AgwMsgExtQueryMaxOrderQty` | 最大可委托数查询 |
+| `lb_counter98::kAgwMsgExtQueryMaxOrderQtyResult` | Mock→API | `AgwMsgExtQueryMaxOrderQtyResult` | 最大可委托数查询结果 |
+| `lb_counter98::kAgwMsgExternalQueryTotalFundAsset` | API→Mock | `AgwMsgExternalQueryTotalFundAsset` | 总资金资产查询 |
+| `lb_counter98::kAgwMsgExtQueryResultTotalFundAsset` | Mock→API | `AgwMsgExtQueryResultTotalFundAsset` | 总资金资产查询结果 |
+| `lb_counter98::kAgwMsgExtQueryFundMaxdraw` | API→Mock | `AgwMsgExtQueryFundMaxdraw` | 资金最大可取查询 |
+| `lb_counter98::kAgwMsgExtQueryResultFundMaxdraw` | Mock→API | `AgwMsgExtQueryResultFundMaxdraw` | 资金最大可取查询结果 |
+| `lb_counter98::kAgwMsgExtQueryCustMarginAvl` | API→Mock | `AgwMsgExtQueryCustMarginAvl` | 客户保证金可用查询 |
+| `lb_counter98::kAgwMsgExtQueryResultCustMarginAvl` | Mock→API | `AgwMsgExtQueryResultCustMarginAvl` | 客户保证金可用查询结果 |
+| `lb_counter98::kAgwMsgExtQueryAssetDebts` | API→Mock | `AgwMsgExtQueryAssetDebts` | 资产负债查询 |
+| `lb_counter98::kAgwMsgExtQueryResultAssetDebts` | Mock→API | `AgwMsgExtQueryResultAssetDebts` | 资产负债查询结果 |
+| `lb_counter98::kAgwMsgExtQueryCreditMaxOrderQty` | API→Mock | `AgwMsgExtQueryCreditMaxOrderQty` | 两融最大可委托数查询 |
+| `lb_counter98::kAgwMsgExtQueryCreditMaxOrderQtyResult` | Mock→API | `AgwMsgExtQueryCreditMaxOrderQtyResult` | 两融最大可委托数查询结果 |
+
+### 2.3 协议编解码
+
+Mock 直接复用 `gone/counter98/` 协议层的编解码设施：
 
 ```cpp
-// 消息头（16 字节）
-struct c98_msg_head_tmp {
-    uint32_t msg_id;   // 消息号
-    uint32_t msg_len;  // 包体长度（不含头）
-    int64_t  seq_no;   // 流消息号
-};
+// 编码：将 AGW 消息体序列化到 SerializeBuffer
+lb_counter98::SerializeBuffer buf;
+lb_counter98::MessageEncoder encoder(buf);
+msg.Encode(encoder);
 
-// AGW 登录请求（API → Mock）
-struct c98_agw_login_req {
-    int64_t  client_req_no;
-    char     agw_user[32];
-    char     agw_user_password[256];
-    char     version[64];
-};
-
-// AGW 登录应答（Mock → API）
-struct c98_agw_login_ans {
-    int64_t  client_req_no;
-    char     agw_user[32];
-    char     session[32];     // 会话信息
-    int32_t  err_code;        // 错误码
-    char     err_msg[128];    // 错误信息
-};
-
-// 账户登录请求（API → Mock）
-struct c98_acc_login_req {
-    int64_t  client_req_no;
-    char     cust_id[16];
-    char     fund_account_id[16];
-    char     branch_id[10];
-    char     account_id[12];
-    char     password[256];
-    char     session[32];
-    char     end_code[1024];
-    int16_t  market_type;
-    uint16_t heart_bt_int;
-    char     order_way[2];
-    char     version[64];
-};
-
-// 账户登录应答（Mock → API）
-struct c98_acc_login_ans {
-    int64_t  client_req_no;
-    char     cust_id[16];
-    char     fund_account_id[16];
-    char     branch_id[10];
-    char     account_id[12];
-    char     password[256];
-    char     session[32];
-    char     user_info[64];
-    char     end_code[1024];
-    int16_t  market_type;
-    uint16_t heart_bt_int;
-    char     order_way_ext[2];
-    int32_t  err_code;
-    char     err_msg[128];
-    int64_t  login_time;
-};
-
-// 心跳请求/应答：仅消息头，无消息体
+// 解码：从接收缓冲区反序列化 AGW 消息体
+lb_counter98::MessageDecoder decoder(body, body_len);
+msg.Decode(decoder);
 ```
+
+**agw_protocol.h** 提供了以下辅助函数：
+
+| 函数 | 说明 |
+|------|------|
+| `calc_check_sum(data, len)` | 计算 CheckSum（逐字节累加 % 256） |
+| `write_agw_msg(o_buf, msg_type, msg_ver, body, body_len)` | 写 Header + Body + CheckSum 到缓冲区 |
+| `encode_body<MsgType>(msg, buf)` | 模板：编码消息体到 SerializeBuffer |
+| `decode_body<MsgType>(msg, body, body_len)` | 模板：从缓冲区解码消息体 |
+| `agw_msg_type_name(msg_type)` | 获取消息类型名称（用于日志） |
 
 ---
 
@@ -183,7 +204,7 @@ struct c98_acc_login_ans {
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | `deal_agw_login()` | ✅ 实现 | 同步等待，CAS 状态机，超时控制 |
-| `build_agw_login_msg()` | ✅ 实现 | 构造 `c98_msg_head_tmp` + `c98_agw_login_req` |
+| `build_agw_login_msg()` | ✅ 实现 | 构造 `AgwMsgLogin` 并通过 `MessageEncoder` 编码 |
 | `deal_agwuser_login_ans()` | ✅ 实现 | 解析 AGW 登录应答，设置 `agw_login_state` |
 | `ans_agwuser_login()` | ✅ 实现 | 设置状态 + 回调 |
 
@@ -205,12 +226,12 @@ agw_login_state = 0 (未登录，可重试)
 | `deal_login_req()` | ✅ 实现 | 将 `LoginReq` 转为 `acc_login_event_info` 入队 |
 | `build_cust_login_event()` | ✅ 实现 | 字段转换完整 |
 | `deal_cust_login()` | ⚠️ 有缺陷 | `cust_need_login = false` 硬编码，**永远不走账户登录** |
-| `build_login_msg()` | ✅ 实现 | 构造 `c98_msg_head_tmp` + `c98_acc_login_req` |
+| `build_login_msg()` | ✅ 实现 | 构造 `AgwMsgCustLoginReq` 并编码 |
 | `deal_cust_login_ans()` | ✅ 实现 | 解析应答，触发极速柜台登录 |
 | `delive_fast_counter_login()` | ✅ 实现 | 投递账户登录事件到极速柜台队列 |
 
-**关键缺陷**：`deal_cust_login()` 第 719 行 `bool cust_need_login = false;` 硬编码为 false，导致：
-- API 永远不向 98 柜台发送 `C98_MSG_ACC_LOGIN_REQ` 消息
+**关键缺陷**：`deal_cust_login()` 中 `bool cust_need_login = false;` 硬编码为 false，导致：
+- API 永远不向 98 柜台发送 `kAgwMsgCustLoginReq` 消息
 - 直接跳转到 `delive_fast_counter_login()` 进入极速柜台登录阶段
 - 98 账户登录链路实际上被跳过
 
@@ -220,8 +241,8 @@ agw_login_state = 0 (未登录，可重试)
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| `build_heart_msg()` | ✅ 实现 | 构造 `c98_msg_head_tmp(C98_MSG_HEART_REQ)` |
-| `deal_recv_msg()` 中 `C98_MSG_HEART_ANS` | ✅ 实现 | 调用 `deal_heart_msg_ans()` |
+| `build_heart_msg()` | ✅ 实现 | 构造 `kAgwMsgHeartBeat` 消息 |
+| `deal_recv_msg()` 中 `kAgwMsgHeartBeat` | ✅ 实现 | 调用 `deal_heart_msg_ans()` |
 
 #### 3.1.4 链接管理（✅ 可用）
 
@@ -231,21 +252,21 @@ agw_login_state = 0 (未登录，可重试)
 | `deal_link_close()` | ✅ 实现 | 设置 `trade_link_connect_=0`，回调 `on_link_status` |
 | `can_link_connect()` | ✅ 实现 | 仅 `LINK_TYPE_98` 返回 true |
 
-#### 3.1.5 其他（❌ 待实现，不影响 mock）
+#### 3.1.5 委托/撤单/查询（⚠️ 部分实现）
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| `build_order_msg()` | ❌ 空 | 委托消息构造 |
-| `build_cancel_msg()` | ❌ 空 | 撤单消息构造 |
-| 所有查询消息构造 | ❌ 空 | 查询相关 |
-| `deal_send_error()` | ❌ 空 | 发送失败处理 |
+| `build_order_msg()` | ⚠️ 待完善 | 委托消息构造 |
+| `build_cancel_msg()` | ⚠️ 待完善 | 撤单消息构造 |
+| 各查询消息构造 | ⚠️ 待完善 | 查询相关 |
 
 ### 3.2 总结
 
 **对 mock 开发的影响**：
-- mock 需要支持 AGW 登录（`C98_MSG_AGW_LOGIN_REQ/ANS`）和账户登录（`C98_MSG_ACC_LOGIN_REQ/ANS`）两个阶段
-- 需要支持心跳（`C98_MSG_HEART_REQ/ANS`）
-- 账户登录应答中需要回填 `session`，供 API 侧触发极速柜台登录
+- mock 需要支持 AGW 登录（`kAgwMsgLogin`）和客户登录（`kAgwMsgCustLoginReq`/`kAgwMsgCustLoginResp`）两个阶段
+- 需要支持心跳（`kAgwMsgHeartBeat`）
+- 需要支持委托（`kAgwMsgCashAuctionOrder`）、撤单（`kAgwMsgCancelOrder`）及各类查询
+- 客户登录应答中需要回填 `fund_account_array`，供 API 侧触发极速柜台登录
 
 **需要修复的 API 缺陷**：
 - `deal_cust_login()` 中 `cust_need_login = false` → 应改为 `true` 或实现正确判断逻辑
@@ -259,47 +280,63 @@ agw_login_state = 0 (未登录，可重试)
 | 编号 | 功能 | 描述 | 优先级 |
 |------|------|------|--------|
 | F1 | TCP Server | 监听指定端口，接受 API 连接 | P0 |
-| F2 | 消息帧解析 | 解析 `c98_msg_head_tmp` 头，提取 msg_id/msg_len | P0 |
-| F3 | AGW 登录处理 | 接收 `C98_MSG_AGW_LOGIN_REQ`，返回 `C98_MSG_AGW_LOGIN_ANS` | P0 |
-| F4 | 账户登录处理 | 接收 `C98_MSG_ACC_LOGIN_REQ`，返回 `C98_MSG_ACC_LOGIN_ANS` | P0 |
-| F5 | 心跳处理 | 接收 `C98_MSG_HEART_REQ`，返回 `C98_MSG_HEART_ANS` | P0 |
-| F6 | 登出处理 | 接收连接关闭，清理会话 | P1 |
-| F7 | 多连接支持 | 支持多个 API 实例同时连接 | P1 |
-| F8 | 配置化账户 | 通过 JSON 配置可用的 AGW 用户和账户信息 | P0 |
-| F9 | 日志输出 | 记录所有接收/发送的消息 | P1 |
+| F2 | 消息帧解析 | 解析 `raw_agw_header` 头，提取 msg_type/body_length，处理粘包/拆包 | P0 |
+| F3 | AGW 登录处理 | 接收 `kAgwMsgLogin`，验证用户/密码，返回应答 | P0 |
+| F4 | 客户登录处理 | 接收 `kAgwMsgCustLoginReq`，验证资金账号/密码，返回 `kAgwMsgCustLoginResp` | P0 |
+| F5 | 心跳处理 | 接收 `kAgwMsgHeartBeat`，回送空心跳 | P0 |
+| F6 | 委托处理 | 接收 `kAgwMsgCashAuctionOrder`，返回 `kAgwMsgCashAuctionTradeER` 委托确认 | P0 |
+| F7 | 撤单处理 | 接收 `kAgwMsgCancelOrder`，返回 `kAgwMsgOrderStatusAck` 撤单确认 | P0 |
+| F8 | 查询处理 | 支持委托/成交/资金/持仓/最大可委托数等 11 类查询 | P0 |
+| F9 | 登出处理 | 接收连接关闭，清理会话 | P1 |
+| F10 | 多连接支持 | 支持多个 API 实例同时连接 | P1 |
+| F11 | 配置化账户 | 通过 JSON 配置可用的 AGW 用户和账户信息 | P0 |
+| F12 | 日志输出 | 记录所有接收/发送的消息 | P1 |
 
 ### 4.2 消息处理规则
 
 | 接收消息 | 处理逻辑 | 返回消息 |
 |---------|---------|---------|
-| `C98_MSG_AGW_LOGIN_REQ` | 验证 `agw_user`/`agw_user_password`，生成 `session` | `C98_MSG_AGW_LOGIN_ANS` |
-| `C98_MSG_ACC_LOGIN_REQ` | 验证 `fund_account_id`/`password`，回填 `session` | `C98_MSG_ACC_LOGIN_ANS` |
-| `C98_MSG_HEART_REQ` | 更新最后心跳时间 | `C98_MSG_HEART_ANS` |
+| `kAgwMsgLogin` | 验证 `sender_comp_id`/`password`，生成 session | `kAgwMsgLogin`（应答） |
+| `kAgwMsgCustLoginReq` | 验证 `fund_account_id`/`password`，回填 `fund_account_array` | `kAgwMsgCustLoginResp` |
+| `kAgwMsgHeartBeat` | 更新最后心跳时间 | `kAgwMsgHeartBeat`（空体） |
+| `kAgwMsgCashAuctionOrder` | 解析委托请求，构造委托确认回报 | `kAgwMsgCashAuctionTradeER` |
+| `kAgwMsgCancelOrder` | 解析撤单请求，构造撤单确认 | `kAgwMsgCancelOrder`（`AgwMsgOrderStatusAck`） |
+| `kAgwMsgExtQueryOrder` | 返回模拟委托查询结果 | `kAgwMsgExtQueryResultOrder` |
+| `kAgwMsgExtQueryTradeOrder` | 返回模拟成交查询结果 | `kAgwMsgExtQueryResultTradeOrder` |
+| `kAgwMsgExtQueryFund` | 返回模拟资金数据（余额1亿/可用8千万/冻结2千万） | `kAgwMsgExtQueryResultFund` |
+| `kAgwMsgExtQuerySelfShare` | 返回模拟持仓查询结果 | `kAgwMsgExtQueryResultSelfShare` |
+| `kAgwMsgExtQueryMaxOrderQty` | 返回模拟最大可委托数（100000） | `kAgwMsgExtQueryMaxOrderQtyResult` |
+| `kAgwMsgExternalQueryTotalFundAsset` | 返回模拟总资金资产 | `kAgwMsgExtQueryResultTotalFundAsset` |
+| `kAgwMsgExtQueryFundMaxdraw` | 返回模拟资金最大可取 | `kAgwMsgExtQueryResultFundMaxdraw` |
+| `kAgwMsgExtQueryCustMarginAvl` | 返回模拟保证金可用数据 | `kAgwMsgExtQueryResultCustMarginAvl` |
+| `kAgwMsgExtQueryAssetDebts` | 返回模拟资产负债数据 | `kAgwMsgExtQueryResultAssetDebts` |
+| `kAgwMsgExtQueryCreditMaxOrderQty` | 返回模拟两融最大可委托数 | `kAgwMsgExtQueryCreditMaxOrderQtyResult` |
 | 未知消息 | 记录日志，跳过 | 无返回 |
 
 ### 4.3 登录验证规则
 
 **AGW 登录验证**：
 ```
-if (agw_user == config.agw_users[n].user && 
-    agw_password == config.agw_users[n].password) {
-    err_code = 0;
-    session = generate_session_id();
+if (sender_comp_id == config.agw_users[n].user && 
+    password == config.agw_users[n].password) {
+    // 成功: 在应答 sender_comp_id 中携带 session
+    agw_session_ = "mock_session_" + fd
 } else {
-    err_code = ERR_INVALID_CREDENTIALS;
-    err_msg = "Invalid AGW user or password";
+    // 失败: 不设置 session
 }
 ```
 
-**账户登录验证**：
+**客户登录验证**：
 ```
 if (fund_account_id == config.accounts[n].fund_account_id &&
     password == config.accounts[n].password) {
-    err_code = 0;
-    // 回填 cust_id, account_id, session 等
+    // 成功: 填充 fund_account_array
+    ans.key_error_code = ""
+    ans.key_error_msg = ""
 } else {
-    err_code = ERR_INVALID_ACCOUNT;
-    err_msg = "Invalid account or password";
+    // 失败
+    ans.key_error_code = "1"
+    ans.key_error_msg = "invalid fund account or password"
 }
 ```
 
@@ -310,58 +347,77 @@ if (fund_account_id == config.accounts[n].fund_account_id &&
 ```mermaid
 classDiagram
     class Counter98Server {
-        -int listen_port_
+        -ServerConfig config_
+        -AccountManager acct_mgr_
         -int server_fd_
-        -bool running_
-        -vector~ClientSession~ sessions_
-        -AccountManager* account_mgr_
+        -atomic~bool~ running_
+        -vector~ClientSession*~ sessions_
+        -mutex sessions_mutex_
+        +load_config(const string& path) bool
         +start() bool
         +stop()
+        +is_running() bool
         +set_port(int port)
-        +load_config(const string& path) bool
         -accept_loop()
-        -handle_client(int client_fd)
+        -cleanup_loop()
     }
 
     class ClientSession {
         -int fd_
-        -string session_id_
-        -string agw_user_
-        -string fund_account_id_
+        -AccountManager* acct_mgr_
         -time_t last_heartbeat_
+        -bool disconnected_
+        -bool closed_
         -bool agw_logged_in_
-        -bool account_logged_in_
-        +handle_message(const c98_msg_head_tmp* head, const char* body)
-        +send_message(uint32_t msg_id, const void* body, uint32_t body_len)
-        +send_heartbeat_ans()
+        -string agw_session_
+        -set~string~ logged_accounts_
+        -vector~char~ recv_buf_
+        +fd() int
+        +feed_data(const char* data, size_t len) int
         +close()
+        +mark_disconnected()
+        +is_disconnected() bool
         +is_timeout(int timeout_sec) bool
-        -handle_agw_login(const c98_agw_login_req* req)
-        -handle_acc_login(const c98_acc_login_req* req)
-        -handle_heartbeat()
+        -handle_message(const raw_agw_header& hdr, const char* body, int32_t body_len)
+        -send_data(const char* data, int32_t len)
+        -send_agw_msg(uint32_t msg_type, uint16_t msg_ver, const char* body, uint32_t body_len)
+        -send_agw_msg(uint32_t msg_type, uint16_t msg_ver, const SerializeBuffer& buf)
+        -handle_agw_login(const char* body, int32_t body_len)
+        -handle_cust_login(const char* body, int32_t body_len)
+        -handle_heartbeat(const char* body, int32_t body_len)
+        -handle_order(const char* body, int32_t body_len)
+        -handle_cancel(const char* body, int32_t body_len)
+        -handle_query_order(const char* body, int32_t body_len)
+        -handle_query_trade(const char* body, int32_t body_len)
+        -handle_query_fund(const char* body, int32_t body_len)
+        -handle_query_position(const char* body, int32_t body_len)
+        -handle_query_max_order_qty(const char* body, int32_t body_len)
+        -handle_query_total_fund(const char* body, int32_t body_len)
+        -handle_query_fund_maxdraw(const char* body, int32_t body_len)
+        -handle_query_cust_margin_avl(const char* body, int32_t body_len)
+        -handle_query_asset_debts(const char* body, int32_t body_len)
+        -handle_query_credit_max_order_qty(const char* body, int32_t body_len)
     }
 
     class AccountManager {
         -vector~AgwUserConfig~ agw_users_
         -vector~AccountConfig~ accounts_
+        -int64_t session_counter_
+        -mutex mutex_
         +load_config(const string& path) bool
         +verify_agw_user(const string& user, const string& password) bool
         +verify_account(const string& fund_account_id, const string& password) bool
-        +get_account_info(const string& fund_account_id, AccountConfig& info) bool
+        +get_account_info(const string& fund_account_id, AccountConfig& info) const bool
         +generate_session_id() string
+        +agw_users() const vector~AgwUserConfig~&
+        +accounts() const vector~AccountConfig~&
     }
 
-    class MessageParser {
-        +parse_header(const char* data, size_t len, c98_msg_head_tmp& head) bool
-        +get_body(const char* data, size_t len, const c98_msg_head_tmp& head) const char*
-        +build_header(char* buf, size_t cap, uint32_t msg_id, uint32_t msg_len, int64_t seq_no) int
-    }
-
-    class Config {
+    class ServerConfig {
         +int listen_port
         +int heartbeat_timeout
-        +vector~AgwUserConfig~ agw_users
-        +vector~AccountConfig~ accounts
+        +string log_file
+        +string log_level
     }
 
     class AgwUserConfig {
@@ -380,10 +436,11 @@ classDiagram
         +string description
     }
 
+    note for ClientSession "使用 agw_protocol.h 辅助函数:\n- write_agw_msg() 组包\n- encode_body() / decode_body() 编解码\n- agw_msg_type_name() 日志\n使用 message_parser.h 辅助函数:\n- parse_agw_header() 解析头\n- agw_msg_total_len() 计算总长\n- verify_agw_checksum() 校验"
+
     Counter98Server *-- ClientSession : manages
     Counter98Server *-- AccountManager
-    Counter98Server --> Config : loads
-    ClientSession --> MessageParser : uses
+    Counter98Server --> ServerConfig : contains
     ClientSession --> AccountManager : uses
     AccountManager --> AgwUserConfig : contains
     AccountManager --> AccountConfig : contains
@@ -408,23 +465,23 @@ sequenceDiagram
     
     Note over API,Mock: 阶段 2：AGW 登录
     API->>API: deal_agw_login() 同步等待
-    API->>Mock: c98_msg_head(10001) + c98_agw_login_req
-    Mock->>Cfg: 验证 agw_user/password
-    Mock-->>API: c98_msg_head(20001) + c98_agw_login_ans(err_code=0, session="SESS001")
+    API->>Mock: raw_agw_header(kAgwMsgLogin) + AgwMsgLogin + check_sum
+    Mock->>Cfg: 验证 sender_comp_id/password
+    Mock-->>API: raw_agw_header(kAgwMsgLogin) + AgwMsgLogin(应答, session) + check_sum
     API->>API: deal_agwuser_login_ans() → agw_login_state=2
     
-    Note over API,Mock: 阶段 3：账户登录
+    Note over API,Mock: 阶段 3：客户登录
     API->>API: deal_login_req(LoginReq)
     API->>API: deal_cust_login() → build_login_msg()
-    API->>Mock: c98_msg_head(10002) + c98_acc_login_req
+    API->>Mock: raw_agw_header(kAgwMsgCustLoginReq) + AgwMsgCustLoginReq + check_sum
     Mock->>Cfg: 验证 fund_account_id/password
-    Mock-->>API: c98_msg_head(20002) + c98_acc_login_ans(err_code=0, session="SESS001")
+    Mock-->>API: raw_agw_header(kAgwMsgCustLoginResp) + AgwMsgCustLoginResp + check_sum
     API->>API: deal_cust_login_ans() → delive_fast_counter_login()
     
     Note over API,Mock: 阶段 4：心跳维持
-    loop 每 5 秒
-        API->>Mock: c98_msg_head(10003) [心跳请求]
-        Mock-->>API: c98_msg_head(20003) [心跳应答]
+    loop 每 N 秒
+        API->>Mock: raw_agw_header(kAgwMsgHeartBeat) + check_sum
+        Mock-->>API: raw_agw_header(kAgwMsgHeartBeat) + check_sum
         API->>API: deal_heart_msg_ans()
     end
     
@@ -441,15 +498,51 @@ sequenceDiagram
     participant API as liblbapi.so
     participant Mock as 98_counter_mock
     
-    API->>Mock: c98_msg_head(10001) + c98_agw_login_req(user="wrong_user")
+    API->>Mock: raw_agw_header(kAgwMsgLogin) + AgwMsgLogin(user="wrong_user")
     Mock->>Mock: 验证失败
-    Mock-->>API: c98_msg_head(20001) + c98_agw_login_ans(err_code=1001, err_msg="Invalid user")
+    Mock-->>API: raw_agw_header(kAgwMsgLogin) + AgwMsgLogin(无 session)
     API->>API: ans_agwuser_login(LBAPI_ERR_LOGIN_FAIL)
     API->>API: on_error(agw_user_login, ...)
     Note over API: agw_login_state = 0，可重试
 ```
 
-### 6.3 多连接场景
+### 6.3 委托 + 撤单流程
+
+```mermaid
+sequenceDiagram
+    participant API as liblbapi.so (counter98)
+    participant Mock as 98_counter_mock
+    
+    Note over API,Mock: 委托
+    API->>Mock: raw_agw_header(kAgwMsgCashAuctionOrder) + AgwMsgCashAuctionOrder + check_sum
+    Mock->>Mock: 解析委托请求，构造确认回报
+    Mock-->>API: raw_agw_header(kAgwMsgCashAuctionTradeER) + AgwMsgCashAuctionTradeER + check_sum
+    API->>API: deal_recv_msg() → 回调 on_order_rtn()
+    
+    Note over API,Mock: 撤单
+    API->>Mock: raw_agw_header(kAgwMsgCancelOrder) + AgwMsgCancelOrder + check_sum
+    Mock->>Mock: 解析撤单请求，构造撤单确认
+    Mock-->>API: raw_agw_header(kAgwMsgCancelOrder) + AgwMsgOrderStatusAck + check_sum
+    API->>API: deal_recv_msg() → 回调 on_order_rtn()
+```
+
+### 6.4 查询流程
+
+```mermaid
+sequenceDiagram
+    participant API as liblbapi.so (counter98)
+    participant Mock as 98_counter_mock
+    
+    Note over API,Mock: 资金查询示例
+    API->>Mock: raw_agw_header(kAgwMsgExtQueryFund) + AgwMsgExtQueryFund + check_sum
+    Mock->>Mock: 返回模拟资金数据
+    Mock-->>API: raw_agw_header(kAgwMsgExtQueryResultFund) + AgwMsgExtQueryResultFund + check_sum
+    API->>API: deal_recv_msg() → 回调 on_fund_query_result()
+    
+    Note over API,Mock: 其他查询类似（持仓/委托/成交/最大可委托数等）
+```
+
+### 6.5 多连接场景
 
 ```mermaid
 sequenceDiagram
@@ -466,13 +559,13 @@ sequenceDiagram
     par 并行处理
         API1->>Mock: AGW 登录请求
         Mock-->>API1: AGW 登录应答
-        API1->>Mock: 账户登录请求
-        Mock-->>API1: 账户登录应答
+        API1->>Mock: 客户登录请求
+        Mock-->>API1: 客户登录应答
     and
         API2->>Mock: AGW 登录请求
         Mock-->>API2: AGW 登录应答
-        API2->>Mock: 账户登录请求
-        Mock-->>API2: 账户登录应答
+        API2->>Mock: 客户登录请求
+        Mock-->>API2: 客户登录应答
     end
     
     par 并行心跳
@@ -496,14 +589,25 @@ mock/98_counter/
 │   ├── counter98_server.h              ← Counter98Server 类声明
 │   ├── counter98_server.cpp            ← Counter98Server 实现
 │   ├── client_session.h                ← ClientSession 类声明
-│   ├── client_session.cpp              ← ClientSession 实现
+│   ├── client_session.cpp              ← ClientSession 实现（AGW 协议消息处理）
 │   ├── account_manager.h               ← AccountManager 类声明
 │   ├── account_manager.cpp             ← AccountManager 实现
-│   ├── message_parser.h                ← MessageParser 类声明
-│   └── message_parser.cpp              ← MessageParser 实现
+│   ├── agw_protocol.h                  ← AGW 协议辅助（raw_agw_header, CheckSum, 编解码模板）[新增]
+│   └── message_parser.h                ← AGW 消息解析辅助（header-only）[重写]
 └── config/
     └── server_config.json              ← 服务端配置示例
 ```
+
+**文件变更说明**：
+
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `agw_protocol.h` | **新增** | AGW 协议辅助函数：`raw_agw_header` 结构、`calc_check_sum`、`write_agw_msg`、`encode_body`/`decode_body` 模板、`agw_msg_type_name` |
+| `message_parser.h` | **重写** | 从旧的 `c98_msg_head_tmp` 解析改为 AGW 线格式解析（header-only，提供 `parse_agw_header`、`agw_msg_total_len`、`verify_agw_checksum`） |
+| `message_parser.cpp` | **删除** | 解析逻辑已内联到 `message_parser.h`（header-only） |
+| `client_session.h` | **重写** | 从 `c98_msg_head_tmp` 消息处理改为 AGW 协议消息处理，新增委托/撤单/查询等 handler |
+| `client_session.cpp` | **重写** | 使用 `lb_counter98::AgwMsg*` 结构体和 `MessageEncoder`/`MessageDecoder` 编解码 |
+| `CMakeLists.txt` | **更新** | 新增 counter98 协议源文件依赖 |
 
 ---
 
@@ -519,17 +623,64 @@ mock/98_counter/
 
 - 标准库（无外部依赖）
 - `libpthread`：多线程支持（`std::thread`）
-- 头文件：`c98msg_tmp.h`（位于 `trunk/NewAPI/gone/include/`）
+- **counter98 协议库**：直接编译 `gone/counter98/` 下的协议源文件（不依赖 `liblbapi.so`）
+- **lbcommon**：字节序转换等基础工具（`comm_sys.h`）
 
-### 8.3 CMakeLists.txt 结构
+### 8.3 源文件组成
 
-参考 `trunk/NewAPI/gone/api/CMakeLists.txt` 风格：
+```cmake
+# mock 服务端核心
+file(GLOB MOCK_98_SRC
+  src/main.cpp
+  src/counter98_server.cpp
+  src/client_session.cpp
+  src/account_manager.cpp
+)
 
-- 支持独立编译和父模块编译（`BUILD_SUM_COUNT` 判断）
-- 独立编译时设置 C++11 标准、编译优化 flags
-- `file(GLOB)` 收集源文件
-- 头文件路径包含 `../../include`（c98msg_tmp.h）和 `../../api/src`（共用结构体）
-- 链接 `pthread`
+# JSON 工具
+file(GLOB JSON_UTILS_SRC
+  ../include/json_utils.cpp
+)
+
+# counter98 协议源文件（直接编译，不依赖 liblbapi.so）
+file(GLOB COUNTER98_PROTOCOL_SRC
+  ${COUNTER98_DIR}/messages_agw_external_nonjson.cpp
+  ${COUNTER98_DIR}/root_packet.cpp
+  ${COUNTER98_DIR}/msg_map_agw_external.cpp
+  ${COUNTER98_DIR}/factory.cpp
+  ${COUNTER98_DIR}/string_util.cpp
+)
+```
+
+### 8.4 头文件路径
+
+```cmake
+target_include_directories(counter98_mock PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src           # mock 源文件
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include     # json_utils.h
+  ${COUNTER98_DIR}                          # 98 柜台协议头文件
+  ${COMMON_DIR}/include                     # lbcommon 基础库
+  ${GONE_DIR}                               # gone 公共定义
+  ${GONE_DIR}/include                       # c98msg_tmp.h 等
+)
+```
+
+### 8.5 链接库
+
+- `pthread`：多线程支持
+- `lbcommon`（如果已构建为 target）或直接编译 `comm_sys.cpp`（独立编译时）
+
+### 8.6 编译方式
+
+```bash
+# 独立编译
+cd gone/api/mock/98_counter
+mkdir build && cd build
+cmake .. && make
+
+# 父模块编译（项目根目录）
+./build.sh -DBUILD_MOCK=ON
+```
 
 ---
 
@@ -605,7 +756,7 @@ mock/98_counter/
 
 #### 缺陷 1：`deal_cust_login()` 中 `cust_need_login` 硬编码为 false
 
-**位置**：`counter98.cpp` 第 719 行
+**位置**：`counter98.cpp`
 
 **当前代码**：
 ```cpp
@@ -621,7 +772,7 @@ int32 counter98::deal_cust_login(const acc_login_event_info &req, char *o_buf, i
 ```
 
 **问题**：`cust_need_login = false` 导致：
-1. API 永远不会向 98 柜台发送 `C98_MSG_ACC_LOGIN_REQ`
+1. API 永远不会向 98 柜台发送 `kAgwMsgCustLoginReq`
 2. API 直接跳转到极速柜台登录阶段
 3. 98 账户登录链路形同虚设
 
@@ -636,18 +787,6 @@ bool cust_need_login = !is_cust_logged_in(req.fund_account_id);
 // 初始实现可简化为 true
 ```
 
-#### 缺陷 2：`build_login_msg()` 中 `session` 重复 memcpy
-
-**位置**：`counter98.cpp` 第 745 行和第 750 行
-
-```cpp
-std::memcpy(body->session, info.session, sizeof(body->session));  // 第 745 行
-// ... 中间代码 ...
-std::memcpy(body->session, info.session, sizeof(body->session));  // 第 750 行（重复）
-```
-
-**影响**：无功能影响，但代码冗余，应删除第 750 行的重复赋值。
-
 ### 10.2 建议改进
 
 | 改进项 | 说明 | 优先级 |
@@ -656,6 +795,8 @@ std::memcpy(body->session, info.session, sizeof(body->session));  // 第 750 行
 | 断线重登录 | `deal_link_close` 后自动重登 | P1 |
 | 错误码映射 | 完善 98 错误码到 `LBAPI_ERR_*` 的映射 | P2 |
 | 心跳超时检测 | 检测 98 心跳超时并触发重连 | P2 |
+| 委托/撤单消息完善 | 完善 `build_order_msg()` / `build_cancel_msg()` 实现 | P1 |
+| 查询消息完善 | 完善各类查询消息的构造实现 | P1 |
 
 ### 10.3 修复后预期流程
 
@@ -675,10 +816,19 @@ API 启动
      → build_login_msg() → send → 98_counter_mock  [新增：真正发送账户登录]
      ← recv ← 98_counter_mock → deal_cust_login_ans()
      → delive_fast_counter_login() [触发极速柜台登录]
+
+用户调用 api->order(OrderReq)
+  → build_order_msg() → send → 98_counter_mock
+  ← recv ← 98_counter_mock → on_order_rtn() [委托确认回报]
+
+用户调用 api->query_fund(QueryFundReq)
+  → build_query_fund_msg() → send → 98_counter_mock
+  ← recv ← 98_counter_mock → on_fund_query_result() [资金查询结果]
 ```
 
 ---
 
-> **文档版本**：v1.0
+> **文档版本**：v2.0
 > **作者**：AI 研发平台
-> **更新日期**：2026-09-14
+> **更新日期**：2026-09-30
+> **变更说明**：v1.0 → v2.0：协议从临时 `c98msg_tmp` 切换为真实 Archforce AGW 协议，新增委托/撤单/查询功能支持

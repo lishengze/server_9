@@ -12,6 +12,7 @@
  */
 
 #include "comm_sys.h"
+#include "matomic.h"
 
 #include <pthread.h>
 #include <sys/types.h>
@@ -63,9 +64,11 @@ protected:
    */
 #define SIMPLE_THREAD_WAIT_MS 500
 
-  volatile int32 state;    ///< 线程状态：0=未初始化，1=已初始化，2=运行中，3=停止请求
+  // state 跨线程读写（to_stop 在任意线程、工作线程在循环中读），必须用原子。
+  // waitflag 跨线程读写（trigger 写、工作线程读），同样需要原子。
+  int32 state;             ///< 线程状态：0=未初始化，1=已初始化，2=运行中，3=停止请求
   int32 epollfd;           ///< epoll文件描述符，用于等待触发模式
-  volatile int32 waitflag; ///< 等待标志：0=工作中，1=等待中
+  int32 waitflag;          ///< 等待标志：0=工作中，1=等待中
   int32 evtfd;             ///< eventfd文件描述符，用于线程唤醒
   int32 pollwaitms;        ///< 轮询等待毫秒数（仅在等待触发模式下有效）
   int32 loopround;         ///< 循环轮次（每次触发后执行的工作轮数）
@@ -100,13 +103,17 @@ public:
    * 根据参数配置线程的运行模式和属性，包括CPU亲和性、轮询设置等
    *
    * @param[in] busyround 忙轮询轮次，>0触发式+忙轮询次数模式，=0使用死轮询
-   * @param[in] tcpuid CPU亲和ID，-1表示不绑定CPU，>=0绑定到指定CPU核心
+   * @param[in] tcpuid CPU亲和ID，-1表示不绑定CPU，>=0绑定到指定CPU核心（必须 < CPU_SETSIZE）
    * @param[in] pollms 轮询等待毫秒数，仅在等待触发模式下有效
    * @return int32 0表示成功，负数表示错误码
    *
    * @note 必须在调用run()之前调用此函数进行初始化
+   * @note **不支持重复调用 init_th**：重复调用会覆盖并泄漏 epollfd/evtfd。
+   *       如需重新初始化，应先析构或 close，再调 init_th。
    * @note 忙轮询模式：线程持续执行do_work()，适合CPU密集型任务
    * @note 等待触发模式：线程阻塞等待，通过trigger()唤醒，适合I/O密集型任务
+   * @note **loopround 最小值限制**：等待触发模式下，若 busyround < 10，
+   *       内部会自动调整为 10（保证 self-trigger 有足够的轮次）。
    */
   int32 init_th(int32 busyround = 0, int32 tcpuid = -1, int32 pollms = 100);
 
@@ -140,8 +147,23 @@ public:
    *
    * @note 这是异步操作，线程不会立即停止
    * @note 线程检测到停止标志后会清理资源并退出
+   * @note 仅对运行中(state==2)的线程置停止请求；未启动(1)不动，
+   *       保证 join() 对未启动/已退出的线程为 no-op（线程函数退出时自复位 state=1）
    */
-  void to_stop() { state = 3; }
+  void to_stop() {
+    int32 t = 2;
+    if (!atomic_cas32(&state, &t, 3)) {
+      return;
+    }
+    // 修复：原版仅设 state=3,但若 worker 在 epoll_wait(..., pollwaitms) 中阻塞,
+    // join() 需要等满 pollwaitms 才返回。显式写 evtfd 立即唤醒 worker。
+    // evtfd 仅在 trigger 模式 (state >=2) 创建,需先判 evtfd 有效性。
+    if (evtfd > 0) {
+      uint64 one = 1;
+      ssize_t wr = ::write(evtfd, &one, sizeof(one));
+      (void)wr; // EAGAIN 在 EFD_SEMAPHORE 下不应出现,忽略错误
+    }
+  }
 
   /**
    * @brief 等待线程完全结束
@@ -150,6 +172,8 @@ public:
    *
    * @note 会自动调用to_stop()确保线程停止
    * @note 如果线程已经停止，此函数会立即返回
+   * @note 对未启动的线程调用为 no-op（to_stop 仅对运行中线程置停止请求）
+   * @note 线程函数退出时自复位 state=1，join 返回后对象可再次 run()
    */
   void join();
 
@@ -174,6 +198,13 @@ public:
    * @note 如果线程仍在运行，建议先调用join()等待线程结束
    */
   virtual ~simple_thread() {
+    // 修复：原版直接 close(epollfd/evtfd),若 worker 仍在 epoll_wait 中,
+    // 会触发 use-after-close / UAF。析构前先 join 等待线程退出。
+    if (atomic_load32(&state) >= 2) {
+      // 仍在 Running(2) 或 ToStop(3),先请求停止并 join。
+      to_stop();
+      join();
+    }
     if (epollfd > 0) {
       close(epollfd);
       epollfd = -1;

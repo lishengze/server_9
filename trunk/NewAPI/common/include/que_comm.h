@@ -20,9 +20,11 @@ namespace lb_common {
 /**
  * @brief 队列循环忙等待计数
  *
- * 定义队列操作时的忙等待循环次数上限
+ * 定义队列操作时的忙等待循环次数上限。
+ * 50000 次 CPU_PAUSE 在现代 CPU 上约消耗数百微秒,扩到 100000 让无锁竞争路径
+ * 减少 sched_yield 调用次数（sched_yield 是 syscall,开销远大于 CPU_PAUSE hint）。
  */
-#define QUE_LOOP_BUSY_COUNT 50000
+#define QUE_LOOP_BUSY_COUNT 100000
 
 #ifndef LBQUE_ALIGN_SIMD
 
@@ -49,7 +51,6 @@ template <class V> struct que_fixed_it {
 template <class V> struct que_fixed_it {
   V data; ///< 数据内容
 } __attribute__((aligned(SIMD_ALIGN_SIZE)));
-;
 
 #endif
 

@@ -40,7 +40,12 @@ static const attr_info_entry known_attrs[] = {
     {config_name::log_level, attr_type::int32_val},
     {config_name::api_instance_name, attr_type::string_val},
     {config_name::log_output_dir, attr_type::string_val},
+<<<<<<< .mine
     {config_name::single_cust_per_link, attr_type::bool_val},
+=======
+    {config_name::counter98_mode, attr_type::int32_val},
+    {config_name::counter98_report_sync, attr_type::map_val},
+>>>>>>> .r17
 };
 
 static constexpr int32_t known_attrs_count = sizeof(known_attrs) / sizeof(known_attrs[0]);
@@ -52,7 +57,7 @@ api_config_impl::api_config_impl()
       speed_link_type_(speed_link_type::socket_single), callback_mode_(callback_mode::direct), send_poll_num_(6),
       recv_poll_num_(2), heartbeat_interval_(5), max_reconnect_count_(0), speed_engine_cpu_(-1), mgmt_engine_cpu_(-1),
       callback_thread_cpu_(-1), send_queue_size_mb_(2), callback_queue_size_mb_(8), callback_wait_ms_(100),
-      multi_io_wait_ms_(1), agw_user_login_timeout_(10), log_queue_size_mb_(8), log_level_(1) {
+      multi_io_wait_ms_(1), agw_user_login_timeout_(10), log_queue_size_mb_(8), log_level_(1), counter98_mode_(0) {
   std::memset(solarflare_iface_, 0, sizeof(solarflare_iface_));
   std::memset(agw98_user_, 0, sizeof(agw98_user_));
   std::memset(agw98_user_password_, 0, sizeof(agw98_user_password_));
@@ -145,6 +150,8 @@ int32_t api_config_impl::set_attr(const char *attr_name, int32_t attr_val) {
     log_queue_size_mb_ = attr_val;
   } else if (std::strcmp(attr_name, config_name::log_level) == 0) {
     log_level_ = attr_val;
+  } else if (std::strcmp(attr_name, config_name::counter98_mode) == 0) {
+    counter98_mode_ = attr_val;
   } else {
     return LBAPI_ERR_CFG_INVALID;
   }
@@ -245,6 +252,19 @@ int32_t api_config_impl::set_attr(const char *attr_name, const net_addr &attr_va
   return LBAPI_OK;
 }
 
+int32_t api_config_impl::set_attr(const char *attr_name, const std::map<uint8_t, int32_t> &attr_val) {
+  int32_t ret = check_attr_type(attr_name, attr_type::map_val);
+  if (ret != LBAPI_OK)
+    return ret;
+
+  if (std::strcmp(attr_name, config_name::counter98_report_sync) == 0) {
+    counter98_report_sync_ = attr_val;
+  } else {
+    return LBAPI_ERR_CFG_INVALID;
+  }
+  return LBAPI_OK;
+}
+
 // ---- get_attr 实现 ----
 int32_t api_config_impl::get_attr(const char *attr_name, int8_t &o_val) const {
   int32_t ret = check_attr_type(attr_name, attr_type::int8_val);
@@ -305,6 +325,8 @@ int32_t api_config_impl::get_attr(const char *attr_name, int32_t &o_val) const {
     o_val = log_queue_size_mb_;
   } else if (std::strcmp(attr_name, config_name::log_level) == 0) {
     o_val = log_level_;
+  } else if (std::strcmp(attr_name, config_name::counter98_mode) == 0) {
+    o_val = counter98_mode_;
   } else {
     return LBAPI_ERR_CFG_INVALID;
   }
@@ -393,6 +415,19 @@ int32_t api_config_impl::get_attr(const char *attr_name, net_addr &o_val) const 
     o_val = counter98_addr_;
   } else if (std::strcmp(attr_name, config_name::counter98_addr_bak) == 0) {
     o_val = counter98_addr_bak_;
+  } else {
+    return LBAPI_ERR_CFG_INVALID;
+  }
+  return LBAPI_OK;
+}
+
+int32_t api_config_impl::get_attr(const char *attr_name, std::map<uint8_t, int32_t> &o_val) const {
+  int32_t ret = check_attr_type(attr_name, attr_type::map_val);
+  if (ret != LBAPI_OK)
+    return ret;
+
+  if (std::strcmp(attr_name, config_name::counter98_report_sync) == 0) {
+    o_val = counter98_report_sync_;
   } else {
     return LBAPI_ERR_CFG_INVALID;
   }
@@ -498,6 +533,7 @@ int32_t api_config_impl::copy_from(const api_config &src) {
       config_name::multi_io_wait_ms,
       config_name::log_queue_size_mb,
       config_name::log_level,
+      config_name::counter98_mode,
   };
   for (const char *name : int32_attrs) {
     if (src.get_attr(name, int_val) == LBAPI_OK) {
@@ -542,6 +578,7 @@ int32_t api_config_impl::copy_from(const api_config &src) {
     }
   }
 
+<<<<<<< .mine
   // bool属性
   bool bool_val = false;
   const char *bool_attrs[] = {
@@ -553,6 +590,19 @@ int32_t api_config_impl::copy_from(const api_config &src) {
     }
   }
 
+=======
+  // map属性
+  std::map<uint8_t, int32_t> map_val;
+  const char *map_attrs[] = {
+      config_name::counter98_report_sync,
+  };
+  for (const char *name : map_attrs) {
+    if (src.get_attr(name, map_val) == LBAPI_OK) {
+      set_attr(name, map_val);
+    }
+  }
+
+>>>>>>> .r17
   return LBAPI_OK;
 }
 

@@ -214,7 +214,7 @@ public:
    * @param[in] next_pos 下一个位置
    */
   FORCE_INLINE void read_cmt(int64 next_pos) {
-    if (likely(rdcmt < next_pos)) {
+    if (likely(atomic_load64(&rdcmt) < next_pos)) {
       atomic_store64(&rdcmt, next_pos);
     }
   }

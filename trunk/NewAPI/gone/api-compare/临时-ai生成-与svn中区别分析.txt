@@ -1,0 +1,66 @@
+二、98 柜台：组包与解析(当前态)
+2.1 组包字段对照(委托/撤单)
+字段	api(当前)	api-dy	结论
+数量 order_qty	直传(API 语义=×100) counter98.cpp:584	直传(API 语义=整股)	同值入参 wire 差 100 倍
+security_id	NUL 尾原样赋值(RUL-31,对齐 dy)	原字节拷贝(NUL)	已对齐
+身份四元组	登录缓存空格定长(fill_if_changed 空格填充后直传)	GwSessionInfo 请求回放(NUL 尾)	仍差(联调项)
+password/user_info/order_way_ext	锁内快照缓存原值(RUL-29)	会话直读	值口径一致
+business_type(普通/BSE)	1	1	同
+ETF business_type	12(§7 待确认)	2	未对齐(维持)
+BSE market_id	109 强制覆盖	实例市场(101/102)	未对齐(维持)
+撤单 client_seq_id	=client_req_no(撤单请求号)	=client_seq_id(原委托号)	互换(维持)
+撤单 orig_client_seq_id	=client_seq_id(原委托号)	=client_req_no(撤单请求号)	互换(维持)
+撤单 orig_cli_ord_no / ver / seq_num / CheckSum	一致	一致	同
+查询类消息集与字段映射维持一致(RUL-26 成果)；仅 security_id 填充口径随 RUL-31 对齐(4 个含证券条件查询同改)。
+
+2.2 入站处理(当前态)
+通道	api	api-dy
+去重	分区高水位去重：重复(index≤已消费位置)丢弃+日志 counter98.cpp:1755	无去重(重放全推给用户)
+StreamInfo	counter_type=fixed_98(0)、partno=分区、stream_seq=记录号 index	counter_type=STREAM_API_COUNTER(100)、stream_seq=0
+290001 委托确认	on_order_rtn,rtn_type=exec_type 透传，order_sys_no=client_order_no	rtn_type=固定老码，order_sys_no=0
+210115 成交回报	exec_type 分流(仅 'F' 进 trade);TradeRtn.rtn_type='F';qty 语义 ×100	无分流全进 trade;rtn_type=0;qty 语义整股
+190001 撤单应答	order_sys_no=orig_cli_ord_no;client_req_no=撤单请求号	order_sys_no=orig_cli_ord_no;client_seq_id 回显受互换影响
+回报同步	SyncFinish→on_event;断点/去重不依赖它；重连续传	SyncFinish 无通知；仅成交回报记断点(委托确认/撤单应答断点不前移，重连重放重复推送)；无去重兜底
+SyncFinish 回调	on_event(report_sync_finish)	无
+消息号 4(对端注销)	复位+关链+重登闭环	未注册，按未知消息跳过
+解码失败/长度防御	on_event(not_support_msg)+body_length 1MB 上界关链	静默；无上界
+RUL-30 使 api 与 dy 在“回报恰好一次”语义上成为互补的一对:dy 会漏断点(重复推送)、api 会丢重放(若柜台以 index≤0 或乱序回放，index≤0 直通例外已登记联调确认起算形态)。
+
+三、个微柜台(当前态)
+3.1 组包
+项	api	api-dy
+数量	直传(API 语义=×100)	直传(整股)——同值 wire 差 100 倍
+市场	101/102 直通	1/2→101/102 映射
+user 块 account/cust	登录条目应答回填，空格填充	GwSessionCache,查不到填空格继续发不拒单
+security_id 等	空格填充	空格填充(cksum_copy_pad)——一致
+撤单定位	用户提供双键直填(orig_clordno=order_sys_no/orig_client_seq_id=client_seq_id,RUL-4)	order_locators 缓存反查(order_sys_no→{clordno,client_seq_id},由回报记录；查不到填 0;无淘汰；98 断链 clear_all 连带清空)
+3.2 回报处理
+项	api	api-dy
+order_sys_no	er.clordno(int64,RUL-13)	strtoll(er.order_id)(字符串转数值)
+撤单应答被撤原单	er.orig_clordno	strtoll(er.order_id)(撤单回报自身 id)
+状态/exec 字典	AgwOrdStatus/AgwExecType 字符(RUL-16)	老 9 态/整数 1~7
+2005 分流	仅 'F' 进 trade(RUL-23)	无条件 trade
+2010	无条件 order_rtn(§7 A3 待裁决)	同——此通道一致
+TradeRtn.rtn_type	'F'	0
+stream_seq/partno	0 / 0(RUL-32)	stream_seq=本地递增计数(伪造序号)
+
+
+四、登录/会话/链接状态机(业务语义差异最大的区域)
+4.1 98 侧
+场景	api	api-dy
+agw 登录发起时机	首次用户 login() 第一步(幂等，同步等待)	实例 start() 内(与用户登录解耦；遗留 stderr 调试打印)
+agw 在途并发	CAS 占位+等待首者；在途超时不再投递(防双请求)	等待超时后继续走发送路径(重复投递双请求窗口)
+agw 登录结果通知	仅 login() 返回码(设计如此)	on_error(agw_user_login) 回调
+账户登录并发	会话内 log_98 状态机：在途合并(INV6 永不重复登录)、幂等直达	pending_logins_ map:在途时覆盖重发第二条 800005
+800005 登录数据	会话缓存(应答回填身份+请求凭据，锁内快照)	pending 请求回放；多资金账户应答只处理第一个(ToDos 自认)
+98 登录结果回调	不回调(终态由极速柜台应答出，单次 on_login)	每次应答回调 on_login(98 一次 + 极速柜台一次 = 用户收到两次)
+应答身份回填	fill_session_login_ok(按市场挑 account,空值不覆盖)	GwSessionCache.create_session(请求值)；build_fast_counter_login_event(应答值)存在但未被调用(死代码)
+98 断链	不清登录状态，清在途；agw 状态复位+have_agw_ok_ → 重连自动重登 agw+重发 sync,业务自愈	clear_all 清空全部账户会话+pending+agw_session;重连不自动重登 agw(仅地址切换时重发)——用户须重新 login() 全部账户；且全局缓存被 98 断链清空会殃及个微侧会话(共享单例)
+登出	deal_logout_req(log_98.to_logout,STATE_LIMITED 拒绝在途登出)	无此功能
+4.2 个微侧
+场景	api	api-dy
+账户模型	多账户:per-条目 GwLoginCache + log_gw 状态机(幂等回调/在途合并/内部重登三场景)	单账户：柜台级单一 login_state(0/1/2);任何账户登录即置 2,A 账户登录后 B 账户委托不被 NOT_LOG_CUST 拦截
+登录条目创建	登录事件时 prepare_login(凭据刷新，身份保持应答值；upsert 语义 RUL-14/17)	发包前 create_session(reset 重建，覆盖应答回填值)；失败不清条目
+断链	清在途不清状态；重连批量自动重登全部已登录账户(collect_relogin_events)	login_state=0;不自动重登(用户重新 login)
+登出	本地化(置 LOGOUT 不关链)	无此功能
+极速柜台登录数据	会话(应答回填身份+缓存凭据)	pending/请求回放

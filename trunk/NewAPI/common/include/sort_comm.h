@@ -23,9 +23,13 @@ struct sort_cmp_int32 {
 	 * @brief 比较两个32位整数
 	 * @param[in] cmped 待比较的数
 	 * @param[in] cmpto 比较的目标数
-	 * @return cmped - cmpto 的结果
+	 * @return 三态比较结果：负数=cmped < cmpto；0=相等；正数=cmped > cmpto
+	 *
+	 * @note P2-04: 原版 cmped - cmpto 在 INT_MIN 等极值场景下有符号溢出。
 	 */
-  int32 operator()(int32 cmped, int32 cmpto) const { return cmped - cmpto; }
+  int32 operator()(int32 cmped, int32 cmpto) const {
+    return (cmped > cmpto) - (cmped < cmpto);
+  }
 };
 
 /**
@@ -38,9 +42,13 @@ struct sort_cmp_int64 {
 	 * @brief 比较两个64位整数
 	 * @param[in] cmped 待比较的数
 	 * @param[in] cmpto 比较的目标数
-	 * @return cmped - cmpto 的结果
+	 * @return 三态比较结果
+	 *
+	 * @note P2-04: 原版 cmped - cmpto 在 INT64_MIN 等极值场景下有符号溢出。
 	 */
-  int64 operator()(int64 cmped, int64 cmpto) const { return cmped - cmpto; }
+  int64 operator()(int64 cmped, int64 cmpto) const {
+    return (cmped > cmpto) - (cmped < cmpto);
+  }
 };
 
 /**
@@ -74,14 +82,19 @@ template <class K, class T> struct sort_cmp_pair {
  * @endcode
  */
 template <class T, class CMP> void lb_sort_func(std::vector<T> &arr) {
-  int32 n = arr.size();
-  int32 d = n / 2; //确定gap,希尔增量
-  int32 i, j, t;
+  // 使用 size_t 避免 n > INT32_MAX 时 int32 截断；t >= 0 比较依赖有符号，
+  // 故 t/j 保留为带符号 long long，仅 n/d 用 size_t。
+  size_t n = arr.size();
+  if (n < 2)
+    return;
+  size_t d = n / 2; //确定gap,希尔增量
+  size_t i, j;
+  long long t;
   T tc;
   while (d > 0) {
     for (i = d; i < n; i++) {
       j = i;
-      t = j - d;
+      t = (long long)j - (long long)d;
       tc = arr[i];
       //从gap位置开始，对每项i，比较该项之前的按gap跳的每项t
       //  若项t大于项i，则项t后移一个gap到项j
@@ -91,8 +104,8 @@ template <class T, class CMP> void lb_sort_func(std::vector<T> &arr) {
       while (t >= 0) {
         if (CMP()(arr[t], tc) > 0) {
           arr[j] = arr[t];
-          j = t;
-          t = j - d;
+          j = (size_t)t;
+          t = (long long)j - (long long)d;
         } else {
           break;
         }

@@ -159,7 +159,7 @@ public:
    * @return V* 数据指针
    */
   FORCE_INLINE V *pos2val(int32 pos) {
-    assert(hash_mask > 0 && head->kv_used >= pos);
+    assert(pos >= 1 && hash_mask > 0 && head->kv_used >= pos);
     return &(kv_vec[pos - 1].data);
   }
 
@@ -170,7 +170,7 @@ public:
    * @return V* 数据指针，无效位置返回NULL
    */
   FORCE_INLINE V *get(int32 pos) {
-    if (likely(hash_mask > 0 && head->kv_used >= pos)) {
+    if (likely(pos >= 1 && hash_mask > 0 && head->kv_used >= pos)) {
       return &(kv_vec[pos - 1].data);
     }
     return NULL;
@@ -185,6 +185,9 @@ public:
    * @param[in] key 要插入的键
    * @return int32
    * 占位索引，LBERR_OBJ_IS_EMPTY表示哈希表为空，LBERR_OBJ_IS_FULL表示哈希表已满
+   *
+   * @note ⚠️ **仅单线程使用**：多线程并发调用将导致 `head->kv_used` 计数与 basket
+   *       链表被同时写入而损坏、产生数据错乱或野指针访问。请改用 `insert_mth()`。
    */
   int32 insert(V &val, const K &key) {
     if (unlikely(0 == hash_mask))
@@ -216,12 +219,14 @@ public:
   /**
    * @brief 多线程插入键值对
    *
-   * 检查重复，若重复返回已存在位置。成功时返回占位索引（从1编号，>0）
+   * 检查重复，若重复返回已存在位置。成功时返回占位索引（从1编号，>0）。
+   * 内部对 hash_vec 全表加 `insert_lock`，高并发下吞吐受限于该锁。
    *
    * @param[in] val 要插入的值
    * @param[in] key 要插入的键
    * @return int32
-   * 占位索引，LBERR_OBJ_IS_EMPTY表示哈希表为空，LBERR_OBJ_IS_FULL表示哈希表已满
+   * 占位索引，LBERR_OBJ_IS_EMPTY表示哈希表为空，LBERR_OBJ_IS_FULL表示哈希表已满，
+   * 重复key时返回已存在的占位索引
    */
   int32 insert_mth(V &val, const K &key) {
     if (unlikely(0 == hash_mask))
@@ -296,9 +301,14 @@ public:
    * @return int32 0表示成功，负值表示失败
    */
   int32 init(const char *shm_name, int32 it_num, int32 is_create) {
-    int32 ti = sizeof(m_kv) * (it_num);
-    ti = ALIGN_UP(ti + sizeof(hash_vec_head), PAGE_SIZE);
-    it_num = (ti - sizeof(hash_vec_head)) / sizeof(m_kv);
+    // P2-19: 用 int64 中间量避免 sizeof(m_kv) * it_num 截断 int32。
+    int64 tsize = (int64)sizeof(m_kv) * (int64)it_num;
+    int64 ttotal = tsize + (int64)sizeof(hash_vec_head);
+    ttotal = ALIGN_UP(ttotal, PAGE_SIZE);
+    int64 new_it_num = (ttotal - (int64)sizeof(hash_vec_head)) / (int64)sizeof(m_kv);
+    if (new_it_num > INT32_MAX) return LBERR_OBJ_NUM_LIMIT;
+    int32 ti = (int32)ttotal;
+    it_num = (int32)new_it_num;
 
     int64 tb = it_num;
     tb = comm_utils::calc_power(tb);
@@ -311,7 +321,7 @@ public:
 
     char tname[256];
     if (NULL != shm_name && shm_name[0] != '\0') {
-      comm_utils::str_copy_format(tname, shm_name, sizeof(tname));
+      comm_utils::str_copy_safe(tname, (int32)sizeof(tname), shm_name, (int32)sizeof(tname)); //(int32) std::strlen(shm_name));
     } else {
       std::memset(tname, 0, sizeof(tname));
     }
@@ -348,7 +358,9 @@ public:
         head->i_num = 0;
         head->kv_num = 0;
         head->kv_used = 0;
-        if (NULL != shm_name) {
+        // P1-21: shm_name=""（非 NULL 但空字符串）走 aligned_malloc 路径，
+        // is_inshm 必须 0（否则 close 时调 unmap_shm munmap 堆内存）。
+        if (NULL != shm_name && shm_name[0] != '\0') {
           head->is_inshm = 1;
         } else {
           head->is_inshm = 0;
@@ -504,7 +516,7 @@ public:
    * @return 0表示成功，负值表示失败
    */
   int32 get(T *&o_data, int32 pos) {
-    if (unlikely(i_num < pos)) { // || head->used < pos)){
+    if (unlikely(pos < 1 || i_num < pos)) { // || head->used < pos)){
       return LBERR_OBJ_IS_EMPTY;
     }
     if (is_fixed == 1) {
@@ -532,7 +544,7 @@ public:
    * @return 0表示成功，负值表示失败
    */
   int32 set(T *&o_data, int32 pos, int32 data_size = 0) {
-    if (unlikely(pos > i_num)) {
+    if (unlikely(pos < 1 || pos > i_num)) {
       return LBERR_ARGV_WRONG;
     }
 
@@ -575,7 +587,7 @@ public:
    * @return 0表示成功，负值表示失败
    */
   int32 take(T *&o_data, int32 pos, int32 data_size = 0) {
-    if (unlikely(pos > i_num)) {
+    if (unlikely(pos < 1 || pos > i_num)) {
       return LBERR_ARGV_WRONG;
     }
 
@@ -650,7 +662,7 @@ public:
   int32 init(const char *shm_name, int32 it_num, int32 is_create, int64 mem_size = 0) {
     char tname[256];
     if (NULL != shm_name && shm_name[0] != '\0') {
-      comm_utils::str_copy_format(tname, shm_name, sizeof(tname));
+      comm_utils::str_copy_safe(tname, (int32)sizeof(tname), shm_name, (int32)sizeof(tname)); //(int32) std::strlen(shm_name));
     } else {
       std::memset(tname, 0, sizeof(tname));
     }
@@ -759,6 +771,10 @@ public:
         head->mlock.init();
         comm_utils::aligned_free(tpshm);
       } else {
+        // 修复：原版先 head->i_num = 0 再用 head->i_num 计算 bs，导致变长模式下
+        // bs 少算 sizeof(int64) * it_num * 2 字节。unmap_shm 传小 size 会泄露 shm 段
+        // 或触发 EINVAL。先保存原值再清零。
+        int64 saved_i_num = head->i_num;
         head->mlock.init();
         head->used = 0;
         head->i_num = 0;
@@ -767,7 +783,7 @@ public:
         if (is_fixed == 1) {
           bs += head->mem_size;
         } else {
-          bs += sizeof(int64) * head->i_num * 2;
+          bs += sizeof(int64) * saved_i_num * 2;
           bs += head->mem_size;
         }
         comm_utils::unmap_shm(tpshm, bs);
@@ -811,16 +827,18 @@ private:
    */
   void recove_mem() {
     if (is_fixed == 0) {
+      // addrs 数组下标 0..i_num-1。head->used 等于 i_num 时越界。
+      // 改为 addrs[head->used - 1]，并加边界检查。
       int32 tpos = head->used;
-      if (tpos >= 0) {
-        int64 rd = addrs[tpos];
+      if (tpos >= 1 && tpos <= i_num) {
+        int64 rd = addrs[tpos - 1];
         if (rd >= 0) {
           int32 ts = head->off - rd;
           if (ts > 0) {
             std::memset(reinterpret_cast<char *>(buf) + rd, 0, ts);
           }
           head->off = rd;
-          addrs[tpos] = -1;
+          addrs[tpos - 1] = -1;
         }
       }
     }

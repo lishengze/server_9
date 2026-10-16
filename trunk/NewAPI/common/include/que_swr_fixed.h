@@ -94,7 +94,7 @@ public:
    * @return int64 >0表示获取的位置，0表示队列已满
    */
   FORCE_INLINE int64 write_get(T *&o_data) {
-    int64 wr = wrcmt;
+    int64 wr = atomic_load64(&wrcmt);
     if (unlikely(wr - atomic_load64(&rdcmt) > mask)) {
       return 0;
     }
@@ -120,7 +120,7 @@ public:
    * @return int64 >0表示写入的位置，0表示队列已满
    */
   FORCE_INLINE int64 write(const T &userdata) {
-    int64 wr = wrcmt;
+    int64 wr = atomic_load64(&wrcmt);
     if (unlikely(wr - atomic_load64(&rdcmt) > mask)) {
       return 0;
     }
@@ -138,7 +138,7 @@ public:
    * @return int64 >0表示读取位置，0表示队列为空
    */
   FORCE_INLINE int64 read_get(T *&o_data) {
-    int64 pos = rdcmt;
+    int64 pos = atomic_load64(&rdcmt);
     if (unlikely(atomic_load64(&wrcmt) <= pos)) {
       return 0;
     }
@@ -211,7 +211,7 @@ public:
    * @param[in] next_pos 下一个位置
    */
   FORCE_INLINE void read_cmt(int64 next_pos) {
-    if (likely(rdcmt < next_pos)) {
+    if (likely(atomic_load64(&rdcmt) < next_pos)) {
       atomic_store64(&rdcmt, next_pos);
     }
   }
@@ -225,7 +225,7 @@ public:
    * @return int64 返回读取的位置，0表示队列为空
    */
   FORCE_INLINE int64 pop(T *o_buf) {
-    int64 pos = rdcmt;
+    int64 pos = atomic_load64(&rdcmt);
     if (unlikely(atomic_load64(&wrcmt) <= pos)) {
       return 0;
     }
@@ -348,12 +348,16 @@ public:
   int32 init(char *shm_addr, int64 que_size, int32 shm_isexist, int32 is_continue) {
     if (que_size <= 0 || NULL == shm_addr)
       return LBERR_ARGV_WRONG;
-    pbuf = reinterpret_cast<mt_it *>(shm_addr);
 
     int32 tn = comm_utils::calc_power(que_size);
     int64 tnum = (1L << tn);
     if (shm_isexist == 0 || (mask != 0 && mask + 1 != tnum)) {
       init_set(tnum);
+    }
+
+    pbuf = reinterpret_cast<mt_it *>(shm_addr);
+
+    if (shm_isexist == 0 || (mask != 0 && mask + 1 != tnum)) {
       return 0;
     }
 

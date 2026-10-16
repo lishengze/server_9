@@ -1,15 +1,20 @@
 #ifndef MOCK_98_CLIENT_SESSION_H
 #define MOCK_98_CLIENT_SESSION_H
 
-#include "message_parser.h"
-#include "account_manager.h"
-#include <string>
-#include <ctime>
 #include <cstdint>
+#include <string>
+#include <vector>
+#include <set>
+#include <ctime>
+
+#include "agw_protocol.h"
+#include "account_manager.h"
 
 namespace mock_98 {
 
 /// 客户端会话
+/// 处理 AGW 登录 / 账户登录 / 心跳 / 委托 / 撤单 / 各类查询
+/// 使用 Archforce AGW 协议 (raw_agw_header + body + checksum)
 class ClientSession {
 public:
     ClientSession(int fd, AccountManager* acct_mgr);
@@ -22,12 +27,6 @@ public:
     /// @return 0=正常, -1=连接关闭, -2=协议错误
     int feed_data(const char* data, size_t len);
 
-    /// 处理单条完整消息（由 feed_data 内部调用）
-    int handle_message(const char* data, size_t len);
-
-    /// 检查是否心跳超时
-    bool is_timeout(int timeout_sec) const;
-
     /// 关闭会话
     void close();
 
@@ -37,42 +36,48 @@ public:
     /// 检查是否已断开
     bool is_disconnected() const { return disconnected_; }
 
-    /// 是否已登录
-    bool is_agw_logged_in() const { return agw_logged_in_; }
-    bool is_account_logged_in() const { return account_logged_in_; }
-
-    /// 获取会话信息
-    std::string session_id() const { return session_id_; }
-    std::string fund_account_id() const { return fund_account_id_; }
+    /// 检查是否心跳超时
+    bool is_timeout(int timeout_sec) const;
 
 private:
-    /// 处理 AGW 登录请求
-    int handle_agw_login(const c98_agw_login_req* req);
+    /// 处理单条完整消息
+    void handle_message(const raw_agw_header &hdr, const char *body, int32_t body_len);
 
-    /// 处理账户登录请求
-    int handle_acc_login(const c98_acc_login_req* req);
+    /// 发送数据
+    void send_data(const char *data, int32_t len);
 
-    /// 处理心跳
-    int handle_heartbeat();
+    /// 发送 AGW 消息 (header + body + checksum)
+    void send_agw_msg(uint32_t msg_type, uint16_t msg_ver, const char *body, uint32_t body_len);
 
-    /// 发送消息
-    bool send_message(uint32_t msg_id, const void* body, uint32_t body_len);
+    /// 发送 AGW 消息 (从 SerializeBuffer)
+    void send_agw_msg(uint32_t msg_type, uint16_t msg_ver, const lb_counter98::SerializeBuffer &buf);
 
-    /// 发送 AGW 登录应答
-    bool send_agw_login_ans(int64_t client_req_no, int32_t err_code, const char* err_msg);
+    // ---- 各消息类型处理器 ----
+    void handle_agw_login(const char *body, int32_t body_len);
+    void handle_cust_login(const char *body, int32_t body_len);
+    void handle_heartbeat(const char *body, int32_t body_len);
+    void handle_order(const char *body, int32_t body_len);
+    void handle_cancel(const char *body, int32_t body_len);
+    void handle_query_order(const char *body, int32_t body_len);
+    void handle_query_trade(const char *body, int32_t body_len);
+    void handle_query_fund(const char *body, int32_t body_len);
+    void handle_query_position(const char *body, int32_t body_len);
+    void handle_query_max_order_qty(const char *body, int32_t body_len);
+    void handle_query_total_fund(const char *body, int32_t body_len);
+    void handle_query_fund_maxdraw(const char *body, int32_t body_len);
+    void handle_query_cust_margin_avl(const char *body, int32_t body_len);
+    void handle_query_asset_debts(const char *body, int32_t body_len);
+    void handle_query_credit_max_order_qty(const char *body, int32_t body_len);
 
-    /// 发送账户登录应答
-    bool send_acc_login_ans(const c98_acc_login_req* req, int32_t err_code, const char* err_msg);
-
+    // ---- 连接管理 ----
     int fd_;
     AccountManager* acct_mgr_;
     time_t last_heartbeat_;
-    bool agw_logged_in_;
-    bool account_logged_in_;
     bool disconnected_;
-    std::string session_id_;
-    std::string agw_user_;
-    std::string fund_account_id_;
+    bool closed_;
+    bool agw_logged_in_;
+    std::string agw_session_;               ///< AGW 登录后的 session
+    std::set<std::string> logged_accounts_; ///< 已登录的资金账号
 
     // TCP 接收缓冲区（处理粘包/拆包）
     std::vector<char> recv_buf_;

@@ -93,7 +93,8 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src                     # API 内部头文件
     ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include    # lbcommon 基础库
     ${CMAKE_CURRENT_SOURCE_DIR}/../../gone              # gone 公共消息定义
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone/include      # g1msghead.h / g1trademsg.h / c98msg_tmp.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../gone/include      # g1msghead.h / g1trademsg.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../counter98            # 98 柜台协议头文件
 )
 
 # ================= 源文件 =================
@@ -107,6 +108,10 @@ if(NOT HAS_SOLARFLARE)
     )
 endif()
 
+# 添加 98 柜台协议源文件（直接编译进 lbapi.so，不再独立为静态库）
+file(GLOB COUNTER98_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../counter98/*.cpp)
+list(APPEND API_SRC ${COUNTER98_SRC})
+
 # ================= 构建目标：动态库 =================
 add_library(${PROJECT_NAME} SHARED ${API_SRC})
 
@@ -115,6 +120,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lbcommon)
 
 # 标准库 / 系统库
 target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+
+# 98 柜台协议导出宏（直接编译进 lbapi.so，使用 dllexport 而非 dllimport）
+target_compile_definitions(${PROJECT_NAME} PRIVATE EXPORT_MACRO MP_EXPORT_DLL)
 
 # Solarflare 支持宏（如果启用了 TCPDirect）
 if(HAS_SOLARFLARE)

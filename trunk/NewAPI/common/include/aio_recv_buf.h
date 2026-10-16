@@ -199,6 +199,9 @@ public:
       attr.oncerecvlen = attr.maxmsglen;
 
     buflock.lock();
+    // P1-31: 已初始化时静默 return（不重置内部状态）。
+    // 业务契约：init_buf 只能调用一次；重复调用会丢失正在累积的半包数据（recvlen）。
+    // 正确做法是 close_buf() 后再 init_buf()。
     if (NULL != curbuf) {
       buflock.unlock();
       return;
@@ -230,10 +233,8 @@ public:
 
   /**
    * @brief 构造函数
-   * @note 必须显式初始化 buflock（atomic_lock 无构造函数，依赖 init()），
-   *       否则 mlock 为未初始化垃圾值会导致 build_buf 自旋锁死循环。
    */
-  aio_recv_buf() : maxmsglen(0), recvlen(0), onerecvlen(0), bufflag(0), curbuf(NULL) { buflock.init(); }
+  aio_recv_buf() : maxmsglen(0), recvlen(0), onerecvlen(0), bufflag(0), curbuf(NULL) {}
   /**
    * @brief 析构函数
    */

@@ -1,10 +1,21 @@
 # 构建产物
 build/
 *.o
-*.a
 *.so
+
+# 测试构建
+test/build/
 
 # 工具/缓存
 .cache/
 .codebuddy/
 .hermes/
+
+# IDE / Agent 配置
+.vscode/
+.claude/
+
+# 仓库记忆原始证据（agent-authored PROFILE 与支撑页会被提交）
+.repo_memory/raw/
+.repo_memory/_plan.md
+.repo_memory/

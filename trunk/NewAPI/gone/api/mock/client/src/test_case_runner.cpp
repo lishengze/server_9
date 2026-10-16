@@ -23,6 +23,17 @@ TestCaseType TestCaseRunner::parse_type(const std::string& type_str) {
     if (type_str == "order_cancel" || type_str == "cancel_rsp") return TestCaseType::OrderCancel;
     if (type_str == "trade_rtn") return TestCaseType::TradeRtn;
     if (type_str == "wait_heartbeat" || type_str == "heartbeat_ok") return TestCaseType::WaitHeartbeat;
+    // 查询类型
+    if (type_str == "order_query" || type_str == "order_query_ans") return TestCaseType::OrderQuery;
+    if (type_str == "trade_query" || type_str == "trade_query_ans") return TestCaseType::TradeQuery;
+    if (type_str == "fund_query" || type_str == "fund_query_ans") return TestCaseType::FundQuery;
+    if (type_str == "position_query" || type_str == "position_query_ans") return TestCaseType::PositionQuery;
+    if (type_str == "max_order_qty_query" || type_str == "max_order_qty_query_ans") return TestCaseType::MaxOrderQtyQuery;
+    if (type_str == "total_fund_asset_query" || type_str == "total_fund_asset_query_ans") return TestCaseType::TotalFundAssetQuery;
+    if (type_str == "fund_maxdraw_query" || type_str == "fund_maxdraw_query_ans") return TestCaseType::FundMaxdrawQuery;
+    if (type_str == "cust_margin_avl_query" || type_str == "cust_margin_avl_query_ans") return TestCaseType::CustMarginAvlQuery;
+    if (type_str == "asset_debts_query" || type_str == "asset_debts_query_ans") return TestCaseType::AssetDebtsQuery;
+    if (type_str == "credit_max_order_qty_query" || type_str == "credit_max_order_qty_query_ans") return TestCaseType::CreditMaxOrderQtyQuery;
     return TestCaseType::Unknown;
 }
 
@@ -468,6 +479,205 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
             case TestCaseType::WaitHeartbeat:
                 return true; // 心跳测试不需要发送请求
 
+            // ==== 查询请求 ====
+            case TestCaseType::OrderQuery: {
+                lb_api::OrderQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                req.order_sys_no = tc.request_fields["order_sys_no"].as_int();
+                req.user_seq_id = tc.request_fields["user_seq_id"].as_int();
+                int32_t ret = api_->order_query(req);
+                std::cout << "[Runner] order_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::TradeQuery: {
+                lb_api::TradeQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                req.order_sys_no = tc.request_fields["order_sys_no"].as_int();
+                req.user_seq_id = tc.request_fields["user_seq_id"].as_int();
+                int32_t ret = api_->trade_query(req);
+                std::cout << "[Runner] trade_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::FundQuery: {
+                lb_api::FundQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                int32_t ret = api_->fund_query(req);
+                std::cout << "[Runner] fund_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::PositionQuery: {
+                lb_api::PositionQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                req.market_type = tc.request_fields["market_type"].as_int();
+                val = tc.request_fields["security_id"].as_string();
+                std::memcpy(req.security_id.data(), val.c_str(), std::min(val.size(), req.security_id.size()));
+                req.page_ctrl.query_index = tc.request_fields["query_index"].as_int();
+                req.page_ctrl.return_num = tc.request_fields["return_num"].as_int();
+                int32_t ret = api_->position_query(req);
+                std::cout << "[Runner] position_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::MaxOrderQtyQuery: {
+                lb_api::MaxOrderQtyQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                req.market_type = tc.request_fields["market_type"].as_int();
+                val = tc.request_fields["security_id"].as_string();
+                std::memcpy(req.security_id.data(), val.c_str(), std::min(val.size(), req.security_id.size()));
+                req.business_type = tc.request_fields["business_type"].as_int();
+                std::string side_str = tc.request_fields["side"].as_string();
+                req.side = side_str.empty() ? 0 : side_str[0];
+                req.price = tc.request_fields["price"].as_int();
+                val = tc.request_fields["sh_account_id"].as_string();
+                std::memcpy(req.sh_account_id.data(), val.c_str(), std::min(val.size(), req.sh_account_id.size()));
+                val = tc.request_fields["sz_account_id"].as_string();
+                std::memcpy(req.sz_account_id.data(), val.c_str(), std::min(val.size(), req.sz_account_id.size()));
+                int32_t ret = api_->max_order_qty_query(req);
+                std::cout << "[Runner] max_order_qty_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::TotalFundAssetQuery: {
+                lb_api::TotalFundAssetQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                int32_t ret = api_->total_fund_asset_query(req);
+                std::cout << "[Runner] total_fund_asset_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::FundMaxdrawQuery: {
+                lb_api::FundMaxdrawQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                val = tc.request_fields["currency"].as_string();
+                std::memcpy(req.currency.data(), val.c_str(), std::min(val.size(), req.currency.size()));
+                int32_t ret = api_->fund_maxdraw_query(req);
+                std::cout << "[Runner] fund_maxdraw_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::CustMarginAvlQuery: {
+                lb_api::CustMarginAvlQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                val = tc.request_fields["currency"].as_string();
+                std::memcpy(req.currency.data(), val.c_str(), std::min(val.size(), req.currency.size()));
+                req.market_id = tc.request_fields["market_id"].as_int();
+                val = tc.request_fields["security_id"].as_string();
+                std::memcpy(req.security_id.data(), val.c_str(), std::min(val.size(), req.security_id.size()));
+                std::string cd_str = tc.request_fields["credit_direct"].as_string();
+                req.credit_direct = cd_str.empty() ? 0 : cd_str[0];
+                int32_t ret = api_->cust_margin_avl_query(req);
+                std::cout << "[Runner] cust_margin_avl_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::AssetDebtsQuery: {
+                lb_api::AssetDebtsQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                val = tc.request_fields["currency"].as_string();
+                std::memcpy(req.currency.data(), val.c_str(), std::min(val.size(), req.currency.size()));
+                int32_t ret = api_->asset_debts_query(req);
+                std::cout << "[Runner] asset_debts_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
+            case TestCaseType::CreditMaxOrderQtyQuery: {
+                lb_api::CreditMaxOrderQtyQueryReq req;
+                std::memset(&req, 0, sizeof(req));
+                req.client_req_no = tc.request_fields["client_req_no"].as_int();
+                std::string val;
+                val = tc.request_fields["fund_account_id"].as_string();
+                std::memcpy(req.fund_account_id.data(), val.c_str(), std::min(val.size(), req.fund_account_id.size()));
+                val = tc.request_fields["branch_id"].as_string();
+                std::memcpy(req.branch_id.data(), val.c_str(), std::min(val.size(), req.branch_id.size()));
+                val = tc.request_fields["cust_id"].as_string();
+                std::memcpy(req.cust_id.data(), val.c_str(), std::min(val.size(), req.cust_id.size()));
+                req.market_type = tc.request_fields["market_type"].as_int();
+                val = tc.request_fields["security_id"].as_string();
+                std::memcpy(req.security_id.data(), val.c_str(), std::min(val.size(), req.security_id.size()));
+                req.business_type = tc.request_fields["business_type"].as_int();
+                std::string side_str = tc.request_fields["side"].as_string();
+                req.side = side_str.empty() ? 0 : side_str[0];
+                req.price = tc.request_fields["price"].as_int();
+                int32_t ret = api_->credit_max_order_qty_query(req);
+                std::cout << "[Runner] credit_max_order_qty_query() 返回: " << ret << std::endl;
+                return ret == 0;
+            }
+
             default:
                 LOG_ERROR("[Runner] 不支持请求类型: " << (int)tc.request_type);
                 return false;
@@ -610,6 +820,139 @@ void TestCaseRunner::extract_response_fields(TestCaseType type, std::map<std::st
         out["exec_qty"] = std::to_string(rtn.exec_qty);
         out["exec_amount"] = std::to_string(rtn.exec_amount);
         out["exec_fee"] = std::to_string(rtn.exec_fee);
+        break;
+    }
+    // ==== 查询应答字段提取 ====
+    case TestCaseType::OrderQuery: {
+        auto& results = handler_->order_query_results();
+        if (!results.empty()) {
+            const auto& r = results[0];
+            out["client_seq_id"] = std::to_string(r.client_seq_id);
+            out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+            out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+            out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+            out["security_id"] = trim_fixed(r.security_id.data(), r.security_id.size());
+            out["side"] = std::string(1, r.side);
+            out["order_status"] = std::to_string((int)r.order_status);
+            out["order_qty"] = std::to_string(r.order_qty);
+            out["order_price"] = std::to_string(r.order_price);
+            out["order_sys_no"] = std::to_string(r.order_sys_no);
+            out["err_code"] = std::to_string(r.err_code);
+        }
+        break;
+    }
+    case TestCaseType::TradeQuery: {
+        auto& results = handler_->trade_query_results();
+        if (!results.empty()) {
+            const auto& r = results[0];
+            out["client_seq_id"] = std::to_string(r.client_seq_id);
+            out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+            out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+            out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+            out["security_id"] = trim_fixed(r.security_id.data(), r.security_id.size());
+            out["side"] = std::string(1, r.side);
+            out["exec_id"] = trim_fixed(r.exec_id, sizeof(r.exec_id));
+            out["exec_price"] = std::to_string(r.exec_price);
+            out["exec_qty"] = std::to_string(r.exec_qty);
+        }
+        break;
+    }
+    case TestCaseType::FundQuery: {
+        const auto& r = handler_->fund_query_result();
+        out["client_req_no"] = std::to_string(r.client_req_no);
+        out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+        out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+        out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+        out["avail_amount"] = std::to_string(r.avail_amount);
+        out["token_amount"] = std::to_string(r.token_amount);
+        break;
+    }
+    case TestCaseType::PositionQuery: {
+        auto& results = handler_->position_query_results();
+        if (!results.empty()) {
+            const auto& r = results[0];
+            out["client_req_no"] = std::to_string(r.client_req_no);
+            out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+            out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+            out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+            out["security_id"] = trim_fixed(r.security_id.data(), r.security_id.size());
+            out["market_type"] = std::to_string(r.market_type);
+            out["stk_bal"] = std::to_string(r.stk_bal);
+            out["stk_avl"] = std::to_string(r.stk_avl);
+            out["stk_frz"] = std::to_string(r.stk_frz);
+            out["cost_price"] = std::to_string(r.cost_price);
+        }
+        break;
+    }
+    case TestCaseType::MaxOrderQtyQuery: {
+        const auto& r = handler_->max_order_qty_result();
+        out["client_req_no"] = std::to_string(r.client_req_no);
+        out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+        out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+        out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+        out["max_order_qty"] = std::to_string(r.max_order_qty);
+        break;
+    }
+    case TestCaseType::TotalFundAssetQuery: {
+        auto& results = handler_->total_fund_asset_results();
+        if (!results.empty()) {
+            const auto& r = results[0];
+            out["client_req_no"] = std::to_string(r.client_req_no);
+            out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+            out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+            out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+            out["currency"] = trim_fixed(r.currency.data(), r.currency.size());
+            out["fund_asset_total"] = std::to_string(r.fund_asset_total);
+            out["fund_bal"] = std::to_string(r.fund_bal);
+            out["fund_asset_stk"] = std::to_string(r.fund_asset_stk);
+        }
+        break;
+    }
+    case TestCaseType::FundMaxdrawQuery: {
+        auto& results = handler_->fund_maxdraw_results();
+        if (!results.empty()) {
+            const auto& r = results[0];
+            out["client_req_no"] = std::to_string(r.client_req_no);
+            out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+            out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+            out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+            out["currency"] = trim_fixed(r.currency.data(), r.currency.size());
+            out["max_draw"] = std::to_string(r.max_draw);
+        }
+        break;
+    }
+    case TestCaseType::CustMarginAvlQuery: {
+        const auto& r = handler_->cust_margin_avl_result();
+        out["client_req_no"] = std::to_string(r.client_req_no);
+        out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+        out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+        out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+        out["margin_avl"] = std::to_string(r.margin_avl);
+        out["credit_bal"] = std::to_string(r.credit_bal);
+        out["credit_avl"] = std::to_string(r.credit_avl);
+        break;
+    }
+    case TestCaseType::AssetDebtsQuery: {
+        const auto& r = handler_->asset_debts_result();
+        out["client_req_no"] = std::to_string(r.client_req_no);
+        out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+        out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+        out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+        out["currency"] = trim_fixed(r.currency.data(), r.currency.size());
+        out["asset"] = std::to_string(r.asset);
+        out["liability"] = std::to_string(r.liability);
+        out["fund_bal"] = std::to_string(r.fund_bal);
+        out["fund_avl"] = std::to_string(r.fund_avl);
+        out["keep_rate"] = std::to_string(r.keep_rate);
+        break;
+    }
+    case TestCaseType::CreditMaxOrderQtyQuery: {
+        const auto& r = handler_->credit_max_order_qty_result();
+        out["client_req_no"] = std::to_string(r.client_req_no);
+        out["fund_account_id"] = trim_fixed(r.fund_account_id.data(), r.fund_account_id.size());
+        out["branch_id"] = trim_fixed(r.branch_id.data(), r.branch_id.size());
+        out["cust_id"] = trim_fixed(r.cust_id.data(), r.cust_id.size());
+        out["max_order_qty"] = std::to_string(r.max_order_qty);
         break;
     }
     default:

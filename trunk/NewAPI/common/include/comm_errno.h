@@ -84,7 +84,7 @@ extern void perror_lb(lb_comm_err &o_errmsg, int err_code);
 #define LBERR_TIME_TAKE_FAIL   (-28) ///< 获取时间失败
 #define LBERR_SHM_MAP_FAIL     (-29) ///< 映射共享内存失败
 #define LBERR_LOCK_NOT_CONSIST (-30) ///< 锁不一致
-#define LBERR_LOCK_NOT_RECOVE  (-31) ///< 锁自恢复故障
+#define LBERR_LOCK_NOT_RECOVER (-31) ///< 锁自恢复故障
 #define LBERR_LOCK_TAKE_FAIL   (-32) ///< 锁获取失败
 #define LBERR_REF_ADD_FAIL     (-33) ///< 增加引用计数失败
 #define LBERR_CH_CONNECT_FAIL  (-34) ///< 通道链接失败

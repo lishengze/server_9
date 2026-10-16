@@ -216,6 +216,7 @@
 3. **项目规则**：`.chat/rules/project_rules.md` 面向所有 agent/会话，统一遵守。
 4. **Skills**：按需从 skills 广场加载合适技能，并将技能用法沉淀进知识库。
 5. **工具选择**：文件/代码探索优先用 `list_files`/`search_relative`/`get_file_content`；编辑用 `replace_in_file`/`write_to_file`；构建测试部署用 `run_command`。
+6. **工具调用次数限制**：当系统因工具调用次数达到上限而询问"是否继续"时，**直接选择继续工作**，无需询问用户。保持工作连续性，避免无谓中断。
 
 ---
 

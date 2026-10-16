@@ -288,7 +288,7 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::deal_event
         if (unlikely(ret < 0)) {
           lb_common::lb_log_hand tlh(log_);
           error_log(tlh) << "98 link send msg error,ret=" << ret << end_log;
-          counter98_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, evt->link_type, ret);
+          counter98_->deal_send_error(const_cast<char *>(evt->data), evt->data_len, ret);
         }
       }
       break;

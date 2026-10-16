@@ -98,8 +98,19 @@ public:
 
     o_err.err_code = LBERR_OBJ_NOT_HAVE;
     char *tpe_msg = dlerror();
-    std::snprintf(o_err.err_msg, sizeof(o_err.err_msg) - 1, "%s", tpe_msg);
-    o_err.err_msg_len = strlen(o_err.err_msg);
+    if (NULL != tpe_msg) {
+      int32 expected_len = std::snprintf(o_err.err_msg, sizeof(o_err.err_msg), "%s", tpe_msg);
+      if (expected_len < 0) {
+        o_err.err_msg_len = 0;
+      } else if (expected_len >= (int32)sizeof(o_err.err_msg)) {
+        o_err.err_msg_len = sizeof(o_err.err_msg) - 1;
+      } else {
+        o_err.err_msg_len = expected_len;
+      }
+    } else {
+      std::snprintf(o_err.err_msg, sizeof(o_err.err_msg) - 1, "%s", "dlsym failed");
+      o_err.err_msg_len = strlen(o_err.err_msg);
+    }
     return LBERR_OBJ_NOT_HAVE;
   }
 
