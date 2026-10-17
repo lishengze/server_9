@@ -339,7 +339,7 @@ int32 aio_socket_link<TCounter>::connect(int32 recv_pool_num, int32 need_switch,
                   << ",have_switch=" << have_switch << ",remote_ip=" << addrs_[active_idx_].ip
                   << ",remote_port=" << addrs_[active_idx_].port << end_log;
     if (NULL != recv_th) {
-      ret = ch_.start_ch();
+      ret = ch_.start_ch(recv_th);
       if (ret < 0) {
         ch_.close_ch(ret);
         error_log(tlh) << "start socket link recv error,link_type=" << link_type_ << ",active_link=" << active_idx_

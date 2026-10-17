@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v3.2（2026-10-13，§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
+> **版本**：v3.3（2026-10-17，§40 GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复；§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
 
 ---
 
@@ -50,6 +50,7 @@
 37. [mock_client 全面复盘与修复回归](#37-mock_client-全面复盘与修复回归)
 38. [三对象 5000TPS 对比测试与时延失真根因](#38-三对象-5000tps-对比测试与时延失真根因)
 39. [三对象 5000TPS 复测（当前宿主机）](#39-三对象-5000tps-复测当前宿主机)
+40. [GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复](#40-gcc-485-兼容--counter98-队列提交长度-bug-修复)
 
 ---
 
@@ -2288,3 +2289,76 @@ LOG_DEBUG(...) / LOG_WARN(...) / LOG_ERROR(...) / LOG_FATAL(...)
 4. **gone 网卡抓包平均值易被离群点拉高**：gone 抓包 avg=8415.9ns 源于单个 8.7ms 极端值，P50=761ns 正常，判断趋势以分位数为准。
 
 **结果文档**：`task/api_dev/result_contrast.md`（复测报告章节）+ `task/api_dev/debug.md`（问题与解决记录）。
+
+---
+
+## 40. GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复（2026-10-17）
+
+> 触发场景：项目从高版本 GCC 切换到 **GCC 4.8.5**（C++11）编译（docker `otc`），完成兼容性修复后运行 GOne 功能测试，在**测试 2/5 委托买入时 SIGSEGV 崩溃**。经诊断定位为 counter98 发送队列的"预留/提交/消费长度不一致"bug。
+> 详细总结文档：`task/api_dev/counter98_queue_fix.md`。
+
+### 40.1 GCC 4.8.5 兼容性修复
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `trunk/NewAPI/common/include/mutils.h` | `std::is_integral_v<T>`（C++17） | `std::is_integral<T>::value` |
+| `trunk/NewAPI/common/include/mthread.h` | `#include <stdatomic.h>`（C11） | `#include <atomic>` |
+| `mock/client/src/callback_handler.cpp` | 缺 `<iostream>` | 补 `<iostream>` |
+| `mock/client/src/test_case_runner.cpp` | 缺 `<iostream>` | 补 `<iostream>` |
+
+### 40.2 counter98 队列提交长度 bug
+
+**崩溃点**：`multi_socket_engine<fpga_counter_direct>::deal_event`（`multi_socket_engine.cpp:285`）
+`__atomic_store_n(evt->leave_time_ptr, perf_now_ns(), __ATOMIC_RELEASE)`，`leave_time_ptr=0x3e9`（垃圾指针）。
+
+**根因**：counter98 所有 `deal_*_req` 采用"预留上限 take_len、实际写入 msg_len、提交上限 take_len"模式：
+
+```cpp
+int32 take_len = AGW_HEADER_SIZE + C98_MAX_MSG_LEN;   // 预留上限 = 2064
+int64 pos = take_req_que_mem(data, take_len);         // 预留 take_len + sizeof
+int32 msg_len = build_order_msg(req, data + sizeof);  // 实际 msg_len（如 157）
+reinterpret_cast<link_send_event *>(data)->data_len = msg_len;
+cmt_req_que_mem(pos, take_len);                        // 提交 take_len + sizeof  ← 错误
+```
+
+- 写者预留/提交 `take_len + sizeof`（2064+16）
+- 读者（`deal_event`）按 `sizeof + data_len`（= sizeof + msg_len，如 173）消费
+
+**`take_len >> msg_len` 导致读者把预留空隙读成大量零长度 98 链路 SEND_MSG 事件**，最终错位，把下一个真实消息数据误读为事件头，`leave_time_ptr` 变垃圾指针崩溃。
+
+**诊断证据**：真实事件 pos=64（data_len=157）→ 下一个 pos=2144，间隔 2080=`take_len+sizeof`；中间 1904 字节空隙被读成每 16 字节一个的 `data_len=0` 全零事件。
+
+**队列语义铁律**（`que_mth_buf`）：写者**预留长度 == 提交长度 == 读者消费长度**三者必须一致。`fpga_counter_direct`/`gw_counter_direct` 之所以无此问题，是因为定长消息 `take_len == msg_len`。
+
+### 40.3 修复方案
+
+counter98 的 98 协议消息是**变长**的，无法预留前确定长度，故采用"**先组包到临时缓冲，再按精确长度预留、拷贝、提交**"：
+
+- `counter98.h` 新增 `send_req_msg()`：按 `msg_len + sizeof` 精确预留，设置事件头，`memcpy` 消息体，精确提交。
+- `counter98.cpp` **20 个调用点**（委托 4 + 查询 12 + 登录/同步/重登 4）全部改为"临时缓冲组包 + `send_req_msg` 精确提交"。
+
+**不采用"仅改提交 msg_len + wrpos 回退"**：因 `take_req_que_mem` 仍预留 take_len+sizeof，`wrpos` 已前移，`wrcmt` 提交时跨过空隙跳到下一事件末尾，空隙仍被读取，问题依旧。
+
+### 40.4 效果
+
+- **GOne 功能测试 5/5 全部通过**（登录/委托/成交/撤单/心跳），修复前崩溃在测试 2/5 委托买入。
+- `liblbapi.so` 用 GCC 4.8.5 编译通过。
+- **未验证**：FTE/GW 测试计划依赖 FTE 快速链路（33001），FTE 环境不可用无法执行；counter98 修复已通过 GOne 测试中走 98 链路的登录用例验证。
+
+### 40.5 经验沉淀
+
+1. **崩溃点不是根因**：`leave_time_ptr` 是垃圾值说明事件本身错位，应打印事件字段 + 原始字节定位。
+2. **零拷贝环形队列写者必须保证"预留 == 提交 == 消费者口径"**，否则 reader 必然读到空隙。
+3. **变长消息不能"预留上限、提交上限"**，必须先组包确定实际长度再精确预留（牺牲一次 memcpy 换队列一致性）。
+4. **对比无 bug 同类实现**：`fpga_counter_direct`（定长）无此问题，印证一致性铁律。
+
+### 40.6 修改文件清单
+
+| 文件 | 类型 |
+|------|------|
+| `trunk/NewAPI/gone/api/src/counter98.h` | 修复（新增 `send_req_msg`、`<cstring>`） |
+| `trunk/NewAPI/gone/api/src/counter98.cpp` | 修复（20 个调用点） |
+| `trunk/NewAPI/common/include/mutils.h` | 兼容 |
+| `trunk/NewAPI/common/include/mthread.h` | 兼容 |
+| `mock/client/src/callback_handler.cpp` | 兼容 |
+| `mock/client/src/test_case_runner.cpp` | 兼容 |

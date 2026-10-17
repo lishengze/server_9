@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <iostream>
 #include <dirent.h>
 
 namespace mock {

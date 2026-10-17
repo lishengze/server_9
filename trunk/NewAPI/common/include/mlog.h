@@ -37,6 +37,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 
 namespace lb_common
 {
@@ -517,6 +518,13 @@ namespace lb_common
     lb_log_hand &operator<<(const char *val)
     {
       log_str(val);
+      return *this;
+    }
+
+    /** @brief 流式输出 std::string */
+    lb_log_hand &operator<<(const std::string &val)
+    {
+      log_str(val.c_str());
       return *this;
     }
 

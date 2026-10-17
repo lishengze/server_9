@@ -14,6 +14,7 @@
 #include "callback_handler.h"
 #include "logger.h"
 #include "api_event_msg.h"  // LINK_TYPE_SPEED_TRADE
+#include <iostream>
 
 namespace mock {
 

@@ -79,13 +79,10 @@ constexpr const char *log_queue_size_mb = "log_queue_size_mb"; // int32   8(0=�
 constexpr const char *log_level = "log_level";                 // int32   1(通知)          非必须
 constexpr const char *api_instance_name = "api_instance_name"; // string  空              必须设置
 constexpr const char *log_output_dir = "log_output_dir";       // string  ./api_log       非必须
-<<<<<<< .mine
 constexpr const char *single_cust_per_link =
     "single_cust_per_link"; // bool  true(单链接单客户)  非必须(false=单链接多客户)
-=======
 constexpr const char *counter98_mode = "counter98_mode";       // int32   0(默认登录模式) 非必须(1=快速登录模式,不处理回报同步)
 constexpr const char *counter98_report_sync = "counter98_report_sync"; // map<uint8_t,int32_t>  空  非必须(默认登录模式下的回报同步分区/索引)
->>>>>>> .r17
 } // namespace config_name
 
 // 注：run_mode 概念已合并到 counter_type，无独立的 run_mode_name 配置项

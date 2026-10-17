@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -87,6 +88,7 @@ private:
   static std::string fa_key(const std::array<char, 16>& fa);
 
   std::unordered_map<std::string, GwSessionInfo> sessions_;
+  std::mutex mutex_;
 };
 
 // ====== 内联实现 ======

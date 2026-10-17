@@ -241,7 +241,7 @@ namespace lb_common
 		template <typename T>
 		static bool is_power_2(T x)
 		{
-			static_assert(std::is_integral_v<T>, "T must be integral");
+			static_assert(std::is_integral<T>::value, "T must be integral");
 			return x > 0 && (x & (x - 1)) == 0;
 		}
 

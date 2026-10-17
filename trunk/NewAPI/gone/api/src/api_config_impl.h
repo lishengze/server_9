@@ -112,15 +112,12 @@ public:
   const char *get_api_instance_name() const { return api_instance_name_; }
   /// 获取日志输出目录
   const char *get_log_output_dir() const { return log_output_dir_; }
-<<<<<<< .mine
-  /// 获取是否单链接单客户模式 (true=单客户, false=多客户)
+/// 获取是否单链接单客户模式 (true=单客户, false=多客户)
   bool get_single_cust_per_link() const { return single_cust_per_link_; }
-=======
   /// 获取 98 柜台登录模式 (0=默认登录模式, 1=快速登录模式)
   int32_t get_counter98_mode() const { return counter98_mode_; }
   /// 获取回报同步分区/索引配置
   const std::map<uint8_t, int32_t> &get_counter98_report_sync() const { return counter98_report_sync_; }
->>>>>>> .r17
 
 private:
   /// 检查属性名是否已知且期望类型匹配
@@ -155,12 +152,9 @@ private:
   int32_t log_level_;               ///< 日志级别(默认: 1=通知)
   char api_instance_name_[64];      ///< API实例名称(默认: 空, 必须设置)
   char log_output_dir_[256];        ///< 日志输出目录(默认: ./api_log)
-<<<<<<< .mine
-  bool single_cust_per_link_;       ///< 单链接单客户模式(默认: true)
-=======
+bool single_cust_per_link_;       ///< 单链接单客户模式(默认: true)
   int32_t counter98_mode_;          ///< 98柜台登录模式(默认: 0=默认登录模式, 1=快速登录模式)
   std::map<uint8_t, int32_t> counter98_report_sync_; ///< 回报同步分区/索引配置(默认: 空)
->>>>>>> .r17
 };
 
 } // namespace lb_api

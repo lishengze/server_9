@@ -45,6 +45,7 @@
 30. **mock_client 全面复盘与修复回归** ✅（§37）：mock_client_upgrade.md 复盘 6 类 18 项（🔴4/🟡8/🟢6），10 项修复 + 1 项撤销（CallbackHandler 数据竞争复查确认不存在）；关键修复：load_api dladdr 定位、wait_link_ready 轮询、run_test_plan 返回 perf 结果、net_time_map_ 仅成功委托、Logger atomic、validate 死代码移除、ETF 委托实现。回归：GW 功能 5/5 + perf 6518TPS(P50=531ns) 0 失败；GOne 功能 5/5 + perf 9216TPS(P50=411ns,P90=641ns) 0 失败
 31. **三对象 5000TPS 对比测试与时延失真根因** ✅（§38）：对 GOne / GW 单客户 / GW 多客户 做 5000TPS 对比，度量两个延迟维度——API 内部延迟（`api_arrive_time_ns`→`send()` 前，perf_runner）和网卡抓包延迟（`api_arrive_time_ns`→网卡发出，`api_net_time_capture` AF_PACKET）。统一绑核 CPU7、系统空闲时结果：GOne P50=321/P90=391，GW单 P50=371/P90=752，GW多 P50=341/P90=561；**时延失真根因**：模拟交易所 tgw_simulator 占 9 核 CPU 导致系统过载，FTE 场景 P90/P95 放大 10~40 倍，须停止 tgw 或绑核隔离后再测；抓包踩坑（mock_client 卡功能测试、抓包 duration 180s、counter98 端口 9003、rmem_max 限制、AF_PACKET 抓 lo 正常）
 32. **三对象 5000TPS 复测（当前宿主机）** ✅（§39）：在当前 32 核宿主机重新编译 API(Release)+更新后 FTE 复测，结果与 §38 排序一致（**GOne < GW单 ≈ GW多**）但绝对值更优（GOne P50 321→161ns、GW单 P50 371→211ns，得益于核数更多更空闲）；三对象关联成功率 100%；**tgw 时延失真根因跨主机复现**（保留 tgw 时 GW P50=481~972ns，停止后降到 211~221ns）。复测新增踩坑：FTE 编译须用 `docker exec otc zsh -lc`（bash 加载不了 oh-my-zsh）、抓包 `--report` 须用绝对路径、start_all.sh 会启动用不到的深圳 FTE/tgw 须停止、gone 抓包平均值易被离群点拉高（以分位数为准）。完整表格见 `task/api_dev/result_contrast.md` 复测章节 + `task/api_dev/debug.md`
+33. **GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复** ✅（§40）：GCC 4.8.5（C++11）兼容（mutils.h is_integral_v→is_integral<T>::value、mthread.h stdatomic.h→atomic、mock_client 补 iostream）；**counter98 发送队列"预留/提交/消费长度不一致"bug**——所有 `deal_*_req` 预留上限 take_len(2064) 提交 take_len+sizeof，但 reader 按 sizeof+data_len(=sizeof+msg_len) 消费，导致 reader 把预留空隙读成大量零长度 98 SEND_MSG 事件并错位，`leave_time_ptr` 变垃圾指针崩溃（GOne 测试 2/5 委托买入 SIGSEGV）。修复=先组包到临时缓冲确定 msg_len，再用新 `send_req_msg()` 按精确长度预留/拷贝/提交，20 个调用点全部改造；GOne 功能测试 5/5 通过。**队列铁律：预留==提交==读者消费口径三者一致**。详细见 `task/api_dev/counter98_queue_fix.md`
 
 ## 三、分析框架
 
@@ -67,7 +68,7 @@
 4. 给出实现方案：
    - 消息构建：填 head → 强转头+1 → 填业务字段
    - 回报解析：校验 len → 强转消息体 → 构造 API 回报 → cb_mgr_->on_*
-   - 入队发送：take_req_que_mem → 填充 link_send_event → build_*_msg → cmt_req_que_mem
+   - 入队发送：定长消息（fpga/gw）直接 `take_req_que_mem` → 填充 link_send_event → build_*_msg → `cmt_req_que_mem`（预留==提交==消费一致）；**变长消息（counter98）须先组包到临时缓冲确定 msg_len，再 `send_req_msg()` 按精确长度预留/拷贝/提交**（见 §40）
 5. 标注正式协议替换点（临时结构体 → 正式协议）
 ```
 

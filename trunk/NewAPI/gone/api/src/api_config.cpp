@@ -40,12 +40,9 @@ static const attr_info_entry known_attrs[] = {
     {config_name::log_level, attr_type::int32_val},
     {config_name::api_instance_name, attr_type::string_val},
     {config_name::log_output_dir, attr_type::string_val},
-<<<<<<< .mine
     {config_name::single_cust_per_link, attr_type::bool_val},
-=======
     {config_name::counter98_mode, attr_type::int32_val},
     {config_name::counter98_report_sync, attr_type::map_val},
->>>>>>> .r17
 };
 
 static constexpr int32_t known_attrs_count = sizeof(known_attrs) / sizeof(known_attrs[0]);
@@ -578,8 +575,7 @@ int32_t api_config_impl::copy_from(const api_config &src) {
     }
   }
 
-<<<<<<< .mine
-  // bool属性
+// bool属性
   bool bool_val = false;
   const char *bool_attrs[] = {
       config_name::single_cust_per_link,
@@ -590,7 +586,6 @@ int32_t api_config_impl::copy_from(const api_config &src) {
     }
   }
 
-=======
   // map属性
   std::map<uint8_t, int32_t> map_val;
   const char *map_attrs[] = {
@@ -602,7 +597,6 @@ int32_t api_config_impl::copy_from(const api_config &src) {
     }
   }
 
->>>>>>> .r17
   return LBAPI_OK;
 }
 

@@ -28,7 +28,7 @@
 #include "wait_poll.h"
 #include <pthread.h>
 #include <sched.h>
-#include <stdatomic.h>
+#include <atomic>
 
 namespace lb_common
 {
