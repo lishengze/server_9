@@ -175,6 +175,10 @@
 || **网卡抓包常量** | `trunk/NewAPI/gone/api/mock/client/api_net_time_common.h`（GOne/FTE 协议偏移、client_seq_id 提取） |
 || **三对象对比结果** | `task/api_dev/result_contrast.md`（GOne/gw单/gw多 5000TPS 对比 + 时延失真根因） |
 || **三对象测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` / `_gw_single.json` / `_gw_multi.json` |
+| **98 柜台分析** | `trunk/NewAPI/gone/api/98_counter.md`（98 AGW 协议/消息分发表/登录级联/查询通道/队列铁律/时序图） |
+| **GW 柜台分析** | `trunk/NewAPI/gone/api/gw_counter.md`（FTE 协议/撤单优化/单客户vs多客户/原子状态/时序图） |
+| **GOne 柜台分析** | `trunk/NewAPI/gone/api/gone_counter.md`（G1 协议/base/direct双链路/gateway多客户/模板特化/类图时序图） |
+| **SVN 提交分析** | `task/svn/svn_update_20261019.md`（M/A/? 状态分类 + 分批提交命令 + 注意事项） |
 
 ## 五、常见问答模板
 

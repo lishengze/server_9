@@ -2,3 +2,136 @@
     1. 方案中除了待确认的不改动，其他的都按照方案列举的进行修改；
     2. 当前FTE已经可以进行重新的编译部署测试，读取fte中对应的知识库和工作日志， 
         api 修改完成后，进行全面的功能回归测试；
+
+    任务:
+    1. 在 docker otc 中，查看并分析 trunk/NewAPI 有多少修改是需要提交到 svn 的，还有哪些代码文件是新增的，需要提交到svn 的;
+    2. 仔细分析当前这些文件修改的点和新增的点，将分析的内容整理成文档，输出到 task/svn/svn_update_20261019.md 中；
+
+    1. 按照建议的方案， 在task_svn.txt 最后详细的补充 svn add 的命令， 和 svn commit 的命令；
+    类似于:
+    svn add  \
+    lbm/lbm_otc_param/src/processors/cashtransferacc_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/cashtransferaccreview_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/cashtransferquota_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/crossborder_prod_pool_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/pension_prod_pool_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/ta_param_set_processor.cpp   
+    和
+    svn commit -m   "[JZJYPT-T202607895] BOS通路连通性检查拦截（6 processors文件）"  \
+    lbm/lbm_otc_param/src/processors/cashtransferacc_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/cashtransferaccreview_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/cashtransferquota_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/crossborder_prod_pool_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/pension_prod_pool_set_processor.cpp \
+    lbm/lbm_otc_param/src/processors/ta_param_set_processor.cpp        
+
+---- 以下为 NewAPI 提交命令（在 docker otc 容器 /mnt/work/api_trunk/trunk 下执行）----
+# 注意：svn status 需 LANG=zh_CN.utf8，否则中文文件名触发 E000022 UTF-8 转换错误
+
+# ============================================================
+# 第一步：svn add 新增文件（3个counter文档 + 2个缓存类 + 测试用例 + mock文档 + gone_counter源码）
+# ============================================================
+svn add \
+  NewAPI/gone/api/98_counter.md \
+  NewAPI/gone/api/gone_counter.md \
+  NewAPI/gone/api/gw_counter.md \
+  NewAPI/gone/api/src/c98_session_cache.h \
+  NewAPI/gone/api/src/gw_login_cache.h \
+  NewAPI/gone/api/mock/client/config/cases/ \
+  NewAPI/gone/api/mock/client/config/cases_gone/ \
+  NewAPI/gone/api/mock/doc/
+
+# gone_counter 含 build 和 .log，先 --depth empty 建目录，再逐个添加源码/配置
+svn add --depth empty NewAPI/gone/api/mock/gone_counter/
+svn add \
+  NewAPI/gone/api/mock/gone_counter/CMakeLists.txt \
+  NewAPI/gone/api/mock/gone_counter/config/ \
+  NewAPI/gone/api/mock/gone_counter/src/
+
+# ============================================================
+# 第二步：分批 svn commit（按风险从低到高）
+# ============================================================
+
+# ---------- 第一批（低风险：文档 + GCC兼容 + 新增源码/测试）----------
+svn commit -m "[NewAPI] GCC 4.8.5 兼容 + 三个counter分析文档 + 缓存类 + mock测试用例" \
+  NewAPI/common/include/mlog.h \
+  NewAPI/common/include/mthread.h \
+  NewAPI/common/include/mutils.h \
+  NewAPI/gone/api/98_counter.md \
+  NewAPI/gone/api/gone_counter.md \
+  NewAPI/gone/api/gw_counter.md \
+  NewAPI/gone/api/src/c98_session_cache.h \
+  NewAPI/gone/api/src/gw_login_cache.h \
+  NewAPI/gone/api/doc/ARCHITECTURE.md \
+  NewAPI/gone/api/doc/api_callback.md \
+  NewAPI/gone/api/doc/api_instance.md \
+  NewAPI/gone/api/doc/callback_manager.md \
+  NewAPI/gone/api/doc/counter98.md \
+  NewAPI/gone/api/doc/gw_counter_direct.md \
+  NewAPI/gone/api/doc/multi_socket_engine.md \
+  NewAPI/gone/api/doc/order_trade_type.md \
+  NewAPI/gone/api/doc/tcpdirect_engine.md \
+  NewAPI/gone/api/mock/doc/ \
+  NewAPI/gone/api/mock/client/config/cases/ \
+  NewAPI/gone/api/mock/client/config/cases_gone/ \
+  NewAPI/gone/api/mock/gone_counter/ \
+  NewAPI/gone/api/include/common_struct.h \
+  NewAPI/gone/api/include/struct_ans.h \
+  NewAPI/gone/api/include/struct_req.h \
+  NewAPI/gone/api/mock/98_counter/config/server_config.json \
+  NewAPI/gone/api/mock/98_counter/config/server_config_9003.json \
+  NewAPI/gone/api/mock/client/CMakeLists.txt \
+  NewAPI/gone/api/mock/client/api_net_time_capture.cpp \
+  NewAPI/gone/api/mock/client/api_net_time_common.h \
+  NewAPI/gone/api/mock/client/config/connection_config.json \
+  NewAPI/gone/api/mock/client/config/connection_config_fte_low.json \
+  NewAPI/gone/api/mock/client/config/connection_config_gone.json \
+  NewAPI/gone/api/mock/client/config/connection_config_gw_multi.json \
+  NewAPI/gone/api/mock/client/config/connection_config_gw_single.json \
+  NewAPI/gone/api/mock/client/config/test_cases/fte_combo.json \
+  NewAPI/gone/api/mock/client/config/test_cases/gone_combo.json \
+  NewAPI/gone/api/mock/client/config/test_cases/gone_login.json \
+  NewAPI/gone/api/mock/client/config/test_plan_gone.json \
+  NewAPI/gone/api/mock/client/config/test_plan_gw.json \
+  NewAPI/gone/api/mock/client/run_perf_compare.sh \
+  NewAPI/gone/api/mock/client/src/logger.cpp \
+  NewAPI/gone/api/mock/client/src/logger.h \
+  NewAPI/gone/api/mock/client/src/result_analysis.cpp \
+  NewAPI/gone/api/mock/client/src/result_analysis.h
+
+# ---------- 第二批（中风险：stop/close 分离 + 回调事件扩展）----------
+svn commit -m "[NewAPI] stop/close 分离 + 回调事件扩展(logout/trade_counter) + FPGA双链路" \
+  NewAPI/gone/api/CMakeLists.txt \
+  NewAPI/gone/api/include/api_callback.h \
+  NewAPI/gone/api/include/api_config.h \
+  NewAPI/gone/api/include/order_trade_type.h \
+  NewAPI/gone/api/src/api_config.cpp \
+  NewAPI/gone/api/src/api_config_impl.h \
+  NewAPI/gone/api/src/api_event_msg.h \
+  NewAPI/gone/api/src/api_instance.cpp \
+  NewAPI/gone/api/src/api_instance.h \
+  NewAPI/gone/api/src/callback_manager.cpp \
+  NewAPI/gone/api/src/callback_manager.h \
+  NewAPI/gone/api/src/idle_engine.h \
+  NewAPI/gone/api/src/link_timer_op.h \
+  NewAPI/gone/api/src/multi_socket_engine.cpp \
+  NewAPI/gone/api/src/multi_socket_engine.h \
+  NewAPI/gone/api/src/single_socket_engine.cpp \
+  NewAPI/gone/api/src/single_socket_engine.h \
+  NewAPI/gone/api/src/tcpdirect_engine.cpp \
+  NewAPI/gone/api/src/tcpdirect_engine.h \
+  NewAPI/gone/api/src/aio_socket_link.h \
+  NewAPI/gone/api/src/fpga_counter_base.cpp \
+  NewAPI/gone/api/src/fpga_counter_base.h \
+  NewAPI/gone/api/src/fpga_counter_direct.cpp \
+  NewAPI/gone/api/src/fpga_counter_direct.h \
+  NewAPI/gone/api/src/fpga_counter_gateway.cpp
+
+# ---------- 第三批（高风险：counter98 冲突解决 + 撤单优化 + GwLoginCache 实例缓存）----------
+svn commit -m "[NewAPI] counter98 采用线上r17 + 撤单优化(消除order_locators) + GwLoginCache实例缓存" \
+  NewAPI/gone/api/include/gw_head.h \
+  NewAPI/gone/api/src/counter98.cpp \
+  NewAPI/gone/api/src/counter98.h \
+  NewAPI/gone/api/src/gw_counter_direct.cpp \
+  NewAPI/gone/api/src/gw_counter_direct.h \
+  NewAPI/gone/api/src/gw_session_cache.h        
