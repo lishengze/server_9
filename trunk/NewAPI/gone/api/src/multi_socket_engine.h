@@ -59,8 +59,10 @@ public:
 
   /// 启动多 socket 引擎线程 (同时启动 epoll_th_)
   int32 start();
-  /// 停止多 socket 引擎线程
+  /// 停止多 socket 引擎线程 (轻量: 停 epoll 线程 + 关已建链接, 保留 init 资源可重启)
   void stop();
+  /// 关闭接口: 完整销毁 (停线程 + 关链接 + 关定时器 + 关发送队列), 析构时调用
+  void close();
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
   lb_common::que_mth_buf *get_queue() { return &send_queue_; }

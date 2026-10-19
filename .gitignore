@@ -105,3 +105,4 @@ stat_*.csv
 # 复盘自动生成物（review_prepare.sh 每次运行重新生成，不提交）
 task/review/*_input.md
 task/review/*_prompt.txt
+**/build_test/*

@@ -46,6 +46,18 @@ public:
   /// @param ans  登录应答(含错误码和错误信息)
   virtual void on_login(const LoginAns &ans) {}
 
+  /// 登出结果回调
+  /// @param ans  登出应答(含错误码和错误信息)
+  virtual void on_logout(const LogoutAns &ans) {}
+
+  /// 柜台用户状态通知回调
+  /// (fpga 柜台用户/板卡状态推送, 板卡级通知为 api 实例对应客户属性)
+  /// @param counter_type      柜台类型: 取值见 counter_type 枚举 (fpga_direct=2 / fpga_gateway=3)
+  /// @param branch_id         分支机构代码 (C 串)
+  /// @param fund_account_id   资金账号 (C 串)
+  /// @param status            状态: 1-正常, 2-故障, 3-故障切换柜台
+  virtual void on_trade_counter(int32_t counter_type, const char *branch_id, const char *fund_account_id, int32_t status) {}
+
   /// 委托回报回调
   /// @param si   流信息(柜台类型+流序号)
   /// @param rtn  委托回报

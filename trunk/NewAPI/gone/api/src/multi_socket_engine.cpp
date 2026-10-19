@@ -221,8 +221,18 @@ template <class TFastCounter> int32 multi_socket_engine<TFastCounter>::start() {
 }
 
 template <class TFastCounter> void multi_socket_engine<TFastCounter>::stop() {
-  // 幂等保护：api_impl::stop() 会调用本方法，析构函数 ~multi_socket_engine 也会调用，
-  // 若重复执行会 double-close 资源并在 log_ 已 close 后再次写日志导致崩溃。
+  // 轻量停止: 停 epoll 线程 + 关已建链接, 保留 init 资源 (定时器/发送队列) 可重启
+  g98_link_.close_ch();
+  fast_gw_link_.close_ch();
+  fast_core_link_.close_ch();
+  epoll_th_.join();
+
+  lb_common::lb_log_hand tlh(log_);
+  info_log(tlh) << "stop multi socket engine ok" << end_log;
+}
+
+// close: 完整销毁 —— 停线程 + 关链接 + 关定时器 + 关发送队列, 析构时调用
+template <class TFastCounter> void multi_socket_engine<TFastCounter>::close() {
   if (stopped_) {
     return;
   }
@@ -238,7 +248,7 @@ template <class TFastCounter> void multi_socket_engine<TFastCounter>::stop() {
   send_queue_.close();
 
   lb_common::lb_log_hand tlh(log_);
-  info_log(tlh) << "stop multi socket engine ok" << end_log;
+  info_log(tlh) << "close multi socket engine ok" << end_log;
 }
 
 // 消费 send_queue_

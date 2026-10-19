@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <string>
 #include <stdint.h>
 
 namespace lb_api {
@@ -30,6 +31,18 @@ public:
   int32_t err_code;                     ///< 错误码
   std::array<char, 124> err_msg;        ///< 错误信息
   int64_t login_time;                   ///< 登陆时间，HHMMSSmmm
+};
+
+/// 登出应答
+class LogoutAns {
+public:
+  int64_t client_req_no;                ///< 客户请求号
+  std::array<char, 16> cust_id;         ///< 客户号
+  std::array<char, 16> fund_account_id; ///< 客户资金账号
+  std::array<char, 12> account_id;      ///< 客户股东账号
+  std::array<char, 10> branch_id;       ///< 分支机构代码
+  int32_t err_code;                     ///< 错误码
+  std::array<char, 124> err_msg;        ///< 错误信息
 };
 
 /// 委托请求

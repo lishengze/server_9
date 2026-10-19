@@ -27,7 +27,9 @@ enum class cb_event_type : int32_t {
   cust_margin_avl_query = 12,
   asset_debts_query = 13,
   credit_max_order_qty_query = 14,
-  error = 15
+  error = 15,
+  logout = 16,
+  trade_counter = 17
 };
 
 /// 回调事件头(每个回调事件开头)
@@ -65,12 +67,25 @@ public:
 
   /// 停止回调线程
   void stop();
+  /// 关闭接口: 完整销毁 (停回调线程 + 关回调队列), 析构时调用
+  void close();
 
   /// ---- 回调接口 (柜台/引擎调 → callback_manager, 内部按 mode 同步直调或入队) ----
 
   /// 登录结果回调 (从 cb_mgr_ 入口)
   /// @param ans  登录应答(含错误码和错误信息)
   void on_login(const LoginAns &ans);
+
+  /// 登出结果回调 (用户主动登出, 纯本地操作, 同步完成)
+  /// @param ans  登出应答(含错误码和错误信息)
+  void on_logout(const LogoutAns &ans);
+
+  /// 柜台用户状态通知回调 (fpga 柜台用户/板卡状态推送)
+  /// @param counter_type      柜台类型: 取值见 counter_type 枚举 (fpga_direct=2 / fpga_gateway=3)
+  /// @param branch_id         分支机构代码 (C 串)
+  /// @param fund_account_id   资金账号 (C 串)
+  /// @param status            状态: 1-正常, 2-故障, 3-故障切换柜台
+  void on_trade_counter(int32_t counter_type, const char *branch_id, const char *fund_account_id, int32_t status);
 
   /// 委托回报回调
   /// @param si   流信息(柜台类型+流序号)

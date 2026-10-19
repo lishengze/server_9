@@ -19,8 +19,10 @@
 | `trade_query` | 5 | on_trade_query_ans |
 | `fund_query` | 6 | on_fund_query_ans |
 | `position_query` | 7 | on_position_query_ans |
-| `link_status` | 8 | on_link_status |
-| `error` | 9 | on_error |
+| `link_status` | 11 | on_link_status |
+| `error` | 15 | on_error |
+| `logout` | 16 | on_logout |
+| `trade_counter` | 17 | on_trade_counter |
 
 ## 回调事件头 cb_event_head
 
@@ -62,6 +64,8 @@ void stop();      // 停止回调线程
 | 方法 | 参数 | 说明 |
 |------|------|------|
 | `on_login` | `ans` | 登录结果回调 |
+| `on_logout` | `ans` | 登出结果回调 |
+| `on_trade_counter` | `counter_type, branch_id, fund_account_id, status` | 柜台用户状态通知 |
 | `on_order_rtn` | `si, rtn` | 委托回报 |
 | `on_trade_rtn` | `si, rtn` | 成交推送 |
 | `on_cancel_rsp` | `si, rsp` | 撤单响应（柜台废单） |

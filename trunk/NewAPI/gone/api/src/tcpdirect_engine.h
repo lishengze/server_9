@@ -49,6 +49,8 @@ public:
   int32 start();
   /// 停止引擎线程
   void stop();
+  /// 关闭接口: 完整销毁 (停线程 + 关定时器 + 关发送队列 + 关链接), 析构时调用
+  void close();
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
   lb_common::que_mth_buf *get_queue() { return &send_queue_; }

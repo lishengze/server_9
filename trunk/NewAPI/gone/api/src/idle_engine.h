@@ -42,6 +42,8 @@ public:
   int32 start() { return 0; }
   /// 停止 (no-op, 资源由 multi 引擎管理)
   void stop() {};
+  /// 关闭 (no-op, 资源由 multi 引擎管理)
+  void close() {};
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
   lb_common::que_mth_buf *get_queue() { return nullptr; }

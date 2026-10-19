@@ -267,7 +267,7 @@ template <class TF, class TE> int32 api_impl<TF, TE>::start() {
   return LBAPI_OK;
 }
 
-// stop
+// stop (轻量): 停引擎/回调线程 + 关已建链接, 保留 init 资源 (log/定时器/队列) 可重启
 template <class TF, class TE> void api_impl<TF, TE>::stop() {
   if (have_start == 0) {
     return;
@@ -281,8 +281,16 @@ template <class TF, class TE> void api_impl<TF, TE>::stop() {
   info_log(tlh) << "stop api instance end" << end_log;
   lb_common::comm_utils::sleep_ms(1000);
 
-  log_.close_log();
   have_start = 0;
+}
+
+// close (完整): 停引擎/回调 + 关 log, 析构时调用
+template <class TF, class TE> void api_impl<TF, TE>::close() {
+  fast_engine_.close();
+  multi_engine_.close();
+  cb_mgr_.close();
+
+  log_.close_log();
 }
 
 // ---- 业务方法实现 ----

@@ -53,6 +53,8 @@ enum class err_event_type : int32_t {
 | 方法 | 参数 | 触发时机 |
 |------|------|---------|
 | `on_login` | `const LoginAns &ans` | login() 完整登录流程（98agw→98账户→极速柜台）最终结果 |
+| `on_logout` | `const LogoutAns &ans` | 登出结果回调（用户主动登出，本地同步操作） |
+| `on_trade_counter` | `counter_type, branch_id, fund_account_id, status` | 柜台用户/板卡状态通知 |
 | `on_order_rtn` | `si, rtn` | 委托回报 |
 | `on_trade_rtn` | `si, rtn` | 成交推送 |
 | `on_cancel_rsp` | `si, rsp` | 撤单响应（柜台废单） |
@@ -67,6 +69,12 @@ enum class err_event_type : int32_t {
 - `counter_type`：柜台类型，0=98柜台，1=极速柜台
 - `link_type`：链接类型，0=网关链接，1=极速交易链接
 - `status`：0=已断线，1=连接成功
+
+### on_trade_counter 参数说明
+- `counter_type`：柜台类型，fpga_direct=2 / fpga_gateway=3
+- `branch_id`：分支机构代码（C 串）
+- `fund_account_id`：资金账号（C 串）
+- `status`：1-正常，2-故障，3-故障切换柜台
 
 ### 双模式回调
 `callback_manager` 会按 `callback_mode` 配置分派：

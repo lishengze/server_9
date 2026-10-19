@@ -63,6 +63,14 @@ void callback_manager::stop() {
   if (mode_ == callback_mode::queued) {
     trigger();
     join();
+  }
+}
+
+// close: 完整销毁 —— 停回调线程 + 关回调队列, 析构时调用
+void callback_manager::close() {
+  if (mode_ == callback_mode::queued) {
+    trigger();
+    join();
     cb_queue_.close();
   }
 }
@@ -91,6 +99,70 @@ void callback_manager::on_login(const LoginAns &ans) {
   head->type = cb_event_type::login;
   head->data_len = data_len;
   *reinterpret_cast<LoginAns *>(data + sizeof(cb_event_head)) = ans;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+void callback_manager::on_logout(const LogoutAns &ans) {
+  if (mode_ == callback_mode::direct) {
+    user_callback_->on_logout(ans);
+    return;
+  }
+  int32_t data_len = sizeof(LogoutAns);
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=logout,ret=" << pos << ",client_req_no=" << ans.client_req_no
+                   << ",fund_account_id=" << ans.fund_account_id.data() << ",err_code=" << ans.err_code << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::logout;
+  head->data_len = data_len;
+  *reinterpret_cast<LogoutAns *>(data + sizeof(cb_event_head)) = ans;
+  write_cmt(pos, total_len);
+  trigger();
+}
+
+// on_trade_counter 有效载荷缓冲宽度 (来源 fpga 消息字段, 规范形 C 串)
+static constexpr int32_t CB_BRANCH_ID_LEN = 12;   // G1_BRANCHID_LEN
+static constexpr int32_t CB_FUND_ACCOUNT_ID_LEN = 16; // G1_FUNDACCOUNTID_LEN
+
+void callback_manager::on_trade_counter(int32_t counter_type, const char *branch_id, const char *fund_account_id,
+                                        int32_t status) {
+  if (mode_ == callback_mode::direct) {
+    // 字段兜底为空串: 直接回调模式不得把 NULL 传给用户 (api_callback 契约为字符串)
+    user_callback_->on_trade_counter(counter_type, branch_id != nullptr ? branch_id : "",
+                                     fund_account_id != nullptr ? fund_account_id : "", status);
+    return;
+  }
+  // 有效载荷为 2 个 int32 (counter_type/status) + branch_id/fund_account_id 定长缓冲
+  int32_t data_len = sizeof(int32_t) * 2 + CB_BRANCH_ID_LEN + CB_FUND_ACCOUNT_ID_LEN;
+  int32_t total_len = sizeof(cb_event_head) + data_len;
+  char *data;
+  int64_t pos = write_get(data, total_len);
+  if (pos <= 0) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "cb_queue enqueue fail,event=trade_counter,ret=" << pos << ",counter_type=" << counter_type
+                   << ",branch_id=" << (branch_id ? branch_id : "")
+                   << ",fund_account_id=" << (fund_account_id ? fund_account_id : "") << ",status=" << status << end_log;
+    return;
+  }
+  cb_event_head *head = reinterpret_cast<cb_event_head *>(data);
+  head->type = cb_event_type::trade_counter;
+  head->data_len = data_len;
+  char *payload = data + sizeof(cb_event_head);
+  std::memset(payload, 0, data_len);
+  *reinterpret_cast<int32_t *>(payload) = counter_type;
+  *reinterpret_cast<int32_t *>(payload + sizeof(int32_t)) = status;
+  char *branch_dst = payload + sizeof(int32_t) * 2;
+  char *fund_dst = branch_dst + CB_BRANCH_ID_LEN;
+  if (nullptr != branch_id)
+    std::strncpy(branch_dst, branch_id, CB_BRANCH_ID_LEN - 1);
+  if (nullptr != fund_account_id)
+    std::strncpy(fund_dst, fund_account_id, CB_FUND_ACCOUNT_ID_LEN - 1);
   write_cmt(pos, total_len);
   trigger();
 }
@@ -512,6 +584,19 @@ void callback_manager::do_work() {
     case cb_event_type::login: {
       const LoginAns &ans = *reinterpret_cast<const LoginAns *>(event_data);
       user_callback_->on_login(ans);
+      break;
+    }
+    case cb_event_type::logout: {
+      const LogoutAns &ans = *reinterpret_cast<const LogoutAns *>(event_data);
+      user_callback_->on_logout(ans);
+      break;
+    }
+    case cb_event_type::trade_counter: {
+      int32_t counter_type = *reinterpret_cast<const int32_t *>(event_data);
+      int32_t status = *reinterpret_cast<const int32_t *>(event_data + sizeof(int32_t));
+      const char *branch_id = event_data + sizeof(int32_t) * 2;
+      const char *fund_account_id = branch_id + CB_BRANCH_ID_LEN;
+      user_callback_->on_trade_counter(counter_type, branch_id, fund_account_id, status);
       break;
     }
     case cb_event_type::order_rtn: {

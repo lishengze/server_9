@@ -68,9 +68,11 @@ public:
   int32 credit_max_order_qty_query(const CreditMaxOrderQtyQueryReq &req) override;
   int32 start() override;
   void stop() override;
+  /// 关闭接口: 完整销毁 (停引擎/回调 + 关 log), 析构时调用
+  void close();
 
   api_impl();
-  ~api_impl() override { stop(); };
+  ~api_impl() override { close(); };
 
   api_impl(const api_impl &) = delete;
   api_impl &operator=(const api_impl &) = delete;

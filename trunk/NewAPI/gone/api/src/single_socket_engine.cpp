@@ -126,8 +126,17 @@ template <class TFastCounter> int32 single_socket_engine<TFastCounter>::start() 
 }
 
 template <class TFastCounter> void single_socket_engine<TFastCounter>::stop() {
-  // 幂等保护：api_impl::stop() 会调用本方法，析构函数 ~single_socket_engine 也会调用，
-  // 若重复执行会在 log_ 已 close 后再次写日志导致崩溃。
+  // 轻量停止: 停工作线程 + 接收线程 + 关已建链接, 保留 init 资源 (定时器/发送队列) 可重启
+  join();
+  recv_th_.join();
+  link_.close_ch();
+
+  lb_common::lb_log_hand tlh(log_);
+  info_log(tlh) << "stop single socket engine ok" << end_log;
+}
+
+// close: 完整销毁 —— 停线程 + 关定时器 + 关发送队列 + 关链接, 析构时调用
+template <class TFastCounter> void single_socket_engine<TFastCounter>::close() {
   if (stopped_) {
     return;
   }
@@ -140,7 +149,7 @@ template <class TFastCounter> void single_socket_engine<TFastCounter>::stop() {
   link_.close_ch();
 
   lb_common::lb_log_hand tlh(log_);
-  info_log(tlh) << "stop single socket engine ok" << end_log;
+  info_log(tlh) << "close single socket engine ok" << end_log;
 }
 
 template <class TFastCounter> void single_socket_engine<TFastCounter>::do_work() {
