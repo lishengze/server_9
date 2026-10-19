@@ -331,6 +331,10 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --config mock/clie
    - 检查 aio_tcp.h deal_recv() 中 heart.on_msg() 是否已启用
    - FTE 是单向心跳（客户端→FTE），API 必须通过业务消息保持链路存活
    - 修复前 110 次/轮，修复后 0 次
+   - ⚠️ 2026-10-19 回归：代码重构把 heart.on_msg() 封装成 on_com_msg() 后，
+     必须确认业务消息路径（aio_socket_link.h::deal_msg 或 deal_recv_msg）手动调用了
+     pch->on_com_msg()，否则业务消息不保活 → FTE 心跳中断时 15s 断链（-35/-22 大量）
+   - 排查法：grep on_com_msg 是否有实际调用；对比 GOne(发心跳)正常、GW(靠业务消息)断链
 
 3. 两个修复后 perf 结果应干净：0 校验和不匹配 / 0 断链 / 100% 成功率
 ```

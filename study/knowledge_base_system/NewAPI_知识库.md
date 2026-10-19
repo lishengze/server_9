@@ -1185,6 +1185,27 @@ TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一�
 - 启用：heart.on_msg();  // 在 deal_recv() 中取消注释
 ```
 
+> **⚠️ 2026-10-19 回归复现 + 修复方式演进**：
+>
+> **现象**：框架代码更新后，GW(FTE) 性能测试 5000/2000/8000 TPS 全部断链失败（-35 大量 + -22），而 GOne 10000 TPS 正常。CPU 绑核隔离无效，排除环境因素。
+>
+> **根因**：代码重构把 `heart.on_msg()` 注释并封装成 `on_com_msg()`（`aio_tcp.h:304`），但 **`on_com_msg()` 定义了却从未被调用**（dead code）。GW 的 `deal_recv_msg`（gw_counter_direct.cpp）只对心跳消息(`kPktNewHeartBeat`)调 `deal_heart_msg_ans`，业务消息未保活。`heart.on_msg()` 只更新 `last_heart`（活性时钟），业务消息不保活 → FTE 心跳中断时 15 秒后断链（`tin×3`）。
+>
+> **正确修复**（2026-10-19）：在 `aio_socket_link.h::deal_msg()` 中调用 `pch->on_com_msg()`，业务消息到达时刷新心跳活性（所有用 aio_socket_link 的柜台统一生效）：
+> ```cpp
+> int32 deal_msg(aio_socket_ch_t *pch, lb_common::aio_msg &msg) override {
+>   pch->on_com_msg();  // 业务消息刷新 last_heart，防误判超时
+>   return owner_->counter_->deal_recv_msg(msg.pmsg, msg.msglen, owner_->link_type_);
+> }
+> ```
+>
+> **验证**：修复后 GW 5000 TPS（49674 笔 0 失败）+ GOne 10000 TPS（98793 笔 0 失败）。
+>
+> **关键认知**：
+> - `heart.on_msg()` 无副作用，只更新 `last_heart`；**业务消息必须在 `deal_msg` 回调手动调 `on_com_msg()`**（aio_tcp 内 `heart.on_msg()` 被注释，不自动调）。
+> - 心跳超时 = `tin × CH_HEART_TIMEOUT_NUM`（默认 5×3=15s）。
+> - **回归排查法**：性能断链先排除环境（CPU 竞争）→ 对比 GOne/GW 交叉验证 → 检查心跳保活逻辑（`on_com_msg` 是否被调用）。
+
 ### 26.4 FTE 对象池扩容
 
 **背景**：FTE 使用对象池管理回报/拒绝消息，初始容量 2000。连续约 6000 笔订单后池空，动态分配并记 `"capacity should resize"` 警告；继续运行后 FTE 降级（进程存活但不再监听端口）。

@@ -60,6 +60,10 @@ public:
     /// @param msg  消息内容 (pmsg, msglen, buf_addr)
     /// @return >0 已处理字节数; 0 不处理 (应避免); <0 错误
     int32 deal_msg(aio_socket_ch_t *pch, lb_common::aio_msg &msg) override {
+      // 业务消息到达时刷新心跳活性(last_heart)，避免"仅靠业务消息维持活性"的
+      // 稀疏链路(如 FTE 心跳中断场景)在 3×interval 后被误判超时断链。
+      // 注: aio_tcp 内 heart.on_msg() 被注释，须在 deal_msg 手动调 on_com_msg。
+      pch->on_com_msg();
       return owner_->counter_->deal_recv_msg(msg.pmsg, msg.msglen, owner_->link_type_);
     }
   };
