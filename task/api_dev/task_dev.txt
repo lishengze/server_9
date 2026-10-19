@@ -336,3 +336,16 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
     3. 将上述的分析结果，整理成一个文档，输出到 task/api_dev/api_compare.md 中。
     4. 并提出合理的整合方案，如何将 trunk/NewAPI/gone/api-compare 中合理的优化，修改点整合到 trunk/NewAPI 中。
        将这部分内容也输出到 task/api_dev/api_compare.md 中。
+
+2026年10月19日
+    任务: gw_counter 撤单优化
+    1. 先对当前 gw_counter 的撤单逻辑进行优化，优化点在于：
+        对于撤单请求来说，FTE 需要的是 ​​orig_clordno​，其他是非必填，那么在处理委托响应回报时，
+        可以把这个字段通过 OrderRtn 的 order_sys_no 返回给客户端。
+        然后客户端在撤单时，直接使用这个字段即可，不需要额外的的缓存了。
+    2. 按照这个思路，设计完整的优化方案 输出到 task/api_dev/api_compare.md 中。
+
+    任务: C98SessionCache 与 GwLoginCache 优化
+    好的，那就按照之前的方案进行相关的优化改动，注意两点:
+        1. 在每个counter 登陆成功的回报里，进行客户相关具体数据的缓存。
+        2. 还是以 fund_account_id 作为 key， 缓存 客户信息。 

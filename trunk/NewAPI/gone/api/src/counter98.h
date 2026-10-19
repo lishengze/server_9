@@ -11,6 +11,7 @@
 #include "api_event_msg.h"
 #include "counter98/lb_counter98_protocol.h"
 #include "callback_manager.h"
+#include "c98_session_cache.h"
 #include "comm_sys.h"
 #include "gw_session_cache.h"
 #include "mlog.h"
@@ -364,6 +365,10 @@ private:
   // ---- 登录事件缓存 (fund_account_id → acc_login_event_info) ----
   /// 登录请求发出时缓存, 登录应答到达时取出用于回调和极速柜台登录
   std::unordered_map<std::string, acc_login_event_info> pending_logins_;
+
+  /// 98 柜台专属账户登录缓存 (每 api 实例一份, 以 fund_account_id 为 key)
+  /// 登录成功应答 (deal_cust_login_ans) 时回填客户身份数据
+  C98SessionCache session_cache_;
 
   counter_type fast_counter_type_ = counter_type::fixed_98; ///< 极速柜台类型
   int32_t agw_user_login_timeout_ = 10;                     ///< AGW 登录超时秒数（默认 10）

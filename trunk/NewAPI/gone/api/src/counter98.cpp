@@ -672,8 +672,7 @@ int32 counter98::deal_credit_max_order_qty_query(const CreditMaxOrderQtyQueryReq
 
 int32 counter98::build_order_msg(const OrderReq &req, char *o_buf) {
   // 查找客户缓存
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -706,8 +705,7 @@ int32 counter98::build_order_msg(const OrderReq &req, char *o_buf) {
 
 int32 counter98::build_etf_order_msg(const OrderReq &req, char *o_buf) {
   // ETF 申购赎回也使用 AgwMsgCashAuctionOrder, business_type 不同
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -740,8 +738,7 @@ int32 counter98::build_etf_order_msg(const OrderReq &req, char *o_buf) {
 
 int32 counter98::build_bse_order_msg(const OrderReq &req, char *o_buf) {
   // 北交所委托也使用 AgwMsgCashAuctionOrder
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -773,8 +770,7 @@ int32 counter98::build_bse_order_msg(const OrderReq &req, char *o_buf) {
 }
 
 int32 counter98::build_cancel_msg(const CancelReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -800,8 +796,7 @@ int32 counter98::build_cancel_msg(const CancelReq &req, char *o_buf) {
 }
 
 int32 counter98::build_order_query_msg(const OrderQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -824,8 +819,7 @@ int32 counter98::build_order_query_msg(const OrderQueryReq &req, char *o_buf) {
 }
 
 int32 counter98::build_order_batch_query_msg(const OrderBatchQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -848,8 +842,7 @@ int32 counter98::build_order_batch_query_msg(const OrderBatchQueryReq &req, char
 }
 
 int32 counter98::build_trade_query_msg(const TradeQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -872,8 +865,7 @@ int32 counter98::build_trade_query_msg(const TradeQueryReq &req, char *o_buf) {
 }
 
 int32 counter98::build_trade_batch_query_msg(const TradeBatchQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -895,8 +887,7 @@ int32 counter98::build_trade_batch_query_msg(const TradeBatchQueryReq &req, char
 }
 
 int32 counter98::build_fund_query_msg(const FundQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -918,8 +909,7 @@ int32 counter98::build_fund_query_msg(const FundQueryReq &req, char *o_buf) {
 }
 
 int32 counter98::build_position_query_msg(const PositionQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -945,8 +935,7 @@ int32 counter98::build_position_query_msg(const PositionQueryReq &req, char *o_b
 }
 
 int32 counter98::build_max_order_qty_query_msg(const MaxOrderQtyQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -975,8 +964,7 @@ int32 counter98::build_max_order_qty_query_msg(const MaxOrderQtyQueryReq &req, c
 }
 
 int32 counter98::build_total_fund_asset_query_msg(const TotalFundAssetQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -998,8 +986,7 @@ int32 counter98::build_total_fund_asset_query_msg(const TotalFundAssetQueryReq &
 }
 
 int32 counter98::build_fund_maxdraw_query_msg(const FundMaxdrawQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -1022,8 +1009,7 @@ int32 counter98::build_fund_maxdraw_query_msg(const FundMaxdrawQueryReq &req, ch
 }
 
 int32 counter98::build_cust_margin_avl_query_msg(const CustMarginAvlQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -1049,8 +1035,7 @@ int32 counter98::build_cust_margin_avl_query_msg(const CustMarginAvlQueryReq &re
 }
 
 int32 counter98::build_asset_debts_query_msg(const AssetDebtsQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -1073,8 +1058,7 @@ int32 counter98::build_asset_debts_query_msg(const AssetDebtsQueryReq &req, char
 }
 
 int32 counter98::build_credit_max_order_qty_query_msg(const CreditMaxOrderQtyQueryReq &req, char *o_buf) {
-  GwSessionInfo *session = GwSessionCache::instance().get_session(
-      std::string(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16)));
+  GwSessionInfo *session = session_cache_.get_session(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
   if (!session)
     return -1;
 
@@ -1542,7 +1526,7 @@ int32 counter98::deal_login_req(const LoginReq &req) {
 
   // 检查是否已登录 (缓存中存在即已登录)
   std::string fa_key(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), 16));
-  if (GwSessionCache::instance().get_session(fa_key)) {
+  if (session_cache_.get_session(fa_key.data(), fa_key.size())) {
     // 已登录, 直接发起极速柜台登录 (info.session 已在 build_cust_login_event 中赋值)
     delive_fast_counter_login(info);
     return LBAPI_OK;
@@ -1604,7 +1588,7 @@ void counter98::build_cust_login_event(const LoginReq &req, acc_login_event_info
 int32 counter98::deal_cust_login(const acc_login_event_info &req, char *o_buf, int32 buf_len) {
   // 检查是否已登录 (缓存中存在即已登录)
   std::string fa_key(req.fund_account_id, strnlen(req.fund_account_id, 16));
-  if (GwSessionCache::instance().get_session(fa_key)) {
+  if (session_cache_.get_session(fa_key.data(), fa_key.size())) {
     // 已登录, 不需重复登录
     return 0;
   }
@@ -1692,7 +1676,7 @@ int32 counter98::delive_fast_counter_login(const acc_login_event_info &info) {
 void counter98::ans_cust_login(const acc_login_event_info &req, int32 err_ret, const char *err_msg) {
   // 登录成功时创建全局会话缓存
   if (err_ret == 0) {
-    GwSessionCache::instance().create_session(req);
+    session_cache_.create_session(req);
   }
 
   // 构建登录应答回调
@@ -1756,6 +1740,15 @@ void counter98::deal_cust_login_ans(const char *body, int32 body_len) {
 
   // 登录成功, 发起极速柜台登录
   if (login_ok) {
+    // 登录成功回报: 缓存客户具体数据 (以 fund_account_id 为 key)
+    // cust_id/branch_id/account_id 以 98 登录成功应答为权威源回填
+    GwSessionInfo *session = session_cache_.get_session(fa_key.data(), fa_key.size());
+    if (session != nullptr && !msg.fund_account_array.empty() &&
+        !msg.fund_account_array[0].account_array.empty()) {
+      session_cache_.fill_session_login_ok(session, msg.cust_id.data(),
+                                           msg.fund_account_array[0].branch_id.data(),
+                                           msg.fund_account_array[0].account_array[0].account_id.data());
+    }
     // info.session 已在 build_cust_login_event 中赋值为 agw_session
     delive_fast_counter_login(it->second);
   }
@@ -2482,8 +2475,8 @@ void counter98::deal_link_close(int16 link_type) {
   trade_link_connect_ = 0;
   lb_common::atomic_store16(&agw_login_state, 0);
 
-  // 清除全局会话缓存和登录事件
-  GwSessionCache::instance().clear_all();
+  // 清除本柜台会话缓存和登录事件
+  session_cache_.clear_all();
   pending_logins_.clear();
   std::memset(agw_session, 0, sizeof(agw_session));
 

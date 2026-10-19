@@ -51,12 +51,12 @@ int32 gw_counter_direct::init(const api_config_impl &cfg, callback_manager *cb, 
 
 // ---- 会话访问辅助（单客户/多客户模式分流） ----
 
-GwSessionInfo *gw_counter_direct::get_session_for_order(const char *fund_account_id) {
+GwLoginInfo *gw_counter_direct::get_session_for_order(const char *fund_account_id) {
   if (single_cust_per_link_) {
     return &local_session_;
   }
   fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
-  return GwSessionCache::instance().get_session(fa_key_cache_);
+  return login_cache_.find(fa_key_cache_.data(), fa_key_cache_.size());
 }
 
 void gw_counter_direct::record_order_locator(const char *fund_account_id, int64_t order_sys_no,
@@ -67,8 +67,8 @@ void gw_counter_direct::record_order_locator(const char *fund_account_id, int64_
     loc.client_seq_id = client_seq_id;
     local_session_.order_locators[order_sys_no] = loc;
   } else {
-    std::string fa_id(fund_account_id, strnlen(fund_account_id, 16));
-    GwSessionCache::instance().record_order_locator(fa_id, order_sys_no, clordno, client_seq_id);
+    fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
+    login_cache_.record_order_locator(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no, clordno, client_seq_id);
   }
 }
 
@@ -77,8 +77,8 @@ int64_t gw_counter_direct::get_orig_client_seq_id(const char *fund_account_id, i
     auto it = local_session_.order_locators.find(order_sys_no);
     return (it != local_session_.order_locators.end()) ? it->second.client_seq_id : 0;
   }
-  std::string fa_id(fund_account_id, strnlen(fund_account_id, 16));
-  return GwSessionCache::instance().get_orig_client_seq_id(fa_id, order_sys_no);
+  fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
+  return login_cache_.get_orig_client_seq_id(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no);
 }
 
 int64_t gw_counter_direct::get_clordno(const char *fund_account_id, int64_t order_sys_no) {
@@ -86,8 +86,8 @@ int64_t gw_counter_direct::get_clordno(const char *fund_account_id, int64_t orde
     auto it = local_session_.order_locators.find(order_sys_no);
     return (it != local_session_.order_locators.end()) ? it->second.clordno : 0;
   }
-  std::string fa_id(fund_account_id, strnlen(fund_account_id, 16));
-  return GwSessionCache::instance().get_clordno(fa_id, order_sys_no);
+  fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
+  return login_cache_.get_clordno(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no);
 }
 
 // ============================================================
@@ -304,7 +304,7 @@ static uint16_t map_api_market_id_to_fte(uint16_t api_market_id) {
 // 方案 C/D：直接序列化到 o_buf，边写边累加校验和（单趟），消除中间 body 对象与二次校验和遍历
 void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
   // 获取会话（补充 account_id / cust_id）：单客户模式直接使用本地成员，多客户模式从缓存按 fund_account_id 获取
-  GwSessionInfo *session = get_session_for_order(req.fund_account_id.data());
+  GwLoginInfo *session = get_session_for_order(req.fund_account_id.data());
 
   // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
@@ -345,7 +345,7 @@ void gw_counter_direct::build_order_msg(const OrderReq &req, char *o_buf) {
 // build_etf_order_msg: 构造 FTE ETF 委托消息 (PktNewHeader + TradeOrderReq + 校验和, msg_id=1010)
 // 方案 C/D：与 build_order_msg 结构一致，仅 msg_id 不同；直接序列化 + 单趟校验和
 void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
-  GwSessionInfo *session = get_session_for_order(req.fund_account_id.data());
+  GwLoginInfo *session = get_session_for_order(req.fund_account_id.data());
 
   // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
@@ -383,7 +383,7 @@ void gw_counter_direct::build_etf_order_msg(const OrderReq &req, char *o_buf) {
 // build_cancel_msg: 构造 FTE 撤单消息 (PktNewHeader + CancelOrderReq + 校验和)
 // 方案 C/D：直接序列化 + 单趟校验和
 void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
-  GwSessionInfo *session = get_session_for_order(req.fund_account_id.data());
+  GwLoginInfo *session = get_session_for_order(req.fund_account_id.data());
 
   // 双趟序列化：第一趟 memcpy/memset 整块赋值，第二趟对 [头+体] 宽累加校验和
   char* p = o_buf;
@@ -527,7 +527,7 @@ int32 gw_counter_direct::deal_cust_login(const acc_login_event_info &req, char *
   }
 
   // 创建会话（存 order_way_ext/user_info 等，供后续业务使用）
-  // 单客户模式：直接缓存到本地成员（不走全局 map）；多客户模式：写全局缓存
+  // 单客户模式：直接缓存到本地成员（不走 map）；多客户模式：写本柜台专属 login_cache_
   if (single_cust_per_link_) {
     local_session_.reset();
     memcpy(local_session_.fund_account_id.data(), req.fund_account_id, sizeof(local_session_.fund_account_id));
@@ -535,7 +535,7 @@ int32 gw_counter_direct::deal_cust_login(const acc_login_event_info &req, char *
     memcpy(local_session_.order_way_ext.data(), req.order_way_ext, sizeof(local_session_.order_way_ext));
     memcpy(local_session_.user_info.data(), req.user_info, sizeof(local_session_.user_info));
   } else {
-    GwSessionCache::instance().create_session(req);
+    login_cache_.prepare_login(req);
   }
 
   build_login_msg(req, o_buf, buf_len);
@@ -568,12 +568,17 @@ void gw_counter_direct::deal_log_ans(const char *body, int32 body_len) {
                 << ", error_code=" << ans.error_code << end_log;
 
   // 回填会话（cust_id / account_id 由 FTE 在应答中回填）
-  // 单客户模式：写本地成员；多客户模式：写全局缓存
+  // 单客户模式：写本地成员；多客户模式：写本柜台专属 login_cache_
   if (single_cust_per_link_) {
     memcpy(local_session_.cust_id.data(), ans.cust_id.data(), sizeof(local_session_.cust_id));
     memcpy(local_session_.account_id.data(), ans.account_id.data(), sizeof(local_session_.account_id));
   } else {
-    GwSessionCache::instance().fill_session_from_ans(ans);
+    fa_key_cache_.assign(ans.fund_account_id.data(), strnlen(ans.fund_account_id.data(), 16));
+    GwLoginInfo *info = login_cache_.find(fa_key_cache_.data(), fa_key_cache_.size());
+    if (info != nullptr) {
+      login_cache_.fill_login_ok(info, ans.cust_id.data(), ans.branch_id.data(), ans.account_id.data(),
+                                 static_cast<int64_t>(ans.client_seq_id));
+    }
   }
 
   LoginAns login_ans;
