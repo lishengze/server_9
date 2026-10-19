@@ -114,7 +114,7 @@ int32 fpga_counter_gateway::deal_order_req(const OrderReq &req) {
     return ret;
   }
 
-  if (unlikely(cust->login_state != 2)) {
+  if (unlikely(!cust->log_state.is_logined())) {
     lb_common::lb_log_hand tlh(log_);
     error_log(tlh) << "fpga_gateway deal_order_req: not login, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
@@ -178,7 +178,7 @@ int32_t fpga_counter_gateway::deal_cancel_req(const CancelReq &req) {
                    << ", branch_id=" << req.branch_id.data() << ", client_seq_id=" << req.client_seq_id << end_log;
     return LBAPI_ERR_NO_CUST;
   }
-  if (unlikely(cust->login_state != 2)) {
+  if (unlikely(!cust->log_state.is_logined())) {
     lb_common::lb_log_hand tlh(log_);
     error_log(tlh) << "fpga_gateway deal_cancel_req: not login, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
@@ -402,7 +402,7 @@ int32 fpga_counter_gateway::deal_cust_login(const acc_login_event_info &req, cha
   fpga_cust_info *cust = nullptr;
   int32 find_ret = get_client_info(cust, req.branch_id, req.fund_account_id);
   if (find_ret == 0 && cust != nullptr) {
-    if (cust->login_state == 2) {
+    if (cust->log_state.is_logined()) {
       LoginAns ans;
       build_login_rtn(req, 0, NULL, ans);
 
@@ -628,7 +628,7 @@ int32 fpga_counter_gateway::deal_link_connect(int16 link_type, int32 have_switch
       int32 re_count = 0;
       for (auto it = clients_vec_.begin(); it != clients_vec_.end(); ++it) {
         fpga_cust_info *cust = *it;
-        if (cust == nullptr || cust->login_state != 2) {
+        if (cust == nullptr || !cust->log_state.is_logined()) {
           continue;
         }
         int32 ret = delive_cust_login(*cust, gw_send_queue_, gw_eng_op_);

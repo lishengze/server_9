@@ -349,7 +349,13 @@ int32 fpga_counter_base::delive_cust_login(fpga_cust_info &cust, lb_common::que_
     return LBAPI_ERR_SEND_QUEUE_FULL;
   }
 
-  cust.login_state = 1;
+  // 重连(内部)重登: 状态机登记在途 (仅登录成功状态才允许重登, 否则静默终止)
+  int32 thavelog = 0;
+  int32 tret = cust.log_state.to_login(thavelog, 0);
+  if (tret <= 0) {
+    // 非登录成功状态(未登录/已登出), 静默终止重连重登
+    return 0;
+  }
 
   link_send_event *evt = reinterpret_cast<link_send_event *>(data);
   evt->link_type = LINK_TYPE_SPEED_GW;
@@ -688,7 +694,7 @@ void fpga_counter_base::save_client_info(const login_ans &msg, fpga_cust_info &o
   o_cust.cust_req_no = msg.cust_req_no;
   atomic_seq_fence();
   o_cust.fpga_state = 1; ///< 该客户在fpga中状态
-  o_cust.login_state = 2;
+  o_cust.log_state.ans_login_ok();
 }
 
 // ---- build_heart_msg: 构造心跳消息 (仅头) ----

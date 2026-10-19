@@ -79,7 +79,7 @@ public:
   /// @param link_type  链接类型 (LINK_TYPE_SPEED_TRADE/GW)
   bool can_link_connect(int16 link_type) {
     if (LINK_TYPE_SPEED_TRADE == link_type)
-      return client_info_.login_state == 2;
+      return client_info_.log_state.is_logined();
     return true;
   }
 

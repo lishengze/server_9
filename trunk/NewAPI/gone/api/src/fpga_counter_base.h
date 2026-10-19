@@ -53,8 +53,8 @@ using lb_common::uint8;
 /// FPGA 客户信息 (单客户/多客户都用此结构)
 struct fpga_cust_info {
   // ---- 热路径: 每次委托/撤单必用 ----
-  int32_t fpga_state;  ///< 该客户在fpga中状态
-  int16_t login_state; ///< 登陆状态:0-未登陆，1-登陆中，2-已登陆
+  int32_t fpga_state;   ///< 该客户在fpga中状态
+  log_state_ctl log_state; ///< 登录状态机 (NONE/LOGOUT/OK + PENDING_USER/RELOGIN 在途标记)
   uint16_t user_id;    ///< 用户索引ID(登录后分配)
   uint16_t board_no;   ///< 所在FPGA编号(登录后分配)
   uint32_t session_id; ///< fdm board 映射的会话 ID (v2.1: 每客户独立, session_id+board_no 唯一标识 agwuser)
@@ -69,7 +69,8 @@ struct fpga_cust_info {
   int64_t cust_req_no;                        ///< 客户私有请求号
   char end_code[G1_CUST_END_LEN];             //终端信息
 
-  fpga_cust_info() : fpga_state(0), login_state(0), user_id(0), board_no(0), session_id(0) {
+  fpga_cust_info() : fpga_state(0), user_id(0), board_no(0), session_id(0) {
+    log_state.log_state = 0;
     std::memset(end_code, 0, sizeof(end_code));
   }
 };

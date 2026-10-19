@@ -1,11 +1,14 @@
 #pragma once
 
 #include "comm_sys.h"
+#include "matomic.h"
 
 #include "g1msghead.h"
 #include "order_trade_type.h"
+#include "api_errno.h"
 
 #include <cstdint>
+#include <cstring>
 #include <time.h>
 
 namespace lb_api {
@@ -60,6 +63,134 @@ constexpr int16_t LINK_TYPE_98 = 0;          ///< 98 柜台链接
 constexpr int16_t LINK_TYPE_SPEED_TRADE = 1; ///< 极速交易链接
 constexpr int16_t LINK_TYPE_SPEED_GW = 2;    ///< 极速网关链接
 constexpr int16_t LINK_TYPE_MAX = 3;         ///< 链接类型总数占位
+
+/// 客户登录状态字典 (fpga_cust_info.login_state / counter98 cust_login_map_ val / gw_counter_direct.login_state)
+static constexpr int32_t LOGIN_STATE_NONE = 0;   ///< 未登录(从未)
+static constexpr int32_t LOGIN_STATE_LOGOUT = 1; ///< 已登出(曾成功后登出)
+static constexpr int32_t LOGIN_STATE_OK = 2;     ///< 登录成功(保持至用户主动登出; 单客户模式绑定过账户后不支持换账户登录)
+static constexpr int32_t LOGIN_STATE_MASK = 3;   ///< LOGIN_STATE_LOGOUT | LOGIN_STATE_OK
+
+/// 账户登录在途标记字典 (log_state_ctl 位标志, 与登录状态位组合编码在同一原子字内)
+static constexpr int32_t LOGIN_PENDING_USER = 0x10;    ///< 用户在途(应答成功回调一次, 失败清状态回调)
+static constexpr int32_t LOGIN_PENDING_RELOGIN = 0x20; ///< 重连(内部)重登在途(成功静默; 失败清状态+回调+不再自动重登, 不关链)
+static constexpr int32_t LOGIN_PENDING_MASK = 0x30;    ///< LOGIN_PENDING_USER | LOGIN_PENDING_RELOGIN
+
+/// 登录控制状态机
+struct log_state_ctl {
+  int32_t log_state;
+
+  /// 用户登出，检查设置 logout
+  /// 返回 ：1-设置成功 ， 0-原来就未登录，<0 - 存在在途请求
+  int32_t to_logout() {
+    do {
+      int32_t t = lb_common::atomic_load32(&log_state);
+      if ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER)
+        return LBAPI_ERR_STATE_LIMITED;
+      if ((t & LOGIN_STATE_MASK) != LOGIN_STATE_OK)
+        return 0;
+      if (lb_common::atomic_cas32(&log_state, &t, LOGIN_STATE_LOGOUT))
+        return 1;
+    } while (true);
+  }
+
+  /// 是否为初始
+  bool is_free() {
+    int32_t t = lb_common::atomic_load32(&log_state);
+    return t == 0;
+  }
+
+  /// 是否登录成功
+  bool is_logined() {
+    int32_t t = lb_common::atomic_load32(&log_state);
+    return ((t & LOGIN_STATE_MASK) == LOGIN_STATE_OK);
+  }
+
+  /// 处理登录事件，检查设置
+  /// 该函数保证同一客户只有一个在途登录请求到后台
+  /// o_havelog , 返回是否为登录状态 (仅返回 0 时有意义: 1=幂等回调用户登录成功)
+  /// 返回 1- 发到后台 ， 0-终止
+  int32_t to_login(int32_t &o_havelog, int32_t is_user_login) {
+    do {
+      int32_t t = lb_common::atomic_load32(&log_state);
+      if (is_user_login == 1) {
+        if ((t & LOGIN_STATE_MASK) == LOGIN_STATE_OK) {
+          o_havelog = 1;
+          return 0;
+        }
+        if ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER) {
+          o_havelog = 0;
+          return 0;
+        }
+        if ((t & LOGIN_PENDING_MASK) == 0) {
+          if (lb_common::atomic_cas32(&log_state, &t, LOGIN_PENDING_USER)) {
+            o_havelog = 0;
+            return 1;
+          }
+        } else {
+          if (lb_common::atomic_cas32(&log_state, &t, LOGIN_PENDING_USER)) {
+            o_havelog = 0;
+            return 0;
+          }
+        }
+      } else {
+        if ((t & LOGIN_STATE_MASK) == LOGIN_STATE_OK) {
+          o_havelog = 1;
+        } else {
+          o_havelog = 0;
+          return 0;
+        }
+        if ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER) {
+          o_havelog = 0;
+          return 0;
+        }
+        int32_t n = ((t & LOGIN_STATE_MASK) | LOGIN_PENDING_RELOGIN);
+        if (lb_common::atomic_cas32(&log_state, &t, n)) {
+          return 1;
+        }
+      }
+    } while (true);
+  }
+
+  /// 链接关闭或异步处理失败, 清除pending
+  /// 返回原来的在途登录：0-无在途，1-用户在途，2-重登在途
+  int32_t clear_pending() {
+    do {
+      int32_t t = lb_common::atomic_load32(&log_state);
+      if ((t & LOGIN_PENDING_MASK) == 0) return 0;
+      int32_t ret = ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER) ? 1 : 2;
+      int32_t n = (t & LOGIN_STATE_MASK);
+      if (lb_common::atomic_cas32(&log_state, &t, n)) return ret;
+    } while (true);
+  }
+
+  /// 后台登录应答成功，设置状态
+  /// 返回：1- 回调用户成功，0- 不回调用户
+  int32_t ans_login_ok() {
+    do {
+      int32_t t = lb_common::atomic_load32(&log_state);
+      int32_t ret = ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER);
+      if ((t & LOGIN_STATE_MASK) == LOGIN_STATE_LOGOUT) return ret;
+      if ((t & LOGIN_STATE_MASK) == LOGIN_STATE_OK) ret = 0;
+      if (lb_common::atomic_cas32(&log_state, &t, LOGIN_STATE_OK)) return ret;
+    } while (true);
+  }
+
+  /// 后台登录应答失败，设置状态
+  /// 返回：1- 回调用户失败，0- 不回调用户
+  int32_t ans_login_err() {
+    do {
+      int32_t t = lb_common::atomic_load32(&log_state);
+      if ((t & LOGIN_STATE_MASK) == LOGIN_STATE_LOGOUT) return 0;
+      if ((t & LOGIN_PENDING_MASK) == LOGIN_PENDING_USER) {
+        if (lb_common::atomic_cas32(&log_state, &t, 0)) return 1;
+      } else if ((t & LOGIN_PENDING_MASK) == 0) {
+        return 0;
+      } else {
+        if (lb_common::atomic_cas32(&log_state, &t, 0)) return 1;
+      }
+    } while (true);
+  }
+};
 
 /// 链接发送事件 (柔性数组, 写入时按 total = sizeof(link_send_event) + data_len 申请)
 struct link_send_event {

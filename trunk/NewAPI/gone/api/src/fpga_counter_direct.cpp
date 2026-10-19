@@ -62,7 +62,7 @@ int32 fpga_counter_direct::deal_order_req(const OrderReq &req) {
                    << ", client_seq_id=" << req.client_seq_id << end_log;
     return LBAPI_ERR_LINK_DISCONNECTED;
   }
-  if (unlikely(client_info_.login_state != 2)) {
+  if (unlikely(!client_info_.log_state.is_logined())) {
     lb_common::lb_log_hand tlh(log_);
     error_log(tlh) << "fpga_direct deal_order_req: not login, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
@@ -73,6 +73,19 @@ int32 fpga_counter_direct::deal_order_req(const OrderReq &req) {
     error_log(tlh) << "fpga_direct deal_order_req: cust fault, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
     return LBAPI_ERR_COUNTER_OFFLINE;
+  }
+  // 账户一致性校验(单客户绑定): 已绑定账户后, 异账户请求一律拒绝,
+  // 防止错号委托静默归属已登录账户 (与 deal_cust_login / deal_logout_req 同判)
+  bool same_acc =
+      std::strncmp(client_info_.fund_account_id, req.fund_account_id.data(), sizeof(req.fund_account_id)) == 0 &&
+      std::strncmp(client_info_.branch_id, req.branch_id.data(), sizeof(req.branch_id)) == 0;
+  if (unlikely(!same_acc && client_info_.fund_account_id[0] != '\0')) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "fpga_direct deal_order_req: account not match,login_branch_id=" << client_info_.branch_id
+                   << ",login_fund_account=" << client_info_.fund_account_id << ",req_branch_id=" << req.branch_id.data()
+                   << ",req_fund_account=" << req.fund_account_id.data() << ",client_seq_id=" << req.client_seq_id
+                   << end_log;
+    return LBAPI_ERR_NO_CUST;
   }
 
   // 2. 查询 sec_index
@@ -125,7 +138,7 @@ int32_t fpga_counter_direct::deal_cancel_req(const CancelReq &req) {
                    << ", client_seq_id=" << req.client_seq_id << end_log;
     return LBAPI_ERR_LINK_DISCONNECTED;
   }
-  if (unlikely(client_info_.login_state != 2)) {
+  if (unlikely(!client_info_.log_state.is_logined())) {
     lb_common::lb_log_hand tlh(log_);
     error_log(tlh) << "fpga_direct deal_cancel_req: not login, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
@@ -136,6 +149,18 @@ int32_t fpga_counter_direct::deal_cancel_req(const CancelReq &req) {
     error_log(tlh) << "fpga_direct deal_cancel_req: cust fault, fund_account=" << req.fund_account_id.data()
                    << ", client_seq_id=" << req.client_seq_id << end_log;
     return LBAPI_ERR_COUNTER_OFFLINE;
+  }
+  // 账户一致性校验(单客户绑定): 已绑定账户后, 异账户请求一律拒绝
+  bool same_acc =
+      std::strncmp(client_info_.fund_account_id, req.fund_account_id.data(), sizeof(req.fund_account_id)) == 0 &&
+      std::strncmp(client_info_.branch_id, req.branch_id.data(), sizeof(req.branch_id)) == 0;
+  if (unlikely(!same_acc && client_info_.fund_account_id[0] != '\0')) {
+    lb_common::lb_log_hand tlh(log_);
+    error_log(tlh) << "fpga_direct deal_cancel_req: account not match,login_branch_id=" << client_info_.branch_id
+                   << ",login_fund_account=" << client_info_.fund_account_id << ",req_branch_id=" << req.branch_id.data()
+                   << ",req_fund_account=" << req.fund_account_id.data() << ",client_seq_id=" << req.client_seq_id
+                   << end_log;
+    return LBAPI_ERR_NO_CUST;
   }
 
   int32 total_len = static_cast<int32>(sizeof(link_send_event) + sizeof(g1_msg_head) + sizeof(cancel_req));
@@ -294,7 +319,7 @@ void fpga_counter_direct::deal_send_error(char *msg_buf, int32 msg_len, int16 li
 // deal_cust_login: 处理账户登录事件, 构造 fpga 登录消息投递到 gw 队列
 // 成功返回消息长度 (含消息头), 失败返回负数，0-不需重复登陆
 int32 fpga_counter_direct::deal_cust_login(const acc_login_event_info &req, char *o_buf, int32 buf_len) {
-  if (client_info_.login_state == 2) {
+  if (client_info_.log_state.is_logined()) {
     LoginAns ans;
     build_login_rtn(req, 0, NULL, ans);
 
@@ -308,8 +333,14 @@ int32 fpga_counter_direct::deal_cust_login(const acc_login_event_info &req, char
   }
   g1_msg_head *head = reinterpret_cast<g1_msg_head *>(o_buf);
   // log_type=1 表示用户登录 (fpga_direct 是单客户, 使用用户登录)
+  // 状态机登记用户在途 (保证同一客户只有一个在途登录)
+  int32 thavelog = 0;
+  int32 tret = client_info_.log_state.to_login(thavelog, 1);
+  if (tret <= 0) {
+    // 已在途/刚成功, 不重复发送
+    return 0;
+  }
   build_login_msg(req, 1, head);
-  client_info_.login_state = 1;
   return msg_len;
 }
 
@@ -324,9 +355,9 @@ void fpga_counter_direct::ans_cust_login(const acc_login_event_info &req, int32 
                                << ",session=" << req.session << ",sec_state=" << sec_state_ << end_log;
       return;
     }
-  } else {client_info_.login_state = 0;}*/
+  } else {client_info_.log_state.clear_pending();}*/
 
-  client_info_.login_state = 0;
+  client_info_.log_state.clear_pending();
 
   LoginAns ans;
   build_login_rtn(req, err_ret, err_msg, ans);
@@ -372,7 +403,7 @@ void fpga_counter_direct::deal_log_ans(login_ans &msg) {
                     << ",sec_state=" << sec_state_ << end_log;
     }
   } else {
-    client_info_.login_state = 0;
+    client_info_.log_state.ans_login_err();
 
     if (sec_state_ == 0 && msg.err_code == 0) {
       ans.err_code = LBAPI_ERR_NO_SEC;
@@ -411,7 +442,7 @@ void fpga_counter_direct::check_ans_log(int32 err_code) {
   lb_common::lb_log_hand tlh(log_);
 
   if (err_code == 0) {
-    if (client_info_.login_state == 2) {
+    if (client_info_.log_state.is_logined()) {
       LoginAns ans;
       build_login_rtn(client_info_, 0, NULL, ans);
       cb_mgr_->on_login(ans);
@@ -495,7 +526,7 @@ int32 fpga_counter_direct::deal_link_connect(int16 link_type, int32 have_switch)
     }
 
     // v2.1: GW 链接重连后自动重登已登录客户
-    if (client_info_.login_state == 2) {
+    if (client_info_.log_state.is_logined()) {
       info_log(tlh) << "fpga_direct GW link reconnected, re-deliver cust login, branch_id=" << client_info_.branch_id
                     << ",fund_account=" << client_info_.fund_account_id << end_log;
       int32 ret = delive_cust_login(client_info_, gw_send_queue_, gw_eng_op_);
@@ -529,8 +560,7 @@ void fpga_counter_direct::deal_link_close(int16 link_type) {
       cb_mgr_->on_error(err_event_type::get_sec_info, LBAPI_ERR_LINK_DISCONNECTED, "sec not complete by link close");
     }
     // sec_state_ = 0;
-    if (client_info_.login_state == 1) {
-      client_info_.login_state = 0;
+    if (client_info_.log_state.clear_pending() != 0) {
       LoginAns ans;
       build_login_rtn(client_info_, LBAPI_ERR_LINK_DISCONNECTED, "login not complete by link close", ans);
       cb_mgr_->on_login(ans);
