@@ -487,50 +487,61 @@
 
 ---
 
-## 七、整合执行状态（2026-10-19）
+## 七、整合执行状态（2026-10-19，第二轮）
 
-### 7.1 已完成整合（已编译 + GOne 回归 5/5 通过）
+### 7.1 已完成整合（已编译 + GOne 5/5 + GW 5/5 回归通过）
 
-| # | 文件 | 改动 | 对应方案 |
-|---|------|------|----------|
-| 1 | `fpga_counter_direct.cpp` | `deal_cancel_rsp` 的 counter_type 由 `fpga_gateway` 改为 `fpga_direct`（**P0 bug 修复**） | 3.2.1 |
-| 2 | `multi_socket_engine.cpp` | epoll 线程 init 前增加 `epoll_th_.init_set_cpu(tcpuid)`（CPU 亲和） | 2.2.1 |
-| 3 | `single_socket_engine.cpp` | 地址预填加 `gw_direct` 守卫（fpga_direct 不预填 cfg 地址） | 2.2.2 |
-| 4 | `tcpdirect_engine.cpp` | 地址预填加 `gw_direct` 守卫 | 2.2.2 |
-| 5 | `fpga_counter_base.h` | `fpga_sec_key` 默认构造 `memset` 清零（防 hash UB） | 3.1.4 |
+| # | 文件 | 改动 | 对应方案 | 验证 |
+|---|------|------|----------|------|
+| 1 | `fpga_counter_direct.cpp` | `deal_cancel_rsp` 的 counter_type 由 `fpga_gateway` 改为 `fpga_direct`（**P0 bug 修复**） | 3.2.1 | GOne+GW |
+| 2 | `multi_socket_engine.cpp` | epoll 线程 init 前增加 `epoll_th_.init_set_cpu(tcpuid)`（CPU 亲和） | 2.2.1 | GOne+GW |
+| 3 | `single_socket_engine.cpp` | 地址预填加 `gw_direct` 守卫（fpga_direct 不预填 cfg 地址） | 2.2.2 | GOne+GW |
+| 4 | `tcpdirect_engine.cpp` | 地址预填加 `gw_direct` 守卫 | 2.2.2 | GOne+GW |
+| 5 | `fpga_counter_base.h` | `fpga_sec_key` 默认构造 `memset` 清零（防 hash UB） | 3.1.4 | GOne+GW |
+| 6 | `api_event_msg.h` | 新增 `log_state_ctl` 登录控制状态机（NONE/LOGOUT/OK + PENDING_USER/RELOGIN） | 3.1.2 | GOne+GW |
+| 7 | `fpga_counter_base.h` | `int16_t login_state` → `log_state_ctl log_state`（状态机替换） | 3.1.2 | GOne+GW |
+| 8 | `fpga_counter_base.cpp` | `delive_cust_login`/`save_client_info` 改用 `to_login`/`ans_login_ok` | 3.1.2 | GOne+GW |
+| 9 | `fpga_counter_direct.cpp` | 登录/重登/登出全流程改用 `log_state_ctl` 状态机 + `clear_pending`/`ans_login_err` | 3.1.2/3.2.1 | GOne+GW |
+| 10 | `fpga_counter_direct.h` | `can_link_connect` 改用 `log_state.is_logined()` | 3.2.1 | GOne+GW |
+| 11 | `fpga_counter_gateway.cpp` | 状态检查改用 `log_state.is_logined()` | 3.1.2 | GOne+GW |
+| 12 | `fpga_counter_direct.cpp` | 委托/撤单增加账户一致性校验（防错号委托静默归属已登录账户） | 3.2.1 | GOne+GW |
+| 13 | `api_event_msg.h` | 新增 `matomic.h`/`api_errno.h` include 依赖 | 基础 | GOne+GW |
 
 ### 7.2 已确认当前 api 内置（无需改，整合已天然满足）
 
 经核对，以下方案项**当前 api 已实现**，无需额外改动：
-- **3.1.6 session_seq 去重**：`deal_order_rtn`/`deal_trade_rtn`/`deal_cancel_rsp` 已有 `session_seq_no` 去重（当前为非原子访问，引擎单线程内安全）
+- **3.1.6 session_seq 去重**：`deal_order_rtn`/`deal_trade_rtn`/`deal_cancel_rsp` 已有 `session_seq_no` 去重（非原子访问，引擎单线程内安全）
 - **3.1.8 build_login_msg 版本号**：已 `memset + strncpy(g1_msg_ver)`
 - **2.2.1/2.2.2 can_link_connect**：引擎在 `LINK_EVENT_TYPE_LINK_CONNECT` 处理中已有 `can_link_connect` 检查；`deal_cust_login` 已有 `is_free()` 检查
 - **P0 send_req_msg**（counter98 队列长度 bug 修复）、**3.1.3 memcpy**（字段截断修复）均已在位
+- **2.2.6 link_timer_op**：当前 api 已使用 `timerfd_create`/`timerfd_settime`，非 mthread timer
+- **OFFLINE_PUSH/deal_sec_info_ans/deal_gw_rej**：当前 api 已有完整处理
 
-### 7.3 未整合 / 待办项（高回归风险或待确认）
+### 7.3 未整合 / 待办项（需专项分支实施）
 
-以下大型结构性改动因**高回归风险**（涉及登录状态机、缓存模型、定时器重构，改动面大，需专项测试）暂缓，未在本轮执行：
+以下大型结构性改动因**需新增大量基础设施（MAX_*/INNER_* 常量体系、新缓存类）+ 重写工作登录流**，回归风险高，建议在专项分支上独立实施：
 
-| 待办项 | 风险 | 说明 |
+| 待办项 | 规模 | 说明 |
 |--------|------|------|
-| `log_state_ctl` 登录状态机（fpga） | 高 | 替换 `int16 login_state`，影响登录/重登/登出全流程 |
-| `GwLoginCache` 多账户模型（gw） | 高 | 替换 `GwSessionCache`，核心业务变更 |
-| `C98SessionCache` per-account（98） | 高 | 替换 `pending_logins_`，核心业务变更 |
-| `link_timer_op` timerfd 重构 | 中 | 定时器实现替换，行为变更 |
+| `C98SessionCache` per-account（98） | 大 | 需新增 MAX_*/INNER_* 常量 + c98_session_cache.h（~250行）+ 重写 counter98 登录流 |
+| `GwLoginCache` 多账户模型（gw） | 大 | 需新增 gw_login_cache.h + 重写 gw_counter_direct 登录流 |
 | stop/close 分离重构 | 中 | 跨 3 引擎 + callback_manager + api_instance |
-| `check_order_dict`（含 order_qty/100） | 中 | 与 5.4 待确认的数量映射决策绑定 |
-| `heart_interval` 参数 | 中 | 心跳间隔行为变更 |
-| `deal_agw98_login` 参数化、回调事件扩展、`INNER_*` 常量体系 | 中 | 结构性/重构，非紧急 |
+| `heart_interval` 参数 | 小 | 链接心跳间隔 `check_interval`→`heart_interval`（行为变更，需专项测试） |
+| 回调事件扩展（logout/trade_counter/on_event） | 中 | callback_manager + api_callback 接口扩展 |
+| `INNER_*` 常量体系 | 大 | api_event_msg.h + order_trade_type.h + fpga 文件重构 |
+| `deal_agw98_login` 参数化 | 中 | 预构建 msg 传递，减少引擎线程内组包 |
 
 > 以上待办项建议在专项分支上逐步实施，每项独立编译 + 专项测试后再合入主分支。
 
-### 7.4 回归测试结果（2026-10-19）
+### 7.4 回归测试结果（2026-10-19，第二轮）
 
 **GOne（fpga_counter_direct 主路径）—— 全部通过 ✅**
 - 功能测试 **5/5 PASS**：登录 / 委托买入 / 成交回报 / 撤单 / 心跳维持
 - 性能测试：目标 10000 TPS，实际 **9989.1 TPS**，**99892 发送 / 99892 成功 / 0 失败**
 - API 内处理耗时：平均 498ns，P50=345ns，P90=1084ns，P95=1261ns
 
-**gw（FTE）—— 未能执行**
-- FTE 环境（33001/33002）未运行（历史环境问题，独立命名空间不可访问），无法运行 gw 回归。待 FTE 环境恢复后需补测。
-- 说明：本轮改动不涉及 gw_counter 业务逻辑（仅 single/tcpdirect 引擎地址守卫 + fpga_sec_key），gw 回归风险低，但建议 FTE 恢复后补测确认。
+**GW（FTE）—— 全部通过 ✅**
+- 功能测试 **5/5 PASS**：登录 / 委托买入 / 成交回报 / 撤单 / 心跳维持
+- FTE 环境（33001/33002）+ 模拟交易所（38140/38141/39142）运行正常
+
+**提交记录**：`79cf1c0` feat(api): 整合 api-compare 合理改动 - fpga 登录状态机 + 防御性增强
