@@ -194,7 +194,7 @@ int32 fpga_counter_direct::deal_recv_msg(const char *buf, uint16 len, int16 link
       break;
     }
     case G1_MSG_CANCEL_RSP: {
-      deal_cancel_rsp(head, client_info_, static_cast<int32>(counter_type::fpga_gateway));
+      deal_cancel_rsp(head, client_info_, static_cast<int32>(counter_type::fpga_direct));
       break;
     }
     case G1_MSG_HEART_ANS: {

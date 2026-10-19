@@ -140,6 +140,7 @@ int32 multi_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFastC
     }
   }
 
+  epoll_th_.init_set_cpu(tcpuid);
   ret = epoll_th_.init_th(0, 16, 0, 0, twaitms);
   fprintf(stderr, "[DBG] multi_engine.init: epoll_th.init ret=%d\n", ret);
   if (ret < 0) {

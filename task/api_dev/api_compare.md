@@ -484,3 +484,53 @@
 | **gw/98**        | send_req_msg、去重、RUL 合规、断链自愈、解码防御   | 多账户 GwLoginCache、per-account C98SessionCache、have_agw_ok_、结构化编码   |
 
 **核心结论**：两个版本各有优劣，`api` 在 RUL 合规、bug 修复、防御性编程方面更优；`api-compare` 在架构设计（多账户状态机、timerfd、原子发布）方面更优。整合方案建议以 `api` 为基线，分三阶段增量采纳 api-compare 的合理改进，P0/P1 优先，P2/P3 后续。
+
+---
+
+## 七、整合执行状态（2026-10-19）
+
+### 7.1 已完成整合（已编译 + GOne 回归 5/5 通过）
+
+| # | 文件 | 改动 | 对应方案 |
+|---|------|------|----------|
+| 1 | `fpga_counter_direct.cpp` | `deal_cancel_rsp` 的 counter_type 由 `fpga_gateway` 改为 `fpga_direct`（**P0 bug 修复**） | 3.2.1 |
+| 2 | `multi_socket_engine.cpp` | epoll 线程 init 前增加 `epoll_th_.init_set_cpu(tcpuid)`（CPU 亲和） | 2.2.1 |
+| 3 | `single_socket_engine.cpp` | 地址预填加 `gw_direct` 守卫（fpga_direct 不预填 cfg 地址） | 2.2.2 |
+| 4 | `tcpdirect_engine.cpp` | 地址预填加 `gw_direct` 守卫 | 2.2.2 |
+| 5 | `fpga_counter_base.h` | `fpga_sec_key` 默认构造 `memset` 清零（防 hash UB） | 3.1.4 |
+
+### 7.2 已确认当前 api 内置（无需改，整合已天然满足）
+
+经核对，以下方案项**当前 api 已实现**，无需额外改动：
+- **3.1.6 session_seq 去重**：`deal_order_rtn`/`deal_trade_rtn`/`deal_cancel_rsp` 已有 `session_seq_no` 去重（当前为非原子访问，引擎单线程内安全）
+- **3.1.8 build_login_msg 版本号**：已 `memset + strncpy(g1_msg_ver)`
+- **2.2.1/2.2.2 can_link_connect**：引擎在 `LINK_EVENT_TYPE_LINK_CONNECT` 处理中已有 `can_link_connect` 检查；`deal_cust_login` 已有 `is_free()` 检查
+- **P0 send_req_msg**（counter98 队列长度 bug 修复）、**3.1.3 memcpy**（字段截断修复）均已在位
+
+### 7.3 未整合 / 待办项（高回归风险或待确认）
+
+以下大型结构性改动因**高回归风险**（涉及登录状态机、缓存模型、定时器重构，改动面大，需专项测试）暂缓，未在本轮执行：
+
+| 待办项 | 风险 | 说明 |
+|--------|------|------|
+| `log_state_ctl` 登录状态机（fpga） | 高 | 替换 `int16 login_state`，影响登录/重登/登出全流程 |
+| `GwLoginCache` 多账户模型（gw） | 高 | 替换 `GwSessionCache`，核心业务变更 |
+| `C98SessionCache` per-account（98） | 高 | 替换 `pending_logins_`，核心业务变更 |
+| `link_timer_op` timerfd 重构 | 中 | 定时器实现替换，行为变更 |
+| stop/close 分离重构 | 中 | 跨 3 引擎 + callback_manager + api_instance |
+| `check_order_dict`（含 order_qty/100） | 中 | 与 5.4 待确认的数量映射决策绑定 |
+| `heart_interval` 参数 | 中 | 心跳间隔行为变更 |
+| `deal_agw98_login` 参数化、回调事件扩展、`INNER_*` 常量体系 | 中 | 结构性/重构，非紧急 |
+
+> 以上待办项建议在专项分支上逐步实施，每项独立编译 + 专项测试后再合入主分支。
+
+### 7.4 回归测试结果（2026-10-19）
+
+**GOne（fpga_counter_direct 主路径）—— 全部通过 ✅**
+- 功能测试 **5/5 PASS**：登录 / 委托买入 / 成交回报 / 撤单 / 心跳维持
+- 性能测试：目标 10000 TPS，实际 **9989.1 TPS**，**99892 发送 / 99892 成功 / 0 失败**
+- API 内处理耗时：平均 498ns，P50=345ns，P90=1084ns，P95=1261ns
+
+**gw（FTE）—— 未能执行**
+- FTE 环境（33001/33002）未运行（历史环境问题，独立命名空间不可访问），无法运行 gw 回归。待 FTE 环境恢复后需补测。
+- 说明：本轮改动不涉及 gw_counter 业务逻辑（仅 single/tcpdirect 引擎地址守卫 + fpga_sec_key），gw 回归风险低，但建议 FTE 恢复后补测确认。

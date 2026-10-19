@@ -88,7 +88,7 @@ struct fpga_sec_key {
   char security_id[G1_SECURITYID_MAXLEN]; ///< 证券代码 (8 字节)
 
   /// 默认构造
-  fpga_sec_key() {}
+  fpga_sec_key() { std::memset(security_id, 0, sizeof(security_id)); }
   /// 拷贝构造 (按 64-bit 块复制, 避免逐字节)
   fpga_sec_key(const fpga_sec_key &src) {
     *reinterpret_cast<uint64_t *>(security_id) = *reinterpret_cast<const uint64_t *>(src.security_id);

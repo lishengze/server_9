@@ -59,21 +59,25 @@ int32 single_socket_engine<TFastCounter>::init(const api_config_impl &cfg, TFast
   }
 
   // 设置主地址 (aio_socket_link 支持最多两个地址: 主 + 备)
-  net_addr tcfg_addr = cfg.get_speed_counter_addr();
-  lb_common::csock_addr taddr;
-  if (tcfg_addr.ip[0] != '\0' && tcfg_addr.port != 0) {
-    taddr.port = tcfg_addr.port;
-    std::memcpy(taddr.ip, tcfg_addr.ip, sizeof(taddr.ip));
-    link_.set_remote(taddr);
-  }
+  // 仅 gw_direct 预填 cfg 的极速柜台地址: fpga_direct 的 core 链接地址来自 GW 登录应答
+  // (deal_fpga_core_connect 的 set_remote), 预填 cfg 地址会占据 addrs_[0] 导致首连拨到 GW 地址
+  if (tfst->get_counter_type() == static_cast<int32>(counter_type::gw_direct)) {
+    net_addr tcfg_addr = cfg.get_speed_counter_addr();
+    lb_common::csock_addr taddr;
+    if (tcfg_addr.ip[0] != '\0' && tcfg_addr.port != 0) {
+      taddr.port = tcfg_addr.port;
+      std::memcpy(taddr.ip, tcfg_addr.ip, sizeof(taddr.ip));
+      link_.set_remote(taddr);
+    }
 
-  // 设置备地址 (若已配置, 故障切换由 aio_socket_link 内部 check_reconnect 决策)
-  net_addr tcfg_addr_bak = cfg.get_speed_counter_addr_bak();
-  if (tcfg_addr_bak.ip[0] != '\0' && tcfg_addr_bak.port != 0) {
-    lb_common::csock_addr tbak;
-    tbak.port = tcfg_addr_bak.port;
-    std::memcpy(tbak.ip, tcfg_addr_bak.ip, sizeof(tbak.ip));
-    link_.set_remote(tbak);
+    // 设置备地址 (若已配置, 故障切换由 aio_socket_link 内部 check_reconnect 决策)
+    net_addr tcfg_addr_bak = cfg.get_speed_counter_addr_bak();
+    if (tcfg_addr_bak.ip[0] != '\0' && tcfg_addr_bak.port != 0) {
+      lb_common::csock_addr tbak;
+      tbak.port = tcfg_addr_bak.port;
+      std::memcpy(tbak.ip, tcfg_addr_bak.ip, sizeof(tbak.ip));
+      link_.set_remote(tbak);
+    }
   }
 
   ret = timer_op_.init_timer(&link_, this, check_interval);

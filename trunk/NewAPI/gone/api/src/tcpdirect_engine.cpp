@@ -56,11 +56,15 @@ int32 tcpdirect_engine<TFastCounter>::init(const api_config_impl &cfg, TFastCoun
     return ret;
   }
 
-  net_addr tcfg_addr = cfg.get_speed_counter_addr();
-  lb_common::csock_addr taddr;
-  taddr.port = tcfg_addr.port;
-  std::memcpy(taddr.ip, tcfg_addr.ip, sizeof(taddr.ip));
-  link_.set_remote(taddr);
+  // 仅 gw_direct 预填 cfg 的极速柜台地址: fpga_direct 的 core 链接地址来自 GW 登录应答
+  // (deal_fpga_core_connect 的 set_remote), 预填 cfg 地址会占据 addrs_[0] 导致首连拨到 GW 地址
+  if (tfst->get_counter_type() == static_cast<int32>(counter_type::gw_direct)) {
+    net_addr tcfg_addr = cfg.get_speed_counter_addr();
+    lb_common::csock_addr taddr;
+    taddr.port = tcfg_addr.port;
+    std::memcpy(taddr.ip, tcfg_addr.ip, sizeof(taddr.ip));
+    link_.set_remote(taddr);
+  }
 
   ret = timer_op_.init_timer(&link_, this, check_interval);
   if (ret < 0) {
