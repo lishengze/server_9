@@ -15,8 +15,8 @@
 //      感知), 登录状态保持, 重连后按 is_logined 条目批量自动重登。
 //
 // 附加（相对 api-compare 的增强）:
-//   4. 每个条目内维护 order_sys_no → {clordno, client_seq_id} 原单定位映射,
-//      供 FTE 撤单反查原单 (orig_clordno / orig_client_seq_id) 使用。
+//   4. (原 order_locators 原单定位映射已移除 —— 撤单优化后 orig_clordno 由
+//      OrderRtn.order_sys_no 直接返回客户端, 无需内部映射)
 
 #pragma once
 
@@ -49,7 +49,6 @@ namespace lb_api
     std::array<char, 1024> client_feature_code; ///< 客户终端信息（重登组包用）
     int64_t agw_seq_id = 0;                     ///< 个微会话序号（登录应答回填）
     int64_t last_cust_req_no = 0;               ///< 最近一次登录请求号（重登事件关联用）
-    std::unordered_map<int64_t, OrderLocator> order_locators; ///< 原单定位映射: order_sys_no → {clordno, client_seq_id}
 
     void reset()
     {
@@ -64,7 +63,6 @@ namespace lb_api
       client_feature_code.fill('\0');
       agw_seq_id = 0;
       last_cust_req_no = 0;
-      order_locators.clear();
     }
 
     GwLoginInfo() { reset(); }
@@ -103,15 +101,8 @@ namespace lb_api
     /// 清除全部条目在途 (断链: 只清在途不清状态)
     void clear_all_pending();
 
-    /// 记录原单定位信息 (收到 OrderRtn/TradeRtn 时记录)
-    void record_order_locator(const char *fund_account_id, size_t len,
-                              int64_t order_sys_no, int64_t clordno, int64_t client_seq_id);
-
-    /// 根据 order_sys_no 查找 clordno (找不到返回 0)
-    int64_t get_clordno(const char *fund_account_id, size_t len, int64_t order_sys_no);
-
-    /// 根据 order_sys_no 查找原委托 client_seq_id (找不到返回 0)
-    int64_t get_orig_client_seq_id(const char *fund_account_id, size_t len, int64_t order_sys_no);
+    // 撤单优化：order_locators 原单定位映射已移除 —— orig_clordno 由 OrderRtn.order_sys_no
+    // 直接返回客户端，撤单时客户端原样回传，无需内部缓存
 
   private:
     /// 凭据类字段刷新 (事件为权威源: 委托方式/私有信息/密码/终端信息/请求号)
@@ -251,43 +242,6 @@ namespace lb_api
     {
       kv.second.log_gw.clear_pending();
     }
-  }
-
-  inline void GwLoginCache::record_order_locator(const char *fund_account_id, size_t len,
-                                                 int64_t order_sys_no, int64_t clordno, int64_t client_seq_id)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = logins_.find(norm_key(fund_account_id, len));
-    if (it == logins_.end())
-      return;
-    OrderLocator loc;
-    loc.clordno = clordno;
-    loc.client_seq_id = client_seq_id;
-    it->second.order_locators[order_sys_no] = loc;
-  }
-
-  inline int64_t GwLoginCache::get_clordno(const char *fund_account_id, size_t len, int64_t order_sys_no)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = logins_.find(norm_key(fund_account_id, len));
-    if (it == logins_.end())
-      return 0;
-    auto loc_it = it->second.order_locators.find(order_sys_no);
-    if (loc_it != it->second.order_locators.end())
-      return loc_it->second.clordno;
-    return 0;
-  }
-
-  inline int64_t GwLoginCache::get_orig_client_seq_id(const char *fund_account_id, size_t len, int64_t order_sys_no)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = logins_.find(norm_key(fund_account_id, len));
-    if (it == logins_.end())
-      return 0;
-    auto loc_it = it->second.order_locators.find(order_sys_no);
-    if (loc_it != it->second.order_locators.end())
-      return loc_it->second.client_seq_id;
-    return 0;
   }
 
 } // namespace lb_api

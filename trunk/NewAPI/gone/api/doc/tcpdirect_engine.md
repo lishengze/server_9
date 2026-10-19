@@ -25,7 +25,8 @@ class eng_link_op : public link_engine_outop {
 | `init(cfg, tfst, log)` | 初始化 |
 | `add_timer_poll(th)` | 将链接定时器注册到目标线程 epoll |
 | `start()` | 启动引擎线程 |
-| `stop()` | 停止引擎线程 |
+| `stop()` | 轻量停止：join 引擎线程 + 关链接，保留 init 资源（定时器/发送队列）可重启 |
+| `close()` | 完整销毁：stop + 关定时器 + 关发送队列，析构时调用 |
 | `get_queue()` | 获取发送队列 |
 | `get_out_op()` | 获取链接操作接口 |
 

@@ -59,7 +59,7 @@ char agw_session[32];           // agw 用户登陆成功返回的会话号
 
 ## 消息构建（组包）
 
-所有 `build_*_msg` 当前为**留空实现**（98 真实协议未知），需要依据正式协议重写：
+98 真实协议已实现（counter98_queue_fix 修复：`send_req_msg()` 按精确长度预留/拷贝/提交，消除预留空隙错位问题）：
 
 | 方法 | 消息 |
 |------|------|
@@ -74,6 +74,8 @@ char agw_session[32];           // agw 用户登陆成功返回的会话号
 | `build_fund_query_msg` | 98 资金查询 |
 | `build_position_query_msg` | 98 持仓查询 |
 | `build_login_msg` | 98 账户登录 |
+
+> 组包统一走 `send_req_msg()`（`counter98.h`）：先组包到临时缓冲确定 `msg_len`，再按精确长度 `sizeof+msg_len` 预留/拷贝/提交，reader 按 `sizeof+data_len` 消费，两者一致避免错位。
 
 ## 应答处理
 
@@ -93,32 +95,32 @@ char agw_session[32];           // agw 用户登陆成功返回的会话号
 api->login(req) → counter98::deal_login_req
   → build_cust_login_event(req, info)      // LoginReq → acc_login_event_info
   → 入队 ACCOUNT_LOGIN 事件 → multi_engine::deal_cust98_login
-  → counter98::deal_cust_login
+  → counter98::deal_cust_login             // 凭据暂存至 C98SessionCache.create_session
   → delive_fast_counter_login(info)        // 级联投递极速柜台
 ```
 
-### 消息发送通用模式
-```cpp
-// 入队
-char *data = nullptr;
-int64 pos = gw_send_queue_->write_get_mth(data, take_len + sizeof(link_send_event));
-link_send_event *evt = (link_send_event*)data;
-evt->link_type = LINK_TYPE_98;
-evt->type = LINK_EVENT_TYPE_SEND_MSG;
-evt->data_len = take_len;
-// 组包
-build_xxx_msg(req, data + sizeof(link_send_event));
-// 提交 + 触发
-gw_send_queue_->write_cmt_mth(pos, take_len + sizeof(link_send_event));
-gw_eng_op_->trigger_send();
+### 登录成功回报（缓存客户数据）
+```
+counter98::deal_cust_login_ans(msg)        // 98 登录应答
+  → session_cache_.get_session(fa_key)     // 按 fund_account_id 定位条目
+  → session_cache_.fill_session_login_ok(cust_id, branch_id, account_id)  // 回填身份字段
+  → delive_fast_counter_login(it->second)  // 级联投递极速柜台登录
 ```
 
+## 账户登录缓存（C98SessionCache）
+
+**本柜台专属实例缓存**（`c98_session_cache.h`，`counter98` 成员，非全局单例），以 `fund_account_id` 为主键：
+
+- 数据条目复用 `GwSessionInfo`（字段宽度与 98 协议 build_*_msg 目标字段一致）。
+- **登录成功回报时缓存**（`deal_cust_login_ans`）：回填 cust_id/branch_id/account_id（值不变不写，RUL-15）。
+- **凭据暂存**（`deal_cust_login` → `create_session`）：缓存 order_way_ext/user_info/password 等。
+- **组包读取**：`get_session()` 按 fund_account_id 查找，补充 body 中 account_id/cust_id 等。
+- **断链清理**：`clear_all()`（链接关闭时全量清除）。
+
 ## 待完成任务
-1. **所有 build_*_msg 留空**：需依据 98 正式协议实现（委托/撤单/查询消息构建为 todo）。
-2. **deal_recv_msg 只分发 3 类**：AGW登录/账户登录/心跳，查询应答等未接入分发。
-3. **缓存结构未定义**：`counter98.h:222` 有 `//todo`。
-4. **登录状态管理**：`cust_need_login` 已默认 `true`（账户需登录）；超时处理、已登录用户管理待完善。
-5. **deal_send_error 留空**：需构造 OrderRtn/CancelRsp 回调客户。
+1. **缓存条目生命周期**：C98SessionCache 条目永不删除，仅链接关闭时 `clear_all()`；断线自动重登（`collect_relogin_events`）触发接入待完善。
+2. **登录状态管理**：`cust_need_login` 已默认 `true`（账户需登录）；超时处理、已登录用户管理待完善。
+3. **deal_send_error 留空**：需构造 OrderRtn/CancelRsp 回调客户。
 
 ## 近期修复记录
 - **`cust_need_login` 默认 true**（`counter98.cpp`）：此前硬编码 `false` 跳过 98 账户登录，已修正为 `true` 使账户登录正常发起。

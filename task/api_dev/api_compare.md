@@ -545,3 +545,88 @@
 - FTE 环境（33001/33002）+ 模拟交易所（38140/38141/39142）运行正常
 
 **提交记录**：`79cf1c0` feat(api): 整合 api-compare 合理改动 - fpga 登录状态机 + 防御性增强
+
+---
+
+## 8. gw_counter 撤单优化方案（消除 order_locators 缓存）
+
+### 8.1 问题背景
+
+**现状**：gw_counter（FTE 直连）的撤单链路依赖一个**内部缓存映射** `order_locators`（`order_sys_no → {clordno, client_seq_id}`）：
+
+```
+委托回报(OrderRtn)  → record_order_locator(order_id→{clordno, client_seq_id}) 存缓存
+撤单请求(CancelReq)  → build_cancel_msg 用 get_clordno / get_orig_client_seq_id 反查缓存
+```
+
+**痛点**：
+1. 需要维护一个 `order_sys_no → {clordno, client_seq_id}` 的**缓存映射**（内存 + 锁开销，且需处理生命周期/清理）。
+2. `order_sys_no`（FTE 的 order_id）与 `orig_clordno`（FTE 内部订单编号）是**两套编号**，必须缓存反查才能关联。
+3. 撤单正确性依赖缓存命中；缓存缺失（如重启/断链）会导致撤单失败。
+
+### 8.2 优化思路
+
+**核心洞察**：FTE 撤单消息 `CancelOrderReq` 中，**只有 `orig_clordno` 是必填的**，`orig_client_seq_id` 等其他字段非必填。
+
+因此：
+1. **委托回报时**：OrderRtn 直接以 **FTE `clordno`** 作为 `order_sys_no` 返回给客户端（不再用 order_id）。
+2. **客户端撤单时**：把收到的 `order_sys_no`（即 clordno）**原样回传**到 CancelReq。
+3. **撤单组包时**：`orig_clordno` 直接用 `req.order_sys_no`，**无需缓存反查**。
+
+这样彻底消除 `order_locators` 缓存映射，撤单正确性不再依赖内部缓存。
+
+### 8.3 数据流对比
+
+**优化前**：
+```
+FTE OrderRtn(order_id, clordno) → API 记录 order_id→clordno 缓存 → 返回 order_sys_no=order_id
+客户端 CancelReq(order_sys_no=order_id) → API 反查缓存得 clordno → FTE CancelOrderReq(orig_clordno=clordno)
+```
+
+**优化后**：
+```
+FTE OrderRtn(clordno) → API 返回 order_sys_no=clordno
+客户端 CancelReq(order_sys_no=clordno) → API 直接用 req.order_sys_no → FTE CancelOrderReq(orig_clordno=clordno)
+```
+
+### 8.4 代码改动清单
+
+| 文件 | 改动 |
+|------|------|
+| `gw_counter_direct.cpp` `deal_order_rtn` | `rtn.order_sys_no = er.clordno`（替代 `strtoll(er.order_id)`）；移除 `record_order_locator` 调用 |
+| `gw_counter_direct.cpp` `deal_etf_trade_rtn` | `rtn.order_sys_no = er.clordno`；移除 `record_order_locator` 调用 |
+| `gw_counter_direct.cpp` `deal_trade_rtn` | 移除 `record_order_locator` 调用（trade rtn 不参与撤单） |
+| `gw_counter_direct.cpp` `build_cancel_msg` | `orig_clordno = req.order_sys_no`；`orig_client_seq_id = 0`（非必填）；移除 `get_clordno`/`get_orig_client_seq_id` 反查 |
+| `gw_counter_direct.h` | 移除 `record_order_locator`/`get_clordno`/`get_orig_client_seq_id` 声明 |
+| `gw_login_cache.h` | 移除 `GwLoginInfo.order_locators` 成员；移除 `GwLoginCache` 中 `record_order_locator`/`get_clordno`/`get_orig_client_seq_id` 方法 |
+
+### 8.5 字段语义变更说明
+
+**`OrderRtn.order_sys_no` 语义变更**：
+- **优化前**：FTE 的 `order_id`（交易所订单编号）
+- **优化后**：FTE 的 `clordno`（FTE 内部订单编号，撤单必填的 orig_clordno）
+
+⚠️ 这是**对外接口语义变更**，影响：
+- 客户端用 `order_sys_no` 关联订单（需按新语义理解）
+- 撤单请求 `CancelReq.order_sys_no` 需传 OrderRtn 返回的 clordno
+
+**`CancelOrderReq.orig_client_seq_id`**：优化后置 0（FTE 非必填），不再反查缓存。
+
+### 8.6 收益
+
+1. **消除缓存**：删除 `order_locators` 映射（内存 + 锁开销 + 生命周期管理全部移除）。
+2. **撤单更可靠**：不再依赖缓存命中，撤单正确性由客户端回传的 clordno 保证。
+3. **简化代码**：移除 `record_order_locator`/`get_clordno`/`get_orig_client_seq_id` 及 GwLoginCache 中 3 个方法。
+
+### 8.7 回归测试结果（2026-10-19）
+
+**GW(FTE) 功能测试 5/5 PASS** ✅
+- 登录 / 委托买入 / 成交回报 / **撤单(err_code=50046 符合预期)** / 心跳维持
+- 撤单测试通过证明 `orig_clordno`（来自 `req.order_sys_no`=er.clordno）被 FTE 正确接收
+
+**性能测试**：-35/-22 为 FTE 环境 8000 TPS 高负载问题，与本次改动无关。
+
+### 8.8 待确认事项
+
+- [ ] 客户端侧 `order_sys_no` 语义变更的联调确认（需同步客户端开发）。
+- [ ] 多客户模式（`single_cust_per_link_=false`）下撤单路径的专项验证。

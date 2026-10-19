@@ -349,3 +349,7 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
     好的，那就按照之前的方案进行相关的优化改动，注意两点:
         1. 在每个counter 登陆成功的回报里，进行客户相关具体数据的缓存。
         2. 还是以 fund_account_id 作为 key， 缓存 客户信息。 
+
+    1. 现在针对 98,gw,gone 三个 counter,深入分析对应的实现结合当前的记录的文档，全面的进行总结，将其中的内部实现逻辑，相关逻辑，开发注意事项等等内容，总结输出到
+        trunk/NewAPI/gone/api/98_counter.md， trunk/NewAPI/gone/api/gw_counter.md， trunk/NewAPI/gone/api/gone_counter.md 中。
+        并绘制对应 UML 图，时序图, Mermaid 图， 增强其可读性。

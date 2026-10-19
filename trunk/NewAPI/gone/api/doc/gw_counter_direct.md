@@ -106,13 +106,25 @@ void cmt_req_que_mem(int64 get_pos, int32 take_len) {
 }
 ```
 
-## GwSessionCache（会话缓存）
+## 账户登录缓存（GwLoginCache）
 
-全局单例（`gw_session_cache.h`），以 `fund_account_id` 为主键：
-- 登录时 `create_session()` 缓存会话字段（account_id/cust_id 等）。
-- 委托/撤单时 `get_session()` 补充 body 中的 account_id/cust_id。
-- 维护 `order_sys_no ↔ {clordno, client_seq_id}` 映射，供撤单反查原单。
-- 撤单定位：`get_clordno()` / `get_orig_client_seq_id()`。
+**本柜台专属实例缓存**（`gw_login_cache.h`，`gw_counter_direct` 成员，非全局单例），以 `fund_account_id` 为主键：
+
+- **单客户模式**（`single_cust_per_link_=true`，默认）：登录成功后直接缓存到 `local_session_`（`GwLoginInfo` 本地成员，不走 map）。
+- **多客户模式**（`single_cust_per_link_=false`）：写入 `login_cache_`（`GwLoginCache`），以 `fund_account_id` 为 key。
+- **登录成功回报时缓存**（`deal_log_ans`）：回填 cust_id / branch_id / account_id / agw_seq_id（值不变不写，RUL-15 维持发布屏障）。
+- **委托/撤单组包**：`get_session_for_order()` 补充 body 中的 account_id/cust_id（单客户返回本地成员，多客户从 login_cache_ 查找）。
+- **断链重登**：`GwLoginCache::collect_relogin_events()` 收集已登录条目批量自动重登（状态机 `log_state_ctl` 维护登录状态/在途位）。
+
+## 撤单优化（消除 order_locators 缓存）
+
+**核心思路**：FTE 撤单消息 `CancelOrderReq` 只需 `orig_clordno`，其余字段非必填。
+
+- **委托回报**（`deal_order_rtn` / `deal_etf_trade_rtn`）：`rtn.order_sys_no = er.clordno`（FTE 内部订单编号），直接返回客户端。
+- **撤单组包**（`build_cancel_msg`）：`orig_clordno = req.order_sys_no`（客户端原样回传的 clordno），`orig_client_seq_id = 0`（非必填）。
+- **不再维护 `order_locators` 缓存映射**：撤单正确性由客户端回传的 clordno 保证，无需内部缓存反查。
+
+> ⚠️ **`OrderRtn.order_sys_no` 语义**：优化前为 FTE `order_id`（交易所订单编号），优化后为 FTE `clordno`（内部订单编号）。客户端需按新语义理解并撤单时原样回传。
 
 ## 关键成员
 
@@ -126,6 +138,10 @@ callback_manager *cb_mgr_;       // 回调管理器
 int64 session_seq_ = 0;          // 会话消息序号（atomic_fetch_add64/load64 访问）
 lb_log *log_;                    // 日志
 link_engine_outop *trade_eng_op_;// 极速引擎导出的链接相关操作
+bool single_cust_per_link_ = true;  // 单链接单客户模式（默认 true，从配置读取）
+GwLoginInfo local_session_;         // 单客户模式本地会话
+GwLoginCache login_cache_;          // 多客户模式账户登录缓存（本柜台专属）
+std::string fa_key_cache_;          // 多客户模式键缓存（避免每次构造 std::string）
 ```
 
 **原子化（方案 F）**：跨线程状态变量统一用 matomic.h 的原子操作访问，消除数据竞争：
@@ -140,7 +156,7 @@ link_engine_outop *trade_eng_op_;// 极速引擎导出的链接相关操作
 
 ## 待完成任务
 
-1. **断线重登**：链接断开后 login_state 重置已实现，但断线自动重登逻辑待完善。
+1. **断线自动重登**：`GwLoginCache::collect_relogin_events()` 已实现多客户模式批量重登，但单客户模式断线重登的触发接入待完善。
 2. **登录异常重试**：登录失败后的重试机制未实现。
 3. **deal_send_error**：发送失败处理逻辑待完善。
 
@@ -149,5 +165,6 @@ link_engine_outop *trade_eng_op_;// 极速引擎导出的链接相关操作
 1. **FTE TCP Binary 协议**：消息头 `PktNewHeader` 大端，body 用主机字节序，校验和对 [头+体] 求和 %256。
 2. **无网关链接**：`init_gateway` 空实现，个微只有单条极速业务链接。
 3. **委托降级**：离线/不支持时返回错误码，上层路由到 98。
-4. **会话缓存**：GwSessionCache 全局单例，撤单通过 order_sys_no 反查原单。
-5. **性能优化**：直接序列化 + 单趟校验和 + 原子化状态 + 日志降噪。
+4. **账户缓存**：GwLoginCache 实例缓存（非全局单例），登录成功回报时缓存，支持多客户模式。
+5. **撤单优化**：`order_sys_no` 直接返回 FTE clordno，撤单时原样回传，消除 order_locators 缓存。
+6. **性能优化**：直接序列化 + 单趟校验和 + 原子化状态 + 日志降噪。

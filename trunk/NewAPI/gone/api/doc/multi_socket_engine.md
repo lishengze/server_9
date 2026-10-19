@@ -45,7 +45,8 @@ class eng_link_op : public link_engine_outop {
 | `init(cfg, tfst, log, c98)` | 初始化（注入极速柜台 + 98 柜台指针） |
 | `connect_98agw()` | 建立 98 链接 |
 | `start()` | 启动引擎线程（含 epoll 线程） |
-| `stop()` | 停止引擎线程 |
+| `stop()` | 轻量停止：停 epoll 线程 + 关已建链接，保留 init 资源（定时器/发送队列）可重启 |
+| `close()` | 完整销毁：stop + 关定时器 + 关发送队列，析构时调用 |
 | `get_queue()` | 获取发送队列 |
 | `get_out_op()` | 获取链接操作接口 |
 | `get_thread()` | 获取 epoll 线程 |

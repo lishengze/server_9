@@ -59,37 +59,6 @@ GwLoginInfo *gw_counter_direct::get_session_for_order(const char *fund_account_i
   return login_cache_.find(fa_key_cache_.data(), fa_key_cache_.size());
 }
 
-void gw_counter_direct::record_order_locator(const char *fund_account_id, int64_t order_sys_no,
-                                             int64_t clordno, int64_t client_seq_id) {
-  if (single_cust_per_link_) {
-    OrderLocator loc;
-    loc.clordno = clordno;
-    loc.client_seq_id = client_seq_id;
-    local_session_.order_locators[order_sys_no] = loc;
-  } else {
-    fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
-    login_cache_.record_order_locator(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no, clordno, client_seq_id);
-  }
-}
-
-int64_t gw_counter_direct::get_orig_client_seq_id(const char *fund_account_id, int64_t order_sys_no) {
-  if (single_cust_per_link_) {
-    auto it = local_session_.order_locators.find(order_sys_no);
-    return (it != local_session_.order_locators.end()) ? it->second.client_seq_id : 0;
-  }
-  fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
-  return login_cache_.get_orig_client_seq_id(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no);
-}
-
-int64_t gw_counter_direct::get_clordno(const char *fund_account_id, int64_t order_sys_no) {
-  if (single_cust_per_link_) {
-    auto it = local_session_.order_locators.find(order_sys_no);
-    return (it != local_session_.order_locators.end()) ? it->second.clordno : 0;
-  }
-  fa_key_cache_.assign(fund_account_id, strnlen(fund_account_id, 16));
-  return login_cache_.get_clordno(fa_key_cache_.data(), fa_key_cache_.size(), order_sys_no);
-}
-
 // ============================================================
 // FTE 校验和计算（保留供非热路径使用）
 // ============================================================
@@ -404,11 +373,12 @@ void gw_counter_direct::build_cancel_msg(const CancelReq &req, char *o_buf) {
   memcpy(p, &req.client_req_no, 8); p += 8;
   memset(p, 0, 8); p += 8;  // agw_seq_id
 
-  // 撤单定位原单：单客户模式查本地成员，多客户模式查全局缓存
-  int64_t orig_seq = get_orig_client_seq_id(req.fund_account_id.data(), req.order_sys_no);
+  // 撤单优化：orig_clordno 直接使用客户端下发的 order_sys_no（即 OrderRtn 返回的 clordno），
+  // 无需内部 order_locators 缓存映射；orig_client_seq_id 非必填，置 0
+  int64_t orig_seq = 0;  // orig_client_seq_id 非必填
   memcpy(p, &orig_seq, 8); p += 8;
-  int64_t clordno = get_clordno(req.fund_account_id.data(), req.order_sys_no);
-  memcpy(p, &clordno, 8); p += 8;
+  int64_t orig_clordno = req.order_sys_no;
+  memcpy(p, &orig_clordno, 8); p += 8;
   // 校验和
   uint32_t cks = checksum_bytes(o_buf, static_cast<uint32_t>(p - o_buf)) % 256;
   uint32_t cbe = gw_message::detail::ByteSwap32(cks);
@@ -716,9 +686,8 @@ void gw_counter_direct::deal_order_rtn(const char *body, int32 body_len) {
   er.reset();
   if (!er.decode(body, static_cast<size_t>(body_len))) return;
 
-  // 记录 order_id → {clordno, client_seq_id} 映射（用于撤单；单客户模式写本地成员，多客户模式写缓存）
-  int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
-  record_order_locator(er.fund_account_id.data(), order_sys_no, er.clordno, er.client_seq_id);
+  // 撤单优化：OrderRtn 直接以 FTE clordno 作为 order_sys_no 返回给客户端，
+  // 客户端撤单时将该值作为 orig_clordno 直接使用，无需内部 order_locators 缓存映射
 
   // 构造 OrderRtn
   OrderRtn rtn;
@@ -737,7 +706,7 @@ void gw_counter_direct::deal_order_rtn(const char *body, int32 body_len) {
   rtn.client_seq_id = er.client_seq_id;
   rtn.rtn_type = map_exec_type(er.exec_type);
   rtn.err_code = (er.ord_rej_reason != 0) ? static_cast<int32>(er.ord_rej_reason) : static_cast<int32>(er.code);
-  rtn.order_sys_no = order_sys_no;
+  rtn.order_sys_no = er.clordno;  // 撤单优化：返回 FTE clordno 供客户端撤单时作 orig_clordno 使用
   rtn.frozen_amount = er.frozen_trade_value;
   rtn.fee = 0;
   rtn.trade_qty = er.cum_qty;
@@ -774,9 +743,8 @@ void gw_counter_direct::deal_trade_rtn(const char *body, int32 body_len) {
     return;
   }
 
-  // 记录 order_id → {clordno, client_seq_id} 映射
+  // 撤单优化：成交回报不再记录 order_locators 缓存（撤单直接用 OrderRtn 返回的 clordno）
   int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
-  record_order_locator(er.fund_account_id.data(), order_sys_no, er.clordno, er.client_seq_id);
 
   // 构造 TradeRtn（复用 OrderRtn 字段 + 成交特有字段）
   TradeRtn rtn;
@@ -854,8 +822,7 @@ void gw_counter_direct::deal_etf_trade_rtn(const char *body, int32 body_len) {
   if (!er.decode(body, static_cast<size_t>(body_len))) return;
 
   // ETF 成交回报映射为 OrderRtn（与普通委托回报相同）
-  int64_t order_sys_no = strtoll(er.order_id.data(), nullptr, 10);
-  record_order_locator(er.fund_account_id.data(), order_sys_no, er.clordno, er.client_seq_id);
+  // 撤单优化：不再记录 order_locators 缓存，OrderRtn 直接返回 clordno 供撤单使用
 
   OrderRtn rtn;
   memset(&rtn, 0, sizeof(rtn));
@@ -872,7 +839,7 @@ void gw_counter_direct::deal_etf_trade_rtn(const char *body, int32 body_len) {
   rtn.order_qty = er.order_qty;
   rtn.client_seq_id = er.client_seq_id;
   rtn.rtn_type = map_exec_type(er.exec_type);
-  rtn.order_sys_no = order_sys_no;
+  rtn.order_sys_no = er.clordno;  // 撤单优化：返回 FTE clordno 供客户端撤单时作 orig_clordno 使用
   rtn.frozen_amount = er.frozen_trade_value;
   rtn.fee = 0;
   rtn.trade_qty = er.cum_qty;

@@ -364,7 +364,8 @@ multi_socket_engine::connect_98agw() {
 
 - `init(cfg, tfst, log)`：配置队列 + 链接 + 定时器
 - `start()`：启动业务 epoll 线程
-- `stop()`：关闭 timerfd + 关闭链接 + 停止线程
+- `stop()`：轻量停止（join 线程 + 关已建链接，保留 init 资源可重启）
+- `close()`：完整销毁（stop + 关定时器 + 关发送队列，析构时调用）
 - `get_queue()`：返回发送队列（柜台注入用）
 - `get_out_op()`：返回 link_out_op（柜台注入用）
 - `add_timer_poll(mthread*)`：由 api_impl.start 调用，将 timerfd 注册到 mthread（对 fast_engine 是自身线程，对 idle 是 no-op）
@@ -388,7 +389,7 @@ multi_socket_engine::connect_98agw() {
 
 - **无链接、无线程、无队列**（get_queue() 返回 nullptr）
 - 仅持有 `counter_` 和 `log_` 指针
-- `start()` / `stop()` / `add_timer_poll()` 全部 no-op
+- `start()` / `stop()` / `add_timer_poll()` 全部 no-op，`close()` 亦为 no-op（兼容 stop/close 双接口）
 - **存在原因**：保持 5 种 `api_impl<TF, TE>` 模板实例化时的 `TE` 类型统一
 - **实际工作**：fpga_gateway 模式下，所有业务由 `multi_engine` 槽 1 的 `fast_gw_link` 处理，idle_engine 完全不工作
 
@@ -505,7 +506,8 @@ int32 deal_link_connect(int16 link_type, int32 have_switch);
 - 协议：**FTE TCP Binary**（`gw_head.h` 的 `gw_message::*`），报文 `[PktNewHeader 8B | 消息体 | 校验和 4B]`
 - 已实现：`build_order_msg` / `build_etf_order_msg` / `build_cancel_msg` / `build_login_msg` / `build_heart_msg`（FTE 协议）
 - 已实现：`deal_recv_msg` 按 FTE msg_id 分发（登录应答/委托回报/成交回报/撤单应答/心跳/拒绝）
-- 会话缓存：`GwSessionCache` 全局单例（fund_account_id 主键 + order_sys_no↔{clordno,client_seq_id} 映射）
+- 账户缓存：`GwLoginCache` **实例缓存**（非全局单例，本柜台专属）。单客户模式缓存到本地成员 `local_session_`，多客户模式写入 `login_cache_`（fund_account_id 主键）；登录成功回报时回填 cust_id/branch_id/account_id；断链后 `collect_relogin_events()` 批量自动重登（[gw_login_cache.h](../src/gw_login_cache.h)）
+- 撤单优化：`OrderRtn.order_sys_no` 直接返回 FTE clordno，撤单时客户端原样回传为 `orig_clordno`，**消除 order_locators 原单定位缓存映射**（[gw_counter_direct.cpp](../src/gw_counter_direct.cpp)）
 - 状态映射：`map_ord_status` / `map_exec_type` / `map_market_id`
 - 性能优化：直接序列化 + 单趟校验和（方案 B/C/D）、原子化状态（方案 F）、日志降噪（方案 E）
 - v2.1：`init_gateway` 为 no-op（个微无 GW 槽）；个微不支持地址切换，`have_switch` 忽略

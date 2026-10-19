@@ -5,7 +5,7 @@
 >
 > **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v3.3（2026-10-17，§40 GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复；§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
+> **版本**：v3.4（2026-10-19，§41 结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化；§40 GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复；§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
 
 ---
 
@@ -51,6 +51,7 @@
 38. [三对象 5000TPS 对比测试与时延失真根因](#38-三对象-5000tps-对比测试与时延失真根因)
 39. [三对象 5000TPS 复测（当前宿主机）](#39-三对象-5000tps-复测当前宿主机)
 40. [GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复](#40-gcc-485-兼容--counter98-队列提交长度-bug-修复)
+41. [结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化](#41-结构性重构stopclose-分离--回调事件扩展--账户缓存实例化--撤单优化2026-10-19)
 
 ---
 
@@ -2383,3 +2384,72 @@ counter98 的 98 协议消息是**变长**的，无法预留前确定长度，�
 | `trunk/NewAPI/common/include/mthread.h` | 兼容 |
 | `mock/client/src/callback_handler.cpp` | 兼容 |
 | `mock/client/src/test_case_runner.cpp` | 兼容 |
+
+---
+
+## 41. 结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化（2026-10-19）
+
+> 触发：api-compare 框架整合 + 全面设计文档复盘。本轮实施 4 组低风险结构性改动，全部编译通过并通过 GOne/GW 回归。详细设计文档已同步更新（见 §41.6）。
+
+### 41.1 stop()/close() 分离（api_instance + 引擎 + callback_manager）
+
+**背景**：原 `stop()` 一杆到底（关线程+关链接+关定时器+关队列+关 log），stop 后无法重启。
+
+**设计**：
+- `stop()`：**轻量**，join 线程 + 关已建链接，保留 init 资源（定时器/发送队列/log）可重启。
+- `close()`：**完整销毁**，stop + 关定时器 + 关发送队列（+log），析构时调用。
+- `api_impl`：`~api_impl() override { close(); }`；`stop()` 停引擎+回调线程、保留 log。
+
+**涉及**：`multi_socket_engine` / `single_socket_engine` / `tcpdirect_engine` / `callback_manager` / `api_instance`；`idle_engine` 为兼容双接口新增 `void close(){}` no-op。
+
+### 41.2 回调事件扩展（logout=16 + trade_counter=17）
+
+- `cb_event_type` 新增 `logout=16`、`trade_counter=17`。
+- `order_trade_type.h` 新增 `LogoutAns` 结构（client_req_no/cust_id[16]/fund_account_id[16]/account_id[12]/branch_id[10]/err_code/err_msg[124]），并修复缺失 `#include <string>`。
+- `api_callback.h` 新增 `virtual void on_logout(const LogoutAns&)`、`virtual void on_trade_counter(int32_t counter_type, const char* branch_id, const char* fund_account_id, int32_t status)`。
+- `callback_manager` 支持 direct/queued 双模式；`on_trade_counter` 载荷用定长缓冲（CB_BRANCH_ID_LEN=12 + CB_FUND_ACCOUNT_ID_LEN=16）。
+
+### 41.3 账户缓存实例化（GwLoginCache / C98SessionCache，消除全局单例）
+
+**背景**：原 `GwSessionCache` 全局单例 + 每次请求 `std::mutex` 全局锁 + unordered_map 哈希 + string 构造，是 FTE 性能瓶颈（单连接场景本可避免锁）。
+
+**设计**（实例缓存，非全局单例，本柜台专属）：
+- `GwLoginCache`（`gw_login_cache.h`）：**单客户模式**（`single_cust_per_link_=true`，默认）登录成功缓存到本地成员 `local_session_`，不走 map；**多客户模式**写入 `login_cache_`（fund_account_id 主键）。登录成功回报（`deal_log_ans`）回填 cust_id/branch_id/account_id/agw_seq_id（值不变不写，RUL-15 发布屏障）。断链后 `collect_relogin_events()` 收集已登录条目批量自动重登（user_origin=0 内部重登）。
+- `C98SessionCache`（`c98_session_cache.h`）：counter98 实例缓存，复用 `GwSessionInfo`，`deal_cust_login_ans` 回填客户数据；断链仅清在途位（`clear_all_pending`）保持登录状态，重连后按已登录条目批量重登。
+- 委托/撤单组包用 `get_session_for_order()` 补充 body 的 account_id/cust_id（单客户返回本地成员，多客户从 cache 查找）。
+
+### 41.4 撤单优化（消除 order_locators 原单定位映射）
+
+**背景**：原撤单需内部维护 `order_sys_no → {clordno, client_seq_id}` 映射反查原单，撤单路径 3 次全局锁。
+
+**设计**：
+- `OrderRtn.order_sys_no` 直接返回 **FTE clordno**（`deal_order_rtn`/`deal_etf_trade_rtn`/`deal_trade_rtn` 中 `rtn.order_sys_no = er.clordno`）。
+- `build_cancel_msg`：`orig_clordno = req.order_sys_no`（客户端原样回传的 clordno），`orig_client_seq_id = 0`（非必填）。**字段顺序**：`orig_client_seq_id` 在前、`orig_clordno` 在后（各 8 字节，见 `gw_head.h`）。
+- 移除 `record_order_locator` / `get_clordno` / `get_orig_client_seq_id` 及 `GwLoginInfo.order_locators` 成员。
+
+**收益**：撤单正确性由客户端回传的 clordno 保证，无需内部缓存反查，消除撤单路径全局锁。
+
+### 41.5 回归结果
+
+- **GOne** 功能测试 5/5 PASS；性能 90053/90053 成功 0 失败。
+- **GW(FTE)** 功能测试 5/5 PASS，撤单 `err_code=50046` 符合预期（orig_clordno 传递正确）。
+- 性能 -35/-22 为 FTE 环境高负载问题，与改动无关。
+
+### 41.6 设计文档更新清单
+
+| 文档 | 更新内容 |
+|------|------|
+| `doc/gw_counter_direct.md` | GwLoginCache 章节 + 撤单优化 + 关键成员 + 待办 |
+| `doc/counter98.md` | build_*_msg 已实现 + C98SessionCache + 登录流程 |
+| `doc/callback_manager.md` | stop/close 分离 + logout/trade_counter 事件 |
+| `doc/api_callback.md` | on_logout / on_trade_counter |
+| `doc/api_instance.md` | stop()/close() 分离代码 |
+| `doc/order_trade_type.md` | LogoutAns 结构 |
+| `doc/multi_socket_engine.md` / `doc/tcpdirect_engine.md` | stop()/close() 接口表 |
+| `doc/ARCHITECTURE.md` | gw_counter_direct 缓存模型 + 撤单链路 + 引擎 stop/close |
+
+### 41.7 遗留（待后续）
+
+- 单客户模式断线重登的触发接入待完善（`collect_relogin_events` 已实现多客户批量重登）。
+- 登录失败重试机制未实现。
+- 旧 `gw_session_cache.h` 仍被 `gw_login_cache.h`/`counter98.h`/`gw_counter_direct.h`/`c98_session_cache.h` include（复用 `GwSessionInfo`/`OrderLocator` 结构体），但全局单例类与 `order_locators` 已不再使用，可后续清理。

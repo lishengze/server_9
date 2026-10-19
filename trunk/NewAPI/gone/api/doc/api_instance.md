@@ -69,9 +69,30 @@ fast_engine_.start();
 c98_.deal_agw_login();
 ```
 
-## 停止（stop）
+## 停止/关闭（stop/close 分离）
 
-停止所有引擎线程和链接，释放资源。
+**stop()（轻量，可重启）**：停引擎/回调线程 + 关已建链接，保留 init 资源（log/定时器/队列）可重新 start。
+```cpp
+void stop() {
+  fast_engine_.stop();   // 停 fast 引擎线程 + 关链接
+  multi_engine_.stop();  // 停 multi 引擎 epoll 线程 + 关链接
+  cb_mgr_.stop();        // 停回调线程
+  have_start = 0;
+}
+```
+
+**close()（完整销毁，析构时调用）**：在 stop 基础上关闭定时器/队列/log。
+```cpp
+void close() {
+  fast_engine_.close();
+  multi_engine_.close();
+  cb_mgr_.close();
+  log_.close_log();
+}
+~api_impl() override { close(); }
+```
+
+> 各子模块（引擎/回调）均实现 `stop()`（轻量）+ `close()`（完整）双接口，`idle_engine.close()` 为 no-op。
 
 ## 设计要点
 1. **配置选型**：通过模板参数在编译期确定柜台和引擎类型，零运行时开销。

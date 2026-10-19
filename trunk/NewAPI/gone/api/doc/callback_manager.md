@@ -49,15 +49,20 @@ FORCE_INLINE void write_cmt(int64_t pos, int32_t len) {
 }
 ```
 
-## 初始化与生命周期
+## 初始化与生命周期（stop/close 分离）
 
 ```cpp
 int32_t init(lb_common::lb_log *log, api_callback *cb, callback_mode mode,
              int32_t cpu_affinity, int32_t queue_size_mb, int32_t wait_ms,
              int32_t single_writer);
 int32_t start();  // 启动回调线程（仅队列模式）
-void stop();      // 停止回调线程
+void stop();      // 轻量停止：trigger + join 回调线程，保留 init 资源（队列/log）可重启
+void close();     // 完整销毁：stop + cb_queue_.close()，仅析构时调用
 ```
+
+**stop/close 分离设计**：
+- `stop()`：轻量停止，仅停回调线程并保留 `init` 资源（无锁队列、日志、回调指针），支持 stop 后重新 start。
+- `close()`：完整销毁，在 `stop()` 基础上关闭无锁队列，由 `api_impl` 析构时调用。
 
 ## 回调接口（柜台/引擎调用）
 
