@@ -599,3 +599,15 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 4. 按第三节的"分析框架"组织思考
 5. 按第六节的"回答风格"输出回答
 ```
+
+## 九、环境事实（2026-10-29 实测校验）
+
+| 项 | 事实 |
+|----|------|
+| 当前工作区 | Windows `D:\code\work\api_trunk`（git `origin=git@github.com:lishengze/server_9.git`，分支 `master`） |
+| 可用 | `git`、Git bash（GNU date ✅）、`cmake`、`make`/`g++`（w64devkit mingw）、`python`、`node` |
+| 不可用 | `docker` ❌、`svn` ❌、`rg` ❌、WSL 发行版 ❌ |
+| 编译可行性 | 依赖 `sys/epoll.h`（`comm_sock.h`/`wait_poll.h`）→ **Linux-only**；mingw 编译不了，`build.sh` 宿主机分支会 `docker exec` 失败 |
+| 复盘脚本 | `task/review/review_prepare.sh` 须用 **Git bash**（`C:\Program Files\Git\bin\bash.exe`）运行；w64devkit 的 bash 不支持数组（第 63 行 `FILES=()` 语法报错 exit=2）、`date` 也无 `-d` |
+
+> 结论：Windows 本机只做文档/知识/规范类工作；编译、功能回归、性能测试需 Linux 主机或 WSL2+docker `otc`。体系层面完整说明（工作规范/复盘手册/缺口清单）见 `study/knowledge_base_system/体系总览_工作规范与知识库体系.md`。
