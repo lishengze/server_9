@@ -609,5 +609,6 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 | 不可用 | `docker` ❌、`svn` ❌、`rg` ❌、WSL 发行版 ❌ |
 | 编译可行性 | 依赖 `sys/epoll.h`（`comm_sock.h`/`wait_poll.h`）→ **Linux-only**；mingw 编译不了，`build.sh` 宿主机分支会 `docker exec` 失败 |
 | 复盘脚本 | `task/review/review_prepare.sh` 须用 **Git bash**（`C:\Program Files\Git\bin\bash.exe`）运行；w64devkit 的 bash 不支持数组（第 63 行 `FILES=()` 语法报错 exit=2）、`date` 也无 `-d` |
+| Git 推送 | 远端是 SSH 地址但 **SSH 过不了代理**；须用 HTTPS URL + 命令级代理 `172.16.0.11:3128` 推送，**推完取消代理**。详见 `task/task_rule.md` §13 |
 
 > 结论：Windows 本机只做文档/知识/规范类工作；编译、功能回归、性能测试需 Linux 主机或 WSL2+docker `otc`。体系层面完整说明（工作规范/复盘手册/缺口清单）见 `study/knowledge_base_system/体系总览_工作规范与知识库体系.md`。
