@@ -280,30 +280,41 @@
 
 本机（`D:\code\work\api_trunk`）远端是 **SSH 地址** `git@github.com:lishengze/server_9.git`，而直连 22/443 均超时，必须挂 HTTP 代理 **`172.16.0.11:3128`**。
 
+**推荐：直接用现成脚本**（内置探活重试 + 推后三步校验）：
+
+```powershell
+pwsh -NoProfile -File task/tool/git_push_proxy.ps1
+# 可选参数：-Branch dev -RepoUrl <https-url> -Proxy 172.16.0.11:3128 -MaxMinutes 15
+```
+
+**手动等价命令**：
+
 ```powershell
 cd D:\code\work\api_trunk
 $env:GIT_TERMINAL_PROMPT='0'; $env:GCM_INTERACTIVE='never'   # 防交互卡死
 git -c http.proxy=http://172.16.0.11:3128 push https://github.com/lishengze/server_9.git master
 ```
 
-**关键：推的是 HTTPS URL，不是 `origin`** —— `origin` 是 SSH 地址，SSH 过不了代理（见下表）。
+**关键：推的是 HTTPS URL，不是 `origin`** —— `origin` 是 SSH 地址，SSH 过不了代理（见 §13.3）。
 
 ### 13.3 环境实测结论（2026-10-29）
 
 | 路径 | 结果 | 说明 |
 |------|------|------|
 | 直连 `github.com:22` / `:443` | ❌ 超时 | `Test-NetConnection` 全 False |
-| HTTPS 经代理 | ✅ 200 | `curl -x http://172.16.0.11:3128 https://github.com/`；**偶发 502，重试 2~3 次即通** |
+| HTTPS 经代理 | ✅ 200，但**会成片 502** | 实测出现过连续 ~7 分钟、20 次探活全部 502，之后恢复；**必须用重试循环，不能试 2~3 次就放弃** |
 | SSH 经代理（`connect.exe -H`/`-T`） | ❌ 隧道 200 但无 banner | 隧道能建立、随后 `Connection timed out during banner exchange` → **代理只放行 HTTPS，不放行 SSH** |
 | HTTPS 凭据 | ✅ 无需交互 | Windows 凭据管理器已存 `git:https://github.com`（用户 `lishengze`） |
+| 进程环境变量 | ⚠️ 已存在 `HTTP_PROXY`/`HTTPS_PROXY` | 由启动 dsh 的父进程注入（User/Machine 级均为空、不落盘），非本规则所设；**校验以 `git config` 无 proxy 项为准** |
 
-> 结论：**不要在 `GIT_SSH_COMMAND` / `ProxyCommand` / `connect.exe` 上花时间**——那是代理策略限制，不是参数问题。
+> 结论 1：**不要在 `GIT_SSH_COMMAND` / `ProxyCommand` / `connect.exe` 上花时间**——那是代理策略限制，不是参数问题。
+> 结论 2：**502 是常态性抖动，不是配置错误**。判定标准是 `curl -x <proxy> https://github.com/` 返回 200；拿到 200 后立刻推，成功率最高。
 
 ### 13.4 推送后必须做的三步校验（缺一步就算没推完）
 
 ```powershell
-# ① 确认无代理配置残留（三条都应无输出）
-git config --local --get http.proxy; git config --global --get http.proxy; git config --local --get https.proxy
+# ① 确认无代理配置残留（应无输出）
+git config --list --show-origin | Select-String -Pattern 'proxy'
 
 # ② 同步远端跟踪引用（推的是 URL 不是 remote 名，否则 git status 一直显示 ahead）
 git -c http.proxy=http://172.16.0.11:3128 fetch https://github.com/lishengze/server_9.git master
@@ -313,14 +324,17 @@ git update-ref refs/remotes/origin/master FETCH_HEAD
 git -c http.proxy=http://172.16.0.11:3128 ls-remote https://github.com/lishengze/server_9.git refs/heads/master
 ```
 
-收尾判据：`git status -sb` 显示 `## master...origin/master`（无 ahead），且 `git config --get http.proxy` 无输出。
+收尾判据：`git status -sb` 显示 `## master...origin/master`（无 ahead），`git config` 无 proxy 项，`git remote -v` 仍是原 SSH 地址。
+
+> `task/tool/git_push_proxy.ps1` 已把推送 + ②③ + 残留校验全部内置，一条命令完成。
 
 ### 13.5 规则（硬性）
 
-1. **优先用 `git -c http.proxy=...` 一次性传参**，不写配置 → 天然不会残留代理。
+1. **优先用 `git -c http.proxy=...` 一次性传参**（或直接跑 `task/tool/git_push_proxy.ps1`），不写配置 → 天然不会残留代理。
 2. 若必须写配置，**推送结束立即 `git config --unset http.proxy` / `--unset https.proxy`**，并在工作日志记一条"代理已取消"。
 3. **推送后必须执行 §13.4 三步校验**，不能只看 `push` 的返回码——漏了 ② 会让下次会话误判"未推送"而重复提交。
-4. 代理地址属环境信息，**换网络环境需向用户确认**，不假设固定值。
-5. 推送失败先分辨是"网络不通"还是"权限/冲突"：`ssh ... Connection timed out` = 网络；`Could not read from remote repository` 且网络可达 = 权限/仓库名。
+4. **502 用重试循环处理**（探活 200 → 立即推；最长等 10~15 分钟），不要因一次 502 就判定"网络不可用"而放弃推送。
+5. 代理地址属环境信息，**换网络环境需向用户确认**，不假设固定值。
+6. 推送失败先分辨是"网络不通"还是"权限/冲突"：`ssh ... Connection timed out` = 网络；`CONNECT tunnel failed, response 502` = 代理出口抖动（重试）；`Could not read from remote repository` 且网络可达 = 权限/仓库名。
 
 > 同类案例：其他项目（origin 亦为 SSH）在 `SHHQ-office` wifi 下同样直连超时，改用 HTTPS URL + 代理后 fetch/merge/push 全部成功。
