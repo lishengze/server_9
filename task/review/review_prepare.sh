@@ -76,9 +76,9 @@ echo "日志文件数: ${#FILES[@]}"
     echo
     echo "> 由 review_prepare.sh 自动生成，供 agent 执行复盘。"
     echo "> 统计信息："
-    echo "- 覆盖日志文件：${#FILES[@]} 个"
-    echo "- 任务条目：$(grep -hc '^## 任务' "${FILES[@]}" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
-    echo "- 经验教训条目：$(grep -hc '^### 经验教训' "${FILES[@]}" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+    echo "> - 覆盖日志文件：${#FILES[@]} 个"
+    echo "> - 任务条目：$(grep -hc '^## 任务' "${FILES[@]}" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+    echo "> - 经验教训条目：$(grep -hc '^### 经验教训' "${FILES[@]}" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
     echo
     echo "## 一、任务清单"
     echo
@@ -91,13 +91,13 @@ echo "日志文件数: ${#FILES[@]}"
     echo
     for f in "${FILES[@]}"; do
         echo "### 来源：$(basename "$f")"
-        awk '/^### 经验教训/{flag=1;next}/^## /{if(flag)flag=0}flag' "$f" 2>/dev/null | grep -v '^### 经验教训' | sed 's/^/  /'
+        awk '/^### 经验教训/{flag=1;next}/^## |^### /{if(flag)flag=0}flag' "$f" 2>/dev/null | grep -v '^### 经验教训' | sed 's/^/  /'
         echo
     done
     echo "## 三、待验证假设 / 遗留问题（若有）"
     echo
     for f in "${FILES[@]}"; do
-        awk '/待验证假设|遗留问题|待办/{flag=1;next}/^## /{if(flag)flag=0}flag' "$f" 2>/dev/null | grep -vE '待验证假设|遗留问题|待办' | sed 's/^/  /'
+        awk '/待验证假设|遗留问题|待办/{flag=1;next}/^## |^### /{if(flag)flag=0}flag' "$f" 2>/dev/null | grep -vE '待验证假设|遗留问题|待办' | sed 's/^/  /'
         echo
     done
 } > "$OUTFILE"
