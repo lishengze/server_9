@@ -3,9 +3,9 @@
 > 本知识库系统化整理了 `trunk/NewAPI` 交易 API 客户端框架的架构、设计、数据流与待办任务。
 > 面向后续接入/维护/开发人员，以及需要理解该框架的大模型。
 >
-> **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/api_dev_task.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
+> **来源**：`study/counter.md`、`study/question.md`、`study/技术实现.md`、`study/数据流转.md`、`study/产品使用.md`、`task/api_dev/task_dev.txt`、`task/api_dev/gw_counter_api.md`、`mock/client/mock_client_design.md`、`mock/98_counter/98_counter_mock_design.md`
 > **基线**：HEAD + 后续重构（g1 协议改版、v2.1 规范）
-> **版本**：v3.4（2026-10-19，§41 结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化；§40 GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复；§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
+> **版本**：v3.5（2026-11-05，新增 §42 仓库目录核对与 api-compare 参考模块：修正 FTE / mock / 任务文档的失效路径，记录 `api-compare` 不参与编译、mock 四目标与产物清单，标注 L3 专题行号待复核）；v3.4（2026-10-19，§41 结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化；§40 GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复；§39 三对象 5000TPS 复测（当前宿主机）；§38 三对象 5000TPS 对比测试与时延失真根因；§37 mock_client 全面复盘与修复回归；§33 单链接单客户、§34 非阻塞发送）
 
 ---
 
@@ -52,6 +52,7 @@
 39. [三对象 5000TPS 复测（当前宿主机）](#39-三对象-5000tps-复测当前宿主机)
 40. [GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复](#40-gcc-485-兼容--counter98-队列提交长度-bug-修复)
 41. [结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化](#41-结构性重构stopclose-分离--回调事件扩展--账户缓存实例化--撤单优化2026-10-19)
+42. [仓库目录核对与 api-compare 参考模块](#42-仓库目录核对与-api-compare-参考模块2026-11-05)
 
 ---
 
@@ -642,7 +643,7 @@ FTE TCP Binary 协议全部实现（gw_counter_direct.h/.cpp + gw_session_cache.
 
 ### 任务文档
 
-- `task/api_dev/api_dev_task.txt`：[NGTP-T202612257] 优化低延时 API（CMakeLists 优化 + 接口完善）
+- `task/api_dev/task_dev.txt`：[NGTP-T202612257] 优化低延时 API（CMakeLists 优化 + 接口完善）
 - `task/api_dev/fte_api.md`：新 API 数据结构 ↔ FTE 数据结构转换关系（第2-3章字段映射）
 - `task/api_dev/gw_counter_api.md`：gw_counter 模块接口设计文档（完整字段映射 + 链路设计 + 实现优先级）
 
@@ -650,14 +651,15 @@ FTE TCP Binary 协议全部实现（gw_counter_direct.h/.cpp + gw_session_cache.
 
 ## 18. FTE 协议详解（gw_counter 对接目标）
 
-> **来源**：`/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/knowledge_base/README.md`、`fte_tcp_通信链路分析.md`、`include/message/gw_head.h`、`task/api_dev/fte_api.md`
+> **来源**：`/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/message/gw_head.h`、`…/fte/doc/`（`fte_系统架构.md`/`fte_业务流程.md`/`fte_代码模块.md`/`fte_初始化.md` 等）、`…/fte/fte_tcp_通信链路分析.md`、`task/api_dev/fte_api.md`
+> **路径变更（2026-11-05 核对）**：旧的 `…/fte/fte/…` 双段路径与 `fte/knowledge_base/README.md` 均已失效，权威路径见 §42.3。
 
 ### 18.1 FTE 项目
 
 | 项目 | 说明 |
 |------|------|
 | 项目路径 | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte` |
-| 知识库 | `fte/knowledge_base/README.md` + `Prompt.md` |
+| 文档 | `DYS-FRAMEWORK/fte/doc/`（`fte_系统架构.md`/`fte_业务流程.md`/`fte_代码模块.md`/`fte_初始化.md` 等）+ `DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md`；旧 `fte/knowledge_base/README.md` 已不存在 |
 | 协议结构体 | `fte/include/message/gw_head.h`（`gw_message::*` 命名空间，扁平版） |
 | 服务端结构 | `fte/include/message/gw_external_message.h`（`message::*` 命名空间，嵌套版） |
 | API 示例 | `fte/api_demo/`（C++11 客户端） |
@@ -788,7 +790,7 @@ TCP 字节流 → counter.deal_recv_msg(buf, len, link_type)
 
 ## 20. FTE 编译部署测试环境
 
-> **来源**：`fte/knowledge_base/README.md` 第16章、`fte/test_all/fte_test.md`
+> **来源**：`DYS-FRAMEWORK/fte/doc/`（FTE 设计文档集）、`DYS-FRAMEWORK/fte/test_all/fte_test.md`（旧 `fte/knowledge_base/README.md` 已不存在）
 
 ### 20.1 环境
 
@@ -1037,7 +1039,7 @@ TCP 客户端 → counter98_server(accept_loop) → client_session(每连接一�
 - `fund_info_manager.cpp Init` 要求 `cash_fund_map_.size() == account_data_map_.size()`，否则 `SetDataLoadErr(2)` → 启动失败。插入 cash_fund 必须同步插 account_ute。
 - 编译产物安装到 `${CMAKE_ATP_RES_ROOT}/fte`（=/mnt/work/gt_test/work_atp/cmake/fte），覆盖 0 字节文件。
 - `env.sh` 中 `UTE_BIN` 原指向 0 字节文件，需改为有效二进制；`libutedatainit.so` 0 字节需复制有效版本。
-- `bin_tool.py update <file> --field <定位字段> --eq <匹配值> --set <field=value> [--show]` 支持 bin 文件字段更新。
+- bin 文件字段更新曾用 `bin_tool.py update <file> --field <定位字段> --eq <匹配值> --set <field=value> [--show]`；**该脚本已不在仓库**（`mock/98_counter/` 现只有 design/CMakeLists/config/src），需要用就自建或从历史提交取。
 
 ### 24.3 offerWay invalid 根因（pbu 空格填充）
 
@@ -1409,7 +1411,7 @@ GOne（FPGA 极速柜台）采用**双链路架构**，区别于 FTE 的单链�
   ```
 - **瓶颈点**：`GwSessionCache::get_session()` 的**全局 mutex 锁** + **string 构造** + **unordered_map 哈希**，是 FTE 比 GOne 慢 5~12 倍的主因。
 - 撤单路径更重：`build_cancel_msg` 调 `get_session()` + `get_clordno()` + `get_orig_client_seq_id()` = **3 次全局锁**。
-- **优化方向**（对应 api_dev_task.txt）：单客户场景下将会话缓存到 counter 实例成员变量，消除全局锁与 string 构造（对齐 fpga_direct 的 `client_info_` 范式）。
+- **优化方向**（对应 task_dev.txt）：单客户场景下将会话缓存到 counter 实例成员变量，消除全局锁与 string 构造（对齐 fpga_direct 的 `client_info_` 范式）。
 
 **③ -25 SEND_QUEUE_FULL（56% 失败）—— FTE 下游容量瓶颈**
 - 10000 TPS × 10s = 10 万笔，远超 **FTE 对象池容量（32768）**。FTE 在 `index[16382]`（约 1.6 万笔）后停止处理（日志中断），FTE 崩溃/降级。
@@ -2140,7 +2142,7 @@ LOG_DEBUG(...) / LOG_WARN(...) / LOG_ERROR(...) / LOG_FATAL(...)
 
 ### 37.1 复盘文档
 
-`mock/client/mock_client_upgrade.md` 对 mock_client 全部源文件（~2800 行）做了全面复盘，识别 **6 类共 18 项** 优化点（🔴高4 / 🟡中8 / 🟢低6），按严重度提出修复建议。
+`mock/doc/mock_client_upgrade.md`（旧文在 `mock/client/`，现已归入 `mock/doc/`）对 mock_client 全部源文件（~2800 行）做了全面复盘，识别 **6 类共 18 项** 优化点（🔴高4 / 🟡中8 / 🟢低6），按严重度提出修复建议。
 
 ### 37.2 修复状态（10 项修复 + 1 项撤销）
 
@@ -2259,7 +2261,7 @@ LOG_DEBUG(...) / LOG_WARN(...) / LOG_ERROR(...) / LOG_FATAL(...)
 
 ## 39. 三对象 5000TPS 复测（当前宿主机，2026-10-13）
 
-> 依据 `task/api_dev/api_dev_task.txt` 291~301 要求，在当前宿主机（32 核 AMD Ryzen 9 9955HX）上**重新编译 API（Release）+ 更新后的 FTE**，复测整个性能测试流程。这是对 §38 首次测试（原 16 核开发机）的跨主机复测。
+> 依据 `task/api_dev/task_dev.txt` 291~301 要求，在当前宿主机（32 核 AMD Ryzen 9 9955HX）上**重新编译 API（Release）+ 更新后的 FTE**，复测整个性能测试流程。这是对 §38 首次测试（原 16 核开发机）的跨主机复测。
 
 ### 39.1 复测环境与配置
 
@@ -2453,3 +2455,72 @@ counter98 的 98 协议消息是**变长**的，无法预留前确定长度，�
 - 单客户模式断线重登的触发接入待完善（`collect_relogin_events` 已实现多客户批量重登）。
 - 登录失败重试机制未实现。
 - 旧 `gw_session_cache.h` 仍被 `gw_login_cache.h`/`counter98.h`/`gw_counter_direct.h`/`c98_session_cache.h` include（复用 `GwSessionInfo`/`OrderLocator` 结构体），但全局单例类与 `order_locators` 已不再使用，可后续清理。
+
+---
+
+## 42. 仓库目录核对与 api-compare 参考模块（2026-11-05）
+
+> 触发：远程拉取后核对「知识库写的路径 vs 仓库实际结构」。§17 / Prompt.md §四 代码索引里的部分 FTE 与 mock 路径已随代码演进失效，本节给出核对结论与修正后的权威路径；**旧写法不要照抄**。
+
+### 42.1 当前代码树（实测）
+
+```
+trunk/NewAPI/
+├── common/                  # liblbcommon.a（aio_tcp.h / que_mth_buf.h / mutils.h / mthread.h）
+├── gone/
+│   ├── api/                 # ★主实现：liblbapi.so + mock + 设计文档
+│   │   ├── src/  include/   # 柜台 / 引擎 / 链接 / 回调 / 队列事件
+│   │   ├── doc/             # 模块设计文档（ARCHITECTURE.md / 各模块 .md）
+│   │   ├── mock/            # client / 98_counter / gone_counter / perf_client / doc / include
+│   │   ├── 98_counter.md  gw_counter.md  gone_counter.md   # 三份 counter 深度分析
+│   │   └── api-requirements-prompt.md
+│   ├── api-compare/         # ⚠️ 框架开发者转存版（未接入 CMake，不编译），仅作对照/取长
+│   ├── counter98/           # 98 相关独立件
+│   └── include/             # g1 协议头（g1msghead.h / g1trademsg.h）
+└── solarflare/              # TCPDirect 相关
+```
+
+**构建入口**：根 `CMakeLists.txt`（`project(API_MAIN)`）→ `trunk/NewAPI/CMakeLists.txt` → `gone/api/CMakeLists.txt`（`file(GLOB src/*.cpp)` 出 `liblbapi.so`；`-DBUILD_MOCK=ON` 时再 add `mock/{client,98_counter,gone_counter,perf_client}` 四个子目标）。
+**产物**（`build_cmake/`）：`lib/liblbapi.so`、`lib/liblbcommon.a`、`bin/{mock_client, counter98_mock, gone_counter_mock, perf_client, api_net_time_capture}`。
+**判断生效与否**：`api-compare` 不出现在任何 CMakeLists → 改它不进 `liblbapi.so`；结论以 `nm -D build_cmake/lib/liblbapi.so` + `gone/api/src` 实际代码为准。
+
+### 42.2 api-compare 是什么、怎么用
+
+| 项 | 结论 |
+|----|------|
+| 来源 | 框架开发者合并代码时冲突未解，把整份框架转存为 `api-compare/` |
+| 与 `api/` 差异 | ①**格式**：api-compare 全 Allman、api 全 K&R（占 diff 30~50%，无功能影响）②**框架层**：事件/配置/重连等细节 ③**gone_counter**：契约与模板特化细节 ④**gw/98 层**：api-compare 走多账户 `GwLoginCache`/`C98SessionCache` + `log_gw`/`log_98` 状态机 + 登出；api 侧对应能力已在 §41 落地 |
+| 方向约定 | 方向1/2（框架层、gone_counter）以 api-compare 为基准筛选合理优化；方向3（gw/98）以 api 为基准评估 api-compare |
+| 完整分析 | `task/api_dev/api_compare.md`（§五 整合方案 / §七 整合执行状态 2026-10-19 / §八 撤单优化） |
+| 陷阱 | 仓库内 `api-compare/临时-ai生成-与svn中区别分析.txt` 对 gw/98 的**方向描述是反的**，以实际 diff 为准 |
+
+### 42.3 路径修正表（旧写法 → 实际存在）
+
+| 旧路径（已失效） | 现在正确的路径 |
+|---|---|
+| `…/gt_trunk/DYS-FRAMEWORK/fte/fte/include/message/gw_head.h` | `…/DYS-FRAMEWORK/fte/include/message/gw_head.h`（协议头在 `fte/include/message/`，与 `main.cpp` 所在的 `fte/fte/src/` 不是同一套，见下表） |
+| `…/DYS-FRAMEWORK/fte/fte/include/message/gw_external_message.h` | `…/DYS-FRAMEWORK/fte/include/message/gw_external_message.h` |
+| `…/fte/include/tech/net/tcp_endpoint.h` | `…/fte/include/tech/network/tcp_endpoint.h` |
+| `…/DYS-FRAMEWORK/fte/fte/knowledge_base/README.md` | **目录已不存在**；FTE 文档在 `…/DYS-FRAMEWORK/fte/doc/`（`fte_系统架构.md`/`fte_业务流程.md`/`fte_代码模块.md`/`fte_初始化.md` 等）+ `…/DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md` |
+| `task/api_dev/api_dev_task.txt` | `task/api_dev/task_dev.txt` |
+| `mock/client/mock_client_upgrade.md` | `mock/doc/mock_client_upgrade.md`（`mock/doc/` 另收 `mock_client_design.md`、`mock_client_test.md`、`api_net_time_design.md`、`api_test_manual.md`；`mock/client/` 仍留 design/test 两份副本） |
+| `mock/98_counter/bin_tool.py` | **已不在仓库**（该目录仅 `98_counter_mock_design.md` + `CMakeLists.txt` + `config/` + `src/`）；需要时自建或查历史提交 |
+| `compile_fte.sh`（相对路径） | 在 `/home/lsz/code/work/gt_trunk/` 下，需在容器 `otc` 内以 `zsh -lc` 执行（见 §39.4） |
+
+**⚠️ FTE 有「两套源码树」，别套单条规则**（2026-11-05 实测）：
+
+| 内容 | 实际路径 |
+|------|---------|
+| 对外协议头（`gw_head.h` / `gw_external_message.h` / `endian_util.h` …） | `DYS-FRAMEWORK/fte/include/message/` |
+| 业务源码（`uplink_biz_processor.cpp` 等） | `DYS-FRAMEWORK/fte/src/business/` |
+| 网络栈（`tcp_endpoint.h`） | `DYS-FRAMEWORK/fte/include/tech/network/` |
+| FTE 主程序（`FTE_DSE_FIFO_LEN` / `SetFTE2DSEQueue`） | `DYS-FRAMEWORK/fte/fte/src/main.cpp`（**这里确实有 `fte/fte`**） |
+| 设计文档 / 部署测试脚本 | `DYS-FRAMEWORK/fte/doc/`、`DYS-FRAMEWORK/fte/test_all/` |
+
+> 所以「看到 `fte/fte` 就删一层」是错的：`main.cpp` 在 `fte/fte/src/`，协议头在 `fte/include/message/`。定位文件一律 `find gt_trunk -name <文件名>`，不靠规则推。
+
+### 42.4 本轮核对结论与遗留
+
+- ✅ 已核对：编译目标与产物、mock 四目标、`doc/` 设计文档、FTE 源码与文档路径、`task_dev.txt`。
+- ⚠️ **未核对**：`study/*.md`（L3 深度专题 `counter.md`/`gw_counter.md`/`gone_counter.md`/`question.md`/`技术实现.md`/`数据流转.md`/`产品使用.md`）里的**代码行号**仍按 2026-09/10 版本撰写，引用前按本节口径核对，别照抄行号。
+- ⚠️ `gone/api-compare/doc/`（`ARCHITECTURE.md`/`BUILD.md`/`LOGIN_COMPLIANCE.md`/`REQUIREMENTS.md`）与 `gone/api/doc/ARCHITECTURE.md` 是两套，引用时写明是哪一套。

@@ -47,6 +47,7 @@
 32. **三对象 5000TPS 复测（当前宿主机）** ✅（§39）：在当前 32 核宿主机重新编译 API(Release)+更新后 FTE 复测，结果与 §38 排序一致（**GOne < GW单 ≈ GW多**）但绝对值更优（GOne P50 321→161ns、GW单 P50 371→211ns，得益于核数更多更空闲）；三对象关联成功率 100%；**tgw 时延失真根因跨主机复现**（保留 tgw 时 GW P50=481~972ns，停止后降到 211~221ns）。复测新增踩坑：FTE 编译须用 `docker exec otc zsh -lc`（bash 加载不了 oh-my-zsh）、抓包 `--report` 须用绝对路径、start_all.sh 会启动用不到的深圳 FTE/tgw 须停止、gone 抓包平均值易被离群点拉高（以分位数为准）。完整表格见 `task/api_dev/result_contrast.md` 复测章节 + `task/api_dev/debug.md`
 33. **GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复** ✅（§40）：GCC 4.8.5（C++11）兼容（mutils.h is_integral_v→is_integral<T>::value、mthread.h stdatomic.h→atomic、mock_client 补 iostream）；**counter98 发送队列"预留/提交/消费长度不一致"bug**——所有 `deal_*_req` 预留上限 take_len(2064) 提交 take_len+sizeof，但 reader 按 sizeof+data_len(=sizeof+msg_len) 消费，导致 reader 把预留空隙读成大量零长度 98 SEND_MSG 事件并错位，`leave_time_ptr` 变垃圾指针崩溃（GOne 测试 2/5 委托买入 SIGSEGV）。修复=先组包到临时缓冲确定 msg_len，再用新 `send_req_msg()` 按精确长度预留/拷贝/提交，20 个调用点全部改造；GOne 功能测试 5/5 通过。**队列铁律：预留==提交==读者消费口径三者一致**。详细见 `task/api_dev/counter98_queue_fix.md`
 34. **结构性重构四件套** ✅（§41，2026-10-19）：① **stop/close 分离**——stop() 轻量（join+关链接，保留 init 资源可重启）、close() 完整（+关定时器/队列/log，析构调用），引擎/callback_manager/api_instance 统一双接口，idle_engine.close() no-op；② **回调事件扩展**——cb_event_type 新增 logout=16 / trade_counter=17，新增 LogoutAns 结构，api_callback 新增 on_logout / on_trade_counter（direct/queued 双模式）；③ **账户缓存实例化**——GwLoginCache（gw 单客户 local_session_ / 多客户 login_cache_）+ C98SessionCache（counter98），从全局单例改为实例缓存消除全局锁，登录成功回报时缓存（RUL-15 发布屏障），断链 collect_relogin_events() 批量自动重登；④ **撤单优化**——OrderRtn.order_sys_no 直接返回 FTE clordno，build_cancel_msg orig_clordno=req.order_sys_no（orig_client_seq_id 在前、orig_clordno 在后），消除 order_locators 原单定位映射。回归：GOne 功能 5/5 + perf 90053/90053；GW(FTE) 功能 5/5（撤单 err_code=50046 符合预期）
+35. **仓库目录核对与 api-compare**（§42，2026-11-05）：代码树 = `gone/api`（主实现，编译入口在 `gone/api/CMakeLists.txt`）+ `gone/api-compare`（框架开发者转存版，**未接入 CMake、不编译**，仅作对照取长，分析见 `task/api_dev/api_compare.md`）+ `gone/counter98` + `gone/include`（g1 头）+ `common` + `solarflare`；`-DBUILD_MOCK=ON` 产出 mock 四目标（client/98_counter/gone_counter/perf_client）+ `api_net_time_capture`；**引用 FTE 源码请用 `…/DYS-FRAMEWORK/fte/include/…`（无 `fte/fte` 双段），FTE 文档在 `…/fte/doc/`、任务单是 `task/api_dev/task_dev.txt`**；`study/*.md` 的行号未随代码更新，勿照抄。
 
 ## 三、分析框架
 
@@ -135,8 +136,8 @@
 | 无锁队列 | `trunk/NewAPI/common/include/que_mth_buf.h` |
 | **gw 设计文档** | `task/api_dev/gw_counter_api.md` |
 | **字段转换关系** | `task/api_dev/fte_api.md` |
-| **FTE 协议结构体** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/include/message/gw_head.h` |
-| **FTE 知识库** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte/knowledge_base/README.md` |
+| **FTE 协议结构体** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/message/gw_head.h`（协议头在 `fte/include/message/`；`main.cpp` 在 `fte/fte/src/` —— FTE 有两套源码树，见 §42.3） |
+| **FTE 文档** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/doc/`（`fte_系统架构.md` / `fte_业务流程.md` / `fte_代码模块.md` / `fte_初始化.md`；旧 `fte/knowledge_base/README.md` 已不存在） |
 | **FTE TCP 分析** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/fte_tcp_通信链路分析.md` |
 | **FTE API 示例** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/api_demo/` |
 | **FTE 部署测试** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/test_all/` |
@@ -147,7 +148,7 @@
 | **98_counter_mock 源码** | `trunk/NewAPI/gone/api/mock/98_counter/src/`（counter98_server/client_session/account_manager/message_parser） |
 | **98_counter_mock 设计文档** | `trunk/NewAPI/gone/api/mock/98_counter/98_counter_mock_design.md` |
 | **JSON 工具** | `trunk/NewAPI/gone/api/mock/include/json_utils.h/.cpp` |
-| **bin 文件工具** | `trunk/NewAPI/gone/api/mock/98_counter/bin_tool.py`（update 字段） |
+| **bin 文件工具** | ~~`mock/98_counter/bin_tool.py`~~（**已不在仓库**，需自建或查历史提交；见 §42.3） |
 | **性能测试模块** | `trunk/NewAPI/gone/api/mock/client/src/perf_runner.h/.cpp`（PerfConfig+PerfRunner） |
 | **延迟统计** | `trunk/NewAPI/gone/api/mock/client/src/metric_stats.h/.cpp`（均值/P50/P75/P90/P95/最大/最小/标准差） |
 | **CPU 绑定** | `trunk/NewAPI/gone/api/mock/client/src/cpu_affinity.h/.cpp` |
@@ -166,15 +167,15 @@
 | **FTE 队列实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/queue/producer_consumer_queue.h`（push 忙等自旋） |
 | **FTE 对象池实现** | `/home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/tech/unbound_object_pool.h` / `object_pool.h`（池空回退 new） |
 | **时间戳/瓶颈分析** | `task/api_dev/time_ana.md`（记录点 send 前/后分析、P95 尾部延迟瓶颈、解决方案）+ `study/gone_counter.md` §九（api_leave_time_ns 机制） |
-|| **test_plan 主配置** | `trunk/NewAPI/gone/api/mock/client/config/test_plan_gw.json`（FTE）/ `test_plan_gone.json`（GOne，--plan 模式） |
-|| **cases 独立案例** | `trunk/NewAPI/gone/api/mock/client/config/cases/`（FTE：login/order/trade/cancel/heartbeat/perf）+ `cases_gone/`（GOne 差异文件） |
-|| **日志系统** | `trunk/NewAPI/gone/api/mock/client/src/logger.h/.cpp`（五级日志 + atomic 无锁判级 + 双输出） |
-|| **结果分析** | `trunk/NewAPI/gone/api/mock/client/src/result_analysis.h/.cpp`（功能+性能+结论整合输出） |
-|| **mock_client 复盘** | `trunk/NewAPI/gone/api/mock/client/mock_client_upgrade.md`（6 类 18 项复盘 + 10 修复 + 1 撤销） |
-|| **网卡抓包工具** | `trunk/NewAPI/gone/api/mock/client/api_net_time_capture.cpp`（AF_PACKET 抓 lo，--iface --port --proto <gw\|gone> --map --duration --report） |
-|| **网卡抓包常量** | `trunk/NewAPI/gone/api/mock/client/api_net_time_common.h`（GOne/FTE 协议偏移、client_seq_id 提取） |
-|| **三对象对比结果** | `task/api_dev/result_contrast.md`（GOne/gw单/gw多 5000TPS 对比 + 时延失真根因） |
-|| **三对象测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` / `_gw_single.json` / `_gw_multi.json` |
+| **test_plan 主配置** | `trunk/NewAPI/gone/api/mock/client/config/test_plan_gw.json`（FTE）/ `test_plan_gone.json`（GOne，--plan 模式） |
+| **cases 独立案例** | `trunk/NewAPI/gone/api/mock/client/config/cases/`（FTE：login/order/trade/cancel/heartbeat/perf）+ `cases_gone/`（GOne 差异文件） |
+| **日志系统** | `trunk/NewAPI/gone/api/mock/client/src/logger.h/.cpp`（五级日志 + atomic 无锁判级 + 双输出） |
+| **结果分析** | `trunk/NewAPI/gone/api/mock/client/src/result_analysis.h/.cpp`（功能+性能+结论整合输出） |
+| **mock_client 复盘** | `trunk/NewAPI/gone/api/mock/doc/mock_client_upgrade.md`（6 类 18 项复盘 + 10 修复 + 1 撤销；`mock/doc/` 另收 design/test/抓包设计/测试手册） |
+| **网卡抓包工具** | `trunk/NewAPI/gone/api/mock/client/api_net_time_capture.cpp`（AF_PACKET 抓 lo，--iface --port --proto <gw\|gone> --map --duration --report） |
+| **网卡抓包常量** | `trunk/NewAPI/gone/api/mock/client/api_net_time_common.h`（GOne/FTE 协议偏移、client_seq_id 提取） |
+| **三对象对比结果** | `task/api_dev/result_contrast.md`（GOne/gw单/gw多 5000TPS 对比 + 时延失真根因） |
+| **三对象测试配置** | `trunk/NewAPI/gone/api/mock/client/config/connection_config_gone.json` / `_gw_single.json` / `_gw_multi.json` |
 | **98 柜台分析** | `trunk/NewAPI/gone/api/98_counter.md`（98 AGW 协议/消息分发表/登录级联/查询通道/队列铁律/时序图） |
 | **GW 柜台分析** | `trunk/NewAPI/gone/api/gw_counter.md`（FTE 协议/撤单优化/单客户vs多客户/原子状态/时序图） |
 | **GOne 柜台分析** | `trunk/NewAPI/gone/api/gone_counter.md`（G1 协议/base/direct双链路/gateway多客户/模板特化/类图时序图） |
@@ -586,7 +587,7 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 2. **协议细节**：gw_counter 已完成 FTE TCP Binary 协议实现（`gw_head.h` 的 `gw_message::*` 结构体），字段映射以实际 `gw_head.h` 为准（`fte_api.md` 可能存在偏差，如 `policy_id`/`tgw_id` 实际不存在）。98 协议仍用临时结构体占位，需正式协议文档。
 3. **外部依赖**：Solarflare TCPDirect 相关细节请参考 `tcpdir_link.h/.cpp`。
 4. **FTE 环境**：编译/部署/测试在 docker 容器 `otc` 中，脚本见 `compile_fte.sh` 和 `test_all/`。mock 组件联调链路：mock_client → liblbapi.so → gw_counter_direct → FTE(33001/33002)。
-5. **版本信息**：当前基线为 HEAD + 后续重构（g1 协议改版、v2.1 规范），更新日期 2026-09-23。知识库 v3.1 在 v3.0（§35~§37：test_plan 主配置、日志系统、全面复盘）基础上新增 §38 三对象 5000TPS 对比测试与时延失真根因。关键结论速查：FTE 压测卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程）；CPU 绑定须绑整个物理核 2HT（绑单核会饿死）；FTE P95 是 GOne 的 9.4 倍（尾部延迟最大瓶颈）；记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）；**三对象对比时延失真根因是模拟交易所 tgw_simulator 占 9 核 CPU 导致系统过载，FTE 场景 P90/P95 放大 10~40 倍，测试前须确保系统空闲（见 §38 / result_contrast.md）**。
+5. **版本信息**：文档基线 HEAD + 后续重构（g1 协议改版、v2.1 规范）；知识库最新 **v3.5（2026-11-05）**——在 v3.4（§41 结构性重构四件套）基础上新增 **§42 仓库目录核对与 api-compare 参考模块**（修正 FTE/mock/任务文档失效路径、标明 api-compare 不参与编译、mock 四目标与产物清单、L3 专题行号待复核）。此前 v3.1 新增 §38 三对象 5000TPS 对比与时延失真根因。关键结论速查：FTE 压测卡死根因是 `-DNO_DSE` 下 DSE 队列无消费者导致 push 忙等自旋（修复=扩容 `FTE_DSE_FIFO_LEN`+NO_DSE 丢弃线程）；CPU 绑定须绑整个物理核 2HT（绑单核会饿死）；FTE P95 是 GOne 的 9.4 倍（尾部延迟最大瓶颈）；记录点经分析由 send() 后改为 send() 前（见 time_ana.md §二、gone_counter.md §九）；**三对象对比时延失真根因是模拟交易所 tgw_simulator 占 9 核 CPU 导致系统过载，FTE 场景 P90/P95 放大 10~40 倍，测试前须确保系统空闲（见 §38 / result_contrast.md）**。
 
 ---
 

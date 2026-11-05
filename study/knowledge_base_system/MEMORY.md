@@ -7,7 +7,7 @@
 
 | 文件 | 定位 | 触发分支 |
 |------|------|---------|
-| `NewAPI_知识库.md` | **知识库主文档**（§1~§41，架构/设计/数据流/性能/排障/待办） | 任何 NewAPI 架构、协议、性能、排障问题 |
+| `NewAPI_知识库.md` | **知识库主文档**（§1~§42，架构/设计/数据流/性能/排障/待办 + §42 目录核对与 api-compare） | 任何 NewAPI 架构、协议、性能、排障问题；**引用路径前先看 §42.3 修正表** |
 | `Prompt.md` | **引导 Prompt**（角色/加载指引/分析框架/回答风格） | 新会话加载知识库前先读此文件 |
 | `体系总览_工作规范与知识库体系.md` | **元层文档**：工作规范 / 自我进化 / 知识库体系 + 复盘运行手册 + 本机环境缺口清单 | 需要知道"按什么规矩干活、学到的东西放哪、复盘怎么跑、本机有什么坑"时 |
 | `MEMORY.md` | 本索引 | 入口 |
@@ -16,7 +16,10 @@
 
 - **一次任务三份产出**：任务交付物 + work_log 条目 + 提炼后的知识条目，缺一不可。
 - **复盘一句话触发**：说"进行 daily/weekly/monthly 复盘" → 先跑 `review_prepare.sh` 刷新输入（本机 Linux 直接 `bash` 即可）→ 核心五问 → 成果五转化 → 更新知识库/`Prompt.md` → 写报告 → 知识库融合核查。
-- **产出复查**：所有产出按 `task_rule.md` §3 走台账制，末轮零修改才收工。
+- **产出复查**：所有产出按 `task_rule.md` §3 走台账制——一轮=全量产出×六维度（①需求符合 ②正确与边界 ③一致性 ④引用可达 ⑤规范与风格 ⑥可验证性）全检+验证证据+台账（§11.3）；任一处改动即重开全量复查；**末轮零修改**才收工。
+- **改规范的正确姿势**：只改 `task/task_rule.md` → `bash task/sync_rules.sh` 生成 `.chat/rules/project_rules.md` → `bash task/sync_rules.sh -c` 校验（副本不入 git，禁止手改）。
+- **引用核对工具**：规则要求用 `rg` 全局核对路径/章节号；本机未装 `rg` → 等价用 `grep -rn`。
+- **代码树口径（2026-11-05 核对）**：主实现 `gone/api`（编译入口 `gone/api/CMakeLists.txt`）；`gone/api-compare` 是转存参考版、**不参与编译**；FTE 有**两套源码树**——协议头 `…/DYS-FRAMEWORK/fte/include/message/`、业务源码 `…/fte/src/business/`、`main.cpp` 在 `…/fte/fte/src/`、文档在 `…/fte/doc/`（定位用 `find`，别套前缀）；任务单 `task/api_dev/task_dev.txt`。详见主文档 §42。
 - **本机（2026-11-05 复核）= Linux + docker `otc` 可用**：编译（`./build.sh Release` 自动转发容器）、功能回归/性能测试（mock_client / gone_counter_mock / counter98_mock / FTE `ute`）都能做；缺 `svn`、`rg`。历史 Windows 主机的"只能做文档类工作"结论不适用于当前主机。
 
 ## 知识库两级维度（融合已完成）
