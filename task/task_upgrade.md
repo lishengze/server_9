@@ -236,7 +236,7 @@ flowchart LR
 - 能力短板 → 靶向学习清单；
 - 优质案例 → 标杆案例库。
 
-> 详细规则见 `task/task_rule.md` §7。
+> 详细规则见 `task/task_rule.md` §8。
 
 ### 4.4 分场景专项工作规范
 
@@ -246,12 +246,15 @@ flowchart LR
 | **代码开发** | 需求拆解→技术选型→架构设计→编码实现→注释完善→单元测试→重构→规范校验→提交部署 |
 | **测试运维** | 环境校验→脚本执行→日志采集→异常筛查→问题定位→修复验证→告警推送→巡检归档 |
 
-### 4.3 多轮复查机制（用户明确要求，必守）
+### 4.5 多轮复查机制（用户明确要求，必守）
 
-- 对**所有产出**（代码/SQL/测试/文档）执行多轮复查。
-- 每轮复查该轮涉及内容，查漏补缺。
-- 只要本轮修改了任一内容，就**再开一轮全面复查**，直到某轮零修改。
-- 复查不仅是"看"，更要"验证"（编译/测试/跑通）。
+> **完整规则见 `task/task_rule.md` §3**（一轮硬性定义 §3.2 / 六维度清单 §3.3 / 零修改判定与重开规则 §3.4 / 台账模板 §11.3）。此处只列要点，避免双份维护导致漂移。
+
+- **范围**：代码、SQL、测试代码、文档、配置、脚本等**一切产出**，无豁免。
+- **一轮 = 全量 + 六维度全检 + 台账记录**（不是"只查改过的行"）。
+- **零修改**= 六维度全勾 + 无待改项 + 有验证证据；任一处被修改 → **重开一轮全量复查**。
+- **收敛保护**：连续 3 轮仍反复改同一处 → 回规划重新拆解，不硬改。
+- **验证优先**：能编译则编译、能测则测、能跑则跑；引用用 `rg` 核对，不凭记忆。
 
 ---
 
@@ -262,8 +265,8 @@ flowchart LR
 | 层 | 目录 | 内容 | 特点 |
 |----|------|------|------|
 | **L0 记忆索引（快速）** | `memory/`（`/home/lsz/.chat/projects/.../memory/`） | `MEMORY.md` 索引 + 主题笔记（跨会话自动加载） | 最热、最精简、自动加载进上下文 |
-| **L1 系统级知识库** | `study/knowledge_base_system/` | 架构/开发/编译/部署/测试/排障/功能号/Kafka，10 文件 | 系统化、按主题组织、供学习 |
-| **L2 业务级知识库** | `study/knowledge_base/` | 基金投顾等业务的功能号/新旧映射 | 业务维度 |
+| **L1 系统级知识库** | `study/knowledge_base_system/` | 三件套：`MEMORY.md`（入口索引）+ `Prompt.md`（引导：角色/34 条加载指引/分析框架/代码索引）+ `NewAPI_知识库.md`（主文档 41 节：架构/数据流/协议/性能/排障/待办） | 系统化、按主题组织、供学习 |
+| **L2 业务级知识库** | `study/knowledge_base/`（**已并入 L1，当前不存在独立目录**） | 原基金投顾等业务的功能号/新旧映射已融合进 `NewAPI_知识库.md` | 业务维度；待出现独立业务知识时再新建 |
 | **L3 深度专题** | `study/<功能号>_<业务名>/` | 每个功能的技术实现/测试案例/设计文档 | 深度、一次性研究 |
 | **L4 原始日志** | `work_log/YYYYMMDD.md` | 每天工作流水 + 经验教训 | 原始、按时间、追加不覆盖 |
 
@@ -297,7 +300,7 @@ flowchart LR
 |---------|----------------|---------|
 | `work_log/YYYYMMDD.md` | L4 情景记忆 | 保持追加不覆盖；统一复盘模板 |
 | `study/knowledge_base_system/` | L1 系统知识库 | 保持主题化；定期保鲜 |
-| `study/knowledge_base/` | L2 业务知识库 | 保持 |
+| `study/knowledge_base/` | L2 业务知识库 | **已并入 L1**（2026-10 融合完成），不再单独维护 |
 | `study/<功能号>_<业务名>/` | L3 深度专题 | 保持 |
 | `memory/` | L0 记忆索引 | 保持"索引+主题文件"模式 |
 | `Prompt.md` | 程序性记忆/学习引导 | **每次沉淀后同步更新**，实现跨会话知识迁移 |
@@ -401,7 +404,7 @@ flowchart LR
 
 **若未来想实现真全自动**：需引入 headless agent CLI（如 `claude -p` / `devchat headless`），由 cron 调用它执行复盘；当前环境不具备，列为后续增强项。
 
-> 落地规则见 `task/task_rule.md` §7.4；脚本见 `task/review/review_prepare.sh`。
+> 落地规则见 `task/task_rule.md` §8.5；脚本见 `task/review/review_prepare.sh`。
 
 ---
 
@@ -420,13 +423,15 @@ flowchart LR
 
 ## 9. 知识库融合方案（knowledge_base + knowledge_base_system）
 
-### 9.1 现状分析
+> **落地状态（2026-10 已完成）**：原业务级 `study/knowledge_base/` 已整体迁移融合进 `study/knowledge_base_system/`，新主文档为 `NewAPI_知识库.md`（41 节），统一入口 `MEMORY.md`、统一引导 `Prompt.md`。以下 9.1~9.4 保留为**融合前的分析与设计依据**（历史记录），实际落地结果见 9.5。
 
-当前存在两个知识库，**分工不同、互补重叠**：
+### 9.1 现状分析（融合前，历史）
+
+融合前存在两个知识库，**分工不同、互补重叠**：
 
 | 知识库 | 定位 | 内容 | 引导 Prompt | 引用路径 |
 |--------|------|------|------------|---------|
-| `study/knowledge_base/` | **业务级**（每个业务是啥） | framework / pipeline_pattern / dao_tables / business_index / business_*(rollback/advisory/asset_query/risk/seamless) / testing | `LEARNING_PROMPT.md` | 旧路径 `otc_trunk`（**已过时，需更新**） |
+| `study/knowledge_base/` | **业务级**（每个业务是啥） | framework / pipeline_pattern / dao_tables / business_index / business_*(rollback/advisory/asset_query/risk/seamless) / testing | `LEARNING_PROMPT.md`（已不存在） | 旧路径 `otc_trunk`（历史） |
 | `study/knowledge_base_system/` | **系统级**（怎么在系统上干活） | 01~09（架构/开发/编译/部署/测试/排障/功能号/Kafka） | `Prompt.md` | 当前 `otc_src` |
 
 **重叠点**：两边都有"架构/开发模式/测试/功能号"主题（如 `framework.md` vs `02_业务开发模式.md`、`business_index.md` vs `08_功能号索引.md`）。
@@ -451,7 +456,7 @@ flowchart LR
 ### 9.3 融合落地步骤
 
 1. **统一入口索引**：在 `knowledge_base_system/MEMORY.md` 增加"业务域知识库"导航章节，指向 `study/knowledge_base/`，使两个知识库共享一个总入口。
-2. **统一引导 Prompt**：新建/合并一份**总引导 Prompt**，学习路径分"系统级 → 业务级"两级，覆盖两个知识库（`Prompt.md` 作为总引导，引用 `knowledge_base/LEARNING_PROMPT.md` 作为业务级子引导）。
+2. **统一引导 Prompt**：新建/合并一份**总引导 Prompt**，学习路径分"系统级 → 业务级"两级，覆盖两个知识库（`Prompt.md` 作为总引导，原计划引用业务级子引导 `knowledge_base/LEARNING_PROMPT.md`；该文件已不存在，实际合并为单一 `Prompt.md`）。
 3. **明确分工消除重叠**：
    - 系统级管"开发模式/功能号总表"（怎么开发、功能号分类）；
    - 业务级管"具体业务细节/出入参/调用链路"（某功能号具体做什么）。
@@ -473,6 +478,19 @@ flowchart TB
 
 > 融合后，`knowledge_base` 不再是"孤立目录"，而是作为**业务级维度**并入统一知识库体系，由总入口 `MEMORY.md` 和总引导 `Prompt.md` 统一管理。
 
+### 9.5 落地结果与实际形态（2026-10 执行后）
+
+| 项 | 计划 | 实际落地 |
+|----|------|---------|
+| 目录 | 保留 `knowledge_base/` 作为业务级维度 | **合并为单库**：业务级内容并入 `NewAPI_知识库.md`，`study/knowledge_base/` 目录已移除 |
+| 入口 | 两个知识库共享 `MEMORY.md` | ✅ `study/knowledge_base_system/MEMORY.md` 为唯一入口 |
+| 引导 | `Prompt.md` 总引导 + 业务级子引导 | ✅ 仅 `Prompt.md` 单引导（角色 + 34 条加载指引 + 分析框架 + 26 条 Q&A + 代码索引） |
+| 内容规模 | 01~09 十文件体系 | 收敛为三文件：`MEMORY.md`(21行) / `Prompt.md`(601行) / `NewAPI_知识库.md`(2455行/41节) |
+| 路径 | 统一 `otc_trunk` → 当前工程路径 | ✅ 已统一为当前仓库路径 |
+| 保鲜 | 单一保鲜机制 | ✅ 统一：`MEMORY.md` + `Prompt.md` 索引同步更新（见 §9.3 第 5 条） |
+
+> **维护约定**：业务知识不再另建目录，直接作为 `NewAPI_知识库.md` 的新增章节（编号递增），并同步 `Prompt.md` 加载指引 + `MEMORY.md` 导航（若有新文件）。
+
 ---
 
 ## 10. 工作日志机制纳入
@@ -486,7 +504,7 @@ flowchart TB
   1. 每完成一次工作，记录工作日志（时间、内容、效果、经验教训，分块记录）；
   2. **不删除**现有日志内容（可能来自其他主机/他人），**只能追加**；
   3. 文件夹无该日期文件则创建 `work_log/YYYYMMDD.md`（格式 `YYYYMMDD.md`）；
-  4. 所有产出须多轮复查；
+  4. 所有产出须多轮复查（规则见 `task/task_rule.md` §3，含台账模板 §11.3）；
   5. 每次工作完成后总结经验教训，更新知识库 + Prompt.md。
 
 ### 10.2 工作日志与知识库的衔接（三级提炼的源头）

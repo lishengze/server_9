@@ -31,14 +31,14 @@ agent 反思（核心五问 → 成果五转化）
 |------|------|:--------:|
 | `task/review/review_prepare.sh` | 聚合 work_log，生成复盘输入 + 触发 prompt | ✅ 必需 |
 | `task/review/README.md` | 本文档（依赖关系 + 部署 + cron） | 说明用 |
-| `task/task_rule.md` | 工作规则：**§8.1 日志模板**（保证 work_log 格式可被聚合）+ **§7 复盘体系定义** | ✅ 必需 |
+| `task/task_rule.md` | 工作规则：**§11.1 日志模板**（保证 work_log 格式可被聚合）+ **§8 复盘体系定义** | ✅ 必需 |
 | `task/task_prompt.md` | **§7 复盘触发模板**（让 agent 理解"进行daily复盘"= 完整流程） | ✅ 必需 |
 | `memory/self_evolution.md` | 固化复盘机制 + 一句话触发指令（每次会话自动加载） | ✅ 必需 |
 | `work_log/` | 复盘数据源，文件格式 `YYYYMMDD.md` | ✅ 必需 |
 | `memory/` + `study/knowledge_base_system/` + `Prompt.md` | 复盘成果五转化的**沉淀目标** | ✅ 必需 |
 | cron 定时任务 | 自动备数据（兜底） | ⭕ 可选 |
 
-> ⚠️ **关键点**：`review_prepare.sh` 靠 work_log 里的**固定标题**聚合数据（`## 任务`、`### 经验教训`、`### 结论`、`待办`/`遗留问题`）。因此 work_log 必须沿用 task_rule.md §8.1 的日志模板，否则脚本抓不到内容。
+> ⚠️ **关键点**：`review_prepare.sh` 靠 work_log 里的**固定标题**聚合数据（`## 任务`、`### 经验教训`、`### 结论`、`待办`/`遗留问题`）。因此 work_log 必须沿用 task_rule.md §11.1 的日志模板，否则脚本抓不到内容。
 
 ---
 
@@ -143,7 +143,7 @@ bash task/review/review_prepare.sh daily 2026-10-10   # 指定日期
    └──────────▲───────────┘
               │ 读取
    ┌──────────┴───────────┐
-   │ work_log/YYYYMMDD.md │  ← 格式须符合 task_rule.md §8.1 模板
+   │ work_log/YYYYMMDD.md │  ← 格式须符合 task_rule.md §11.1 模板
    └──────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ bash task/review/review_prepare.sh daily 2026-10-10   # 指定日期
 
 ## 附：本功能包在 otc_src 仓库的原始出处
 - 脚本：`task/review/review_prepare.sh`
-- 规则：`task/task_rule.md`（§7 复盘体系、§8.1 日志模板）
+- 规则：`task/task_rule.md`（§8 复盘体系、§11.1 日志模板、§8.5 复盘自动化）
 - 模板：`task/task_prompt.md`（§7 复盘触发模板）
 - 记忆：`memory/self_evolution.md`
 - 方法论：`task/task_upgrade.md`（§7.4 复盘自动化分析）
