@@ -1,12 +1,12 @@
 # perf_client CMakeLists.txt
 #
 # 构建目标：perf_client（可执行文件）
-# 功能：FTE 委托通路性能测试（匀速发单 + API 内耗时统计）
-# 依赖：liblbapi.so（被测对象）、pthread、dl、sched
+# 功能：FTE 委托通路性能测试（匀速发单，统计发送结果）
+# 依赖：libg1api.so（被测对象）、pthread、dl、sched
 #
 # 编译方式：
 #   独立编译：mkdir build && cd build && cmake .. && make
-#   父模块编译：项目根目录 ./build.sh -DBUILD_MOCK=ON（mock/perf_client 由父构建纳入）
+#   随 API 编译：从项目根目录执行 cmake -S api -B build_cmake -DBUILD_MOCK=ON
 
 # 设置最小版本
 cmake_minimum_required(VERSION 2.8)
@@ -38,7 +38,7 @@ file(GLOB JSON_UTILS_SRC
   ../include/json_utils.cpp
 )
 
-# API 头文件路径（liblbapi.so 的接口定义）
+# API 头文件路径（libg1api.so 的接口定义）
 set(API_INCLUDE_DIR ../../include)
 set(API_SRC_DIR ../src)
 
@@ -54,17 +54,16 @@ target_include_directories(perf_client PRIVATE
 )
 
 # 链接库
-find_library(LBAPI_LIB lbapi HINTS ${CMAKE_BINARY_DIR}/lib)
-if(LBAPI_LIB)
-  target_link_libraries(perf_client pthread dl ${LBAPI_LIB})
+if(TARGET g1api)
+  target_link_libraries(perf_client g1api pthread dl)
 else()
-  target_link_libraries(perf_client pthread dl lbapi)
+  find_library(G1API_LIB NAMES g1api
+    HINTS "${CMAKE_BINARY_DIR}/lib" "${CMAKE_CURRENT_SOURCE_DIR}/../../lib")
+  if(NOT G1API_LIB)
+    message(FATAL_ERROR "找不到 libg1api.so，请先编译 API 或指定 -DG1API_LIB=<完整路径>")
+  endif()
+  target_link_libraries(perf_client ${G1API_LIB} pthread dl)
 endif()
-
-# 允许共享库的未定义符号（模板实例化在运行时解析）
-set_target_properties(perf_client PROPERTIES
-  LINK_FLAGS "-Wl,--allow-shlib-undefined"
-)
 
 # 输出目录
 if(NOT BUILD_SUM_COUNT)

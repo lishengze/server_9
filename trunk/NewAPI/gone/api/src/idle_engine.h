@@ -1,13 +1,11 @@
-// shared_engine - 共享极速引擎 (模型 d, 骨架)
+// idle_engine - 空占位极速引擎 (fpga 多客户网关模式用)
 //
-// 仅当 speed_link_type == socket_shared 时存在.
-// 内部仅持有多 socket 引擎的发送队列指针, 无链接、无线程.
-// 行为 (post_send_event / send_queue) 全部转发到多 socket 引擎.
-//
-// 接口与 tcpdirect_engine / single_socket_engine 完全一致:
-//   init(cfg, tfst, log)   -- 签名统一
-//   start() / stop() / close()  -- 均为 no-op, 资源由 multi 引擎管理
-//   post_send_event / send_queue  -- 转发到 multi 引擎
+// fpga 多客户 (need_multi_cust=1, socket_shared 网关) 模式下, 极速柜台业务全部由
+// multi_socket_engine 槽 1 的 fast_gw_link 承载, 本类无链接、无线程、无队列,
+// 仅为保持 api_impl<TFastCounter, TEngine> 模板签名统一而存在:
+//   init(cfg, tfst, log)     -- 签名统一, 仅记录指针
+//   start() / stop() / close() / add_timer_poll() -- 均为 no-op, 资源由 multi 引擎管理
+//   get_queue() / get_out_op() -- 返回 nullptr (api_impl 对 fpga 多客户直接使用 multi 引擎队列)
 
 #pragma once
 
@@ -29,7 +27,8 @@ using lb_common::uint32;
 using lb_common::uint64;
 using lb_common::uint8;
 
-/// 空引擎，用于在 api 模板实例极速引擎的占位，api 实例调用其函数，但控制运行时，实际不会调用 get_queue 和 get_out_op
+/// 空占位引擎: 保持 api_impl 模板签名统一; 运行期业务由 multi 引擎承载,
+/// 不会实际使用 get_queue / get_out_op 返回的队列与回调
 /// @tparam TFastCounter  极速柜台类型
 template <class TFastCounter> class idle_engine {
 public:
@@ -40,10 +39,10 @@ public:
 
   /// 启动 (no-op, 资源由 multi 引擎管理)
   int32 start() { return 0; }
-  /// 停止 (no-op, 资源由 multi 引擎管理)
+  /// 回退接口 (no-op, 资源由 multi 引擎管理)
   void stop() {};
-  /// 关闭 (no-op, 资源由 multi 引擎管理)
-  void close() {};
+  /// 关闭接口 (no-op, 资源由 multi 引擎管理)
+  void close() {}
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
   lb_common::que_mth_buf *get_queue() { return nullptr; }

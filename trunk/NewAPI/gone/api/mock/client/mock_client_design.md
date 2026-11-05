@@ -1,8 +1,8 @@
 # mock_client 设计文档
 
-> **目的**：模拟真实客户端，通过加载 `liblbapi.so` 动态链接库，向 FTE 柜台发送请求并接收回报，验证 FTE 协议完整链路。
+> **目的**：模拟真实客户端，通过加载 `libg1api.so` 动态链接库，向 FTE 柜台发送请求并接收回报，验证 FTE 协议完整链路。
 > **输出目录**：`mock/client/`
-> **参考协议**：FTE TCP 二进制协议（`gw_head.h`），98 协议（Archforce AGW 协议，`lb_counter98_protocol.h`）
+> **参考协议**：FTE TCP 二进制协议（`gw_head.h`），98 协议（`c98msg_tmp.h`）
 > **参考 CMakeLists**：`trunk/NewAPI/gone/api/CMakeLists.txt`
 
 ---
@@ -35,7 +35,7 @@
 │                      mock_client                            │
 │  ┌──────────┐  ┌──────────────┐  ┌──────────────────────┐   │
 │  │ JSON     │  │ Test Case    │  │ API Loader           │   │
-│  │ Config   │→ │ Runner       │→ │ (链接 liblbapi.so)   │   │
+│  │ Config   │→ │ Runner       │→ │ (链接 libg1api.so)   │   │
 │  └──────────┘  └──────┬───────┘  └──────────┬───────────┘   │
 │                       │                     │               │
 │                       ▼                     ▼               │
@@ -47,7 +47,7 @@
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   liblbapi.so (被测对象)                      │
+│                   libg1api.so (被测对象)                      │
 │  ┌──────────┐  ┌──────────────┐  ┌──────────────────────┐   │
 │  │ API      │→ │ gw_counter   │→ │ FTE TCP Binary      │   │
 │  │ Interface│  │ _direct      │  │ Protocol             │   │
@@ -102,7 +102,7 @@ callback_manager → mock_client::on_*()
 
 | 编号 | 功能 | 描述 | 优先级 |
 |------|------|------|--------|
-| F1 | API 库加载 | 链接 `liblbapi.so`，调用工厂函数创建 API 实例 | P0 |
+| F1 | API 库加载 | 链接 `libg1api.so`，调用工厂函数创建 API 实例 | P0 |
 | F2 | 配置化连接 | 通过 JSON 配置 API 实例参数（地址、市场、柜台类型等） | P0 |
 | F3 | 配置化测试用例 | 通过 JSON 定义测试请求和预期回报 | P0 |
 | F4 | 测试用例执行器 | 按顺序执行测试用例，比对预期回报 | P0 |
@@ -125,7 +125,7 @@ callback_manager → mock_client::on_*()
 | `on_order_rtn(StreamInfo, OrderRtn)` | 验证委托回报 | ord_status, exec_type 匹配 |
 | `on_trade_rtn(StreamInfo, TradeRtn)` | 验证成交回报 | last_px, last_qty 匹配 |
 | `on_cancel_rsp(StreamInfo, CancelRsp)` | 验证撤单响应 | err_code 匹配 |
-| `on_link_status(int32, int32, int32)` | 验证链接状态 | 连接成功回调 |
+| `on_link_status(counter_type, int32, int32)` | 验证链接状态 | 连接成功回调 |
 | `on_error(err_event_type, int32, char*)` | 错误处理 | 记录错误信息 |
 
 ---
@@ -137,7 +137,7 @@ callback_manager → mock_client::on_*()
 ```json
 {
   "api_instance_name": "fte_test_client",
-  "market_type": 1,
+  "market_type": 101,
   "fast_counter_type": 1,
   "speed_link_type": 1,
   "speed_counter_addr": {
@@ -162,8 +162,9 @@ callback_manager → mock_client::on_*()
 | 配置项 | 类型 | 对应 config_name | 说明 |
 |--------|------|------------------|------|
 | `api_instance_name` | string | `api_instance_name` | API 实例名称 |
-| `market_type` | int | `market_type` | 1=上海, 2=深圳 |
-| `fast_counter_type` | int | `fast_counter_type` | 1=gw_direct |
+| `market_type` | int | `market_type` | 101=上海，102=深圳 |
+| `fast_counter_type` | int | `fast_counter_type` | 1=个微，2=FPGA |
+| `need_multi_cust` | int | `need_multi_cust` | 可选，默认 0；FPGA 多客户走网关 |
 | `speed_link_type` | int | `speed_link_type` | 1=socket_single |
 | `speed_counter_addr` | object | `speed_counter_addr` | FTE 服务端地址 |
 | `counter98_addr` | object | `counter98_addr` | 98 柜台地址 |
@@ -173,6 +174,8 @@ callback_manager → mock_client::on_*()
 | `agw_user_login_timeout` | int | `agw_user_login_timeout` | AGW 登录超时 |
 | `log_level` | int | `log_level` | 日志级别 |
 | `log_output_dir` | string | `log_output_dir` | 日志输出目录 |
+
+柜台地址在 JSON 中仍用 `ip`、`port` 两个字段，由客户端构造 `net_addr` 传给 API。
 
 ### 3.2 测试用例配置（test_case_*.json）
 
@@ -185,12 +188,14 @@ callback_manager → mock_client::on_*()
 | `login` | `api->login(LoginReq)` | `on_login(LoginAns)` |
 | `order_insert` | `api->order_insert(OrderReq)` | `on_order_rtn(OrderRtn)` |
 | `order_rtn` | （同 order_insert） | `on_order_rtn(OrderRtn)` |
-| `etf_order_insert` | `api->etf_order_insert(OrderReq)` | `on_trade_rtn(TradeRtn)` |
+| `etf_order_insert`（旧 JSON 标签） | `api->order_insert(OrderReq)`，由 `side` 区分 ETF 申赎 | `on_trade_rtn(TradeRtn)` |
 | `order_cancel` | `api->order_cancel(CancelReq)` | `on_cancel_rsp(CancelRsp)` |
 | `cancel_rsp` | （同 order_cancel） | `on_cancel_rsp(CancelRsp)` |
 | `trade_rtn` | 不发送请求，等待异步 2005 | `on_trade_rtn(TradeRtn)` |
 | `wait_heartbeat` | 等待心跳 | `on_link_status` 保持连接 |
 | `heartbeat_ok` | （同 wait_heartbeat） | 心跳维持正常 |
+
+新版用例统一使用 `order_insert`。ETF 申购和赎回分别填 `side=D/E`，北交所委托填 `market_type=109`。预期为 `trade_rtn` 时，有委托字段就先发单，旧组合用例的空 `fields` 仅等待上一笔成交。委托价格和数量沿用 API 的放大单位。
 
 ---
 
@@ -440,7 +445,7 @@ struct TestResult {
 ├────────────────────────────────────────────────────────────┤
 │  1. 解析命令行参数 (--config, --testcase, --help)          │
 │  2. 加载连接配置 JSON → api_config                         │
-│  3. 链接 liblbapi.so → 创建 API 实例                       │
+│  3. 链接 libg1api.so → 创建 API 实例                       │
 │  4. api->start() 启动所有链接                              │
 │  5. 循环加载测试用例 JSON 文件                              │
 │     ├─ 构造请求 (LoginReq / OrderReq / CancelReq)          │
@@ -556,7 +561,7 @@ classDiagram
         +on_order_rtn(const StreamInfo& si, const OrderRtn& rtn)
         +on_trade_rtn(const StreamInfo& si, const TradeRtn& rtn)
         +on_cancel_rsp(const StreamInfo& si, const CancelRsp& rsp)
-        +on_link_status(int32 counter_type, int32 link_type, int32 status)
+        +on_link_status(counter_type counter, int32 link_type, int32 status)
         +on_error(err_event_type event_type, int32 err_code, const char* err_desc)
         +has_response() bool
         +has_trade_rtn() bool
@@ -617,11 +622,11 @@ classDiagram
 sequenceDiagram
     participant Main as main()
     participant MC as MockClient
-    participant API as liblbapi.so
+    participant API as libg1api.so
     participant FTE as FTE Server
     participant CB as CallbackHandler
 
-    Main->>MC: load_api("liblbapi.so")
+    Main->>MC: load_api("libg1api.so")
     MC-->>Main: ok
 
     Main->>MC: init("connection_config.json")
@@ -652,7 +657,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant MC as MockClient
-    participant API as liblbapi.so
+    participant API as libg1api.so
     participant FTE as FTE Server
     participant CB as CallbackHandler
 
@@ -678,7 +683,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant MC as MockClient
-    participant API as liblbapi.so
+    participant API as libg1api.so
     participant FTE as FTE Server
     participant CB as CallbackHandler
 
@@ -708,7 +713,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant MC as MockClient
-    participant API as liblbapi.so
+    participant API as libg1api.so
     participant FTE as FTE Server
     participant CB as CallbackHandler
 
@@ -747,7 +752,7 @@ sequenceDiagram
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--config <path>` | `config/connection_config.json` | 连接配置文件路径 |
-| `--lib <path>` | `../../build_cmake/lib/liblbapi.so` | liblbapi.so 路径 |
+| `--lib <path>` | `../../lib/libg1api.so` | 兼容旧命令行。客户端在编译时链接 API 库 |
 | `--testcase <path>` | （可选） | 单个测试用例 JSON 文件路径 |
 | `--testdir <path>` | `config/test_cases` | 测试用例目录 |
 | `--report <path>` | `test_report.txt` | 测试报告输出路径 |
@@ -781,7 +786,7 @@ else {
 
 | 方法 | 说明 |
 |------|------|
-| `load_api(lib_path)` | 链接 liblbapi.so（当前为直接链接，保留参数供未来 dlopen 扩展） |
+| `load_api(lib_path)` | 链接 libg1api.so（当前为直接链接，保留参数供未来 dlopen 扩展） |
 | `init(config_path)` | 加载 JSON 配置 → 创建 api_config → 设置属性 → 创建回调 → create_instance → api->start() → 创建 TestCaseRunner |
 | `run_test(testcase_path)` | 加载单个测试用例 JSON → execute_all() → 记录结果到 report_ |
 | `run_all_tests(test_dir)` | 加载目录下所有测试用例 → 逐个 execute_all() → 记录结果 |
@@ -1025,51 +1030,36 @@ void CallbackHandler::reset() {
 
 ### 10.1 编译
 
-**前提**：已编译 `liblbapi.so`（项目根目录执行 `./build.sh`）
+在项目根目录执行以下命令，同时编译 API 和两个客户端。可通过 `-DCMAKE_BUILD_TYPE=Debug` 切换构建类型。
 
-**编译 mock_client**：
 ```bash
-# 在项目根目录
-./build.sh -DBUILD_MOCK=ON
-
-# 指定构建类型
-./build.sh Release -DBUILD_MOCK=ON
-./build.sh Debug -DBUILD_MOCK=ON
+cmake -S api -B build_cmake -DBUILD_MOCK=ON
+cmake --build build_cmake --target mock_client perf_client
 ```
 
-**产物**：`build_cmake/bin/mock_client`（可执行文件，~1MB）
+两个客户端位于 `build_cmake/bin`。独立构建客户端时，可在配置 CMake 时用 `-DG1API_LIB=/path/to/libg1api.so` 指定已编译的库。
 
 ### 10.2 运行
 
 **基本运行**（运行 config/test_cases/ 目录下所有测试用例）：
 ```bash
-cd trunk/NewAPI/gone/api/mock/client
-LD_LIBRARY_PATH=../../../../build_cmake/lib \
-  ../../../../build_cmake/bin/mock_client
+cd api/mock/client
+../../../build_cmake/bin/mock_client
 ```
 
 **运行单个测试用例**：
 ```bash
-LD_LIBRARY_PATH=../../../../build_cmake/lib \
-  ../../../../build_cmake/bin/mock_client \
-  --testcase config/test_cases/fte_combo.json
-```
-
-**指定 liblbapi.so 路径**：
-```bash
-LD_LIBRARY_PATH=/custom/path/lib \
-  ../../../../build_cmake/bin/mock_client \
-  --lib /custom/path/lib/liblbapi.so
+../../../build_cmake/bin/mock_client --testcase config/test_cases/fte_combo.json
 ```
 
 **指定报告输出路径**：
 ```bash
-../../../../build_cmake/bin/mock_client --report /tmp/my_report.txt
+../../../build_cmake/bin/mock_client --report /tmp/my_report.txt
 ```
 
 **查看帮助**：
 ```bash
-../../../../build_cmake/bin/mock_client --help
+../../../build_cmake/bin/mock_client --help
 ```
 
 ### 10.3 测试用例编写指南
@@ -1226,7 +1216,7 @@ LD_LIBRARY_PATH=/custom/path/lib \
 ### 10.4 常见问题
 
 **Q: 编译失败，找不到头文件？**
-A: 确保已先编译 `liblbapi.so`（项目根目录 `./build.sh`），mock_client 依赖 API 的头文件。
+A: 参照 10.1 随 API 一起编译。若单独构建客户端，先编译 `libg1api.so`。
 
 **Q: 运行时报 "create_instance 失败"？**
 A: 检查连接配置（`connection_config.json`）是否正确，特别是 `speed_counter_addr` 和 `counter98_addr` 的地址/端口。
@@ -1280,8 +1270,7 @@ mock/
 ├── include/
 │   ├── json_utils.h                   ← JSON 解析/序列化工具类
 │   └── json_utils.cpp                 ← JSON 工具实现
-└── 98_counter/
-    └── 98_counter_mock_design.md       ← 98_counter_mock 设计文档
+└── （98_counter/ 已废弃删除，见 SYSTEM_CONTRACT RUL-25）
 ```
 
 ---
@@ -1322,13 +1311,7 @@ mock/
 
 ## 13. 未来扩展
 
-### 13.1 98_counter 协议支持
-
-- 新增 `TestCaseType::AgwLogin` 类型
-- 新增 `TestCaseType::AccountLogin` 类型
-- 98 协议使用 Archforce AGW 协议（`lb_counter98_protocol.h`），消息体通过 `MessageEncoder`/`MessageDecoder` 编解码
-- mock 服务端（`98_counter_mock`）已从临时 `c98msg_tmp` 协议切换为真实 AGW 协议，支持委托/撤单/查询等全功能
-- 详见 `98_counter/98_counter_mock_design.md`
+### 13.1 98_counter 协议支持（已废弃：98_counter mock 删除，c98msg_tmp.h 不再支持，见 RUL-25）
 
 ### 13.2 G1_counter 协议支持
 

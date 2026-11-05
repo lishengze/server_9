@@ -23,7 +23,7 @@
     "type": "login",
     "fields": {
       "err_code": 0,
-      "market_type": 1
+      "market_type": 101
     },
     "validate": ["err_code", "market_type"]
   }

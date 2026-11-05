@@ -1,6 +1,6 @@
 // mock_client.cpp - MockClient 主类实现
 //
-// 职责：封装被测对象（liblbapi.so）的完整生命周期管理：
+// 职责：封装被测对象（libg1api.so）的完整生命周期管理：
 //   1. load_api()   加载动态库（当前为直接链接，为未来 dlopen 扩展保留接口）
 //   2. init()       加载连接配置 → 创建 api_config → 设置属性 → 创建回调 → 创建 API 实例 → start()
 //   3. run_test()   运行单个测试用例（返回首个 TestResult）
@@ -16,6 +16,9 @@
 #include <dlfcn.h>
 #include <thread>
 #include <chrono>
+#include <cstring>
+#include <memory>
+#include <stdexcept>
 
 namespace mock {
 
@@ -32,7 +35,7 @@ MockClient::~MockClient() {
 }
 
 // load_api: 加载被测 API 动态库
-// 当前实现采用「直接链接」方式（编译时已链接 liblbapi.so），
+// 当前实现采用「直接链接」方式（编译时已链接 libg1api.so），
 // 因此本方法仅做占位并打印信息，lib_path 参数保留给未来 dlopen 动态加载扩展。
 // 用 dladdr 定位实际生效的库路径，与 --lib 参数比对，避免用户误以为指定路径生效。
 bool MockClient::load_api(const std::string& lib_path) {
@@ -77,7 +80,7 @@ bool MockClient::wait_link_ready(int timeout_ms) {
 // 完整流程：
 //   1. 解析连接配置 JSON（api_instance_name / market_type / 柜台地址 / 98agw 账号等）
 //   2. 通过 api_config::create_config() 创建配置对象
-//   3. 调用 set_attr() 逐项写入配置属性（柜台地址拼接为 "ip:port" 字符串）
+//   3. 调用 set_attr() 逐项写入配置属性（柜台地址使用 net_addr）
 //   4. 创建 CallbackHandler 回调处理器
 //   5. 调用 api_interface::create_instance() 创建 API 实例
 //   6. 调用 api_->start() 启动 API（建立柜台链接）
@@ -97,12 +100,14 @@ bool MockClient::init(const std::string& config_path) {
 bool MockClient::init_from_json(const JsonValue& config) {
     try {
         // 创建 API 配置
-        lb_api::api_config* cfg = lb_api::api_config::create_config();
+        std::unique_ptr<lb_api::api_config, decltype(&lb_api::api_config::destroy_config)>
+            cfg(lb_api::api_config::create_config(), &lb_api::api_config::destroy_config);
         if (!cfg) {
             LOG_ERROR("[MockClient] create_config 失败");
             return false;
         }
 
+<<<<<<< .mine
         // 设置配置属性
         int32_t ret_attr = 0;
         ret_attr = cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
@@ -113,14 +118,52 @@ bool MockClient::init_from_json(const JsonValue& config) {
         if (ret_attr) LOG_DEBUG("set_attr(fast_counter_type)=" << ret_attr);
         ret_attr = cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
         if (ret_attr) LOG_DEBUG("set_attr(speed_link_type)=" << ret_attr);
+=======
+        const auto check_attr = [](const char* name, int32_t result) {
+            if (result != 0) {
+                throw std::runtime_error(std::string("配置项 ") + name + " 写入失败: " + std::to_string(result));
+            }
+        };
+        const auto set_address = [&](const char* name) {
+            const auto address = config[name];
+            const auto ip = address["ip"].as_string();
+            const auto port = address["port"].as_int();
+            lb_api::net_addr addr{};
+            if (ip.empty() || ip.size() >= sizeof(addr.ip) || port < 1 || port > 65535) {
+                throw std::runtime_error(std::string("柜台地址无效: ") + name);
+            }
+            std::memcpy(addr.ip, ip.data(), ip.size());
+            addr.port = static_cast<int32_t>(port);
+            check_attr(name, cfg->set_attr(name, addr));
+        };
+>>>>>>> .r22
 
+<<<<<<< .mine
         // 柜台地址
         std::string speed_ip = config["speed_counter_addr"]["ip"].as_string();
         int speed_port = config["speed_counter_addr"]["port"].as_int();
         std::string speed_addr = speed_ip + ":" + std::to_string(speed_port);
         ret_attr = cfg->set_attr("speed_counter_addr", speed_addr.c_str());
         if (ret_attr) LOG_DEBUG("set_attr(speed_counter_addr)=" << ret_attr);
+=======
+        check_attr("api_instance_name", cfg->set_attr("api_instance_name", config["api_instance_name"].as_string()));
+        check_attr("market_type", cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int())));
+        check_attr("fast_counter_type", cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int())));
+        if (config.has("need_multi_cust")) {
+            check_attr("need_multi_cust", cfg->set_attr("need_multi_cust", static_cast<int32_t>(config["need_multi_cust"].as_int())));
+        }
+        check_attr("speed_link_type", cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int())));
+        set_address("speed_counter_addr");
+        set_address("counter98_addr");
+        check_attr("98agw_user", cfg->set_attr("98agw_user", config["98agw_user"].as_string()));
+        check_attr("98agw_user_password", cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string()));
+        check_attr("heartbeat_interval", cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int())));
+        check_attr("agw_user_login_timeout", cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int())));
+        check_attr("log_level", cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int())));
+        check_attr("log_output_dir", cfg->set_attr("log_output_dir", config["log_output_dir"].as_string()));
+>>>>>>> .r22
 
+<<<<<<< .mine
         std::string c98_ip = config["counter98_addr"]["ip"].as_string();
         int c98_port = config["counter98_addr"]["port"].as_int();
         std::string c98_addr = c98_ip + ":" + std::to_string(c98_port);
@@ -140,6 +183,8 @@ bool MockClient::init_from_json(const JsonValue& config) {
         ret_attr = cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
         if (ret_attr) LOG_DEBUG("set_attr(log_output_dir)=" << ret_attr);
 
+=======
+>>>>>>> .r22
         // 可选：发送队列大小(MB)，默认 2MB；压测高 TPS 时建议调大避免 SEND_QUEUE_FULL
         if (config.has("send_queue_size_mb")) {
             ret_attr = cfg->set_attr("send_queue_size_mb", static_cast<int32_t>(config["send_queue_size_mb"].as_int()));
@@ -157,7 +202,7 @@ bool MockClient::init_from_json(const JsonValue& config) {
 
         // 创建 API 实例（直接调用工厂函数）
         int32_t ret = lb_api::api_interface::create_instance(api_, *cfg, callback_);
-        lb_api::api_config::destroy_config(cfg);
+        cfg.reset();
 
         if (ret != 0 || !api_) {
             LOG_ERROR("[MockClient] create_instance 失败: " << ret);
@@ -172,10 +217,10 @@ bool MockClient::init_from_json(const JsonValue& config) {
         ret = api_->start();
         if (ret != 0) {
             LOG_ERROR("[MockClient] api->start() 失败: " << ret);
-            delete callback_;
-            callback_ = nullptr;
             lb_api::api_interface::release_instance(api_);
             api_ = nullptr;
+            delete callback_;
+            callback_ = nullptr;
             return false;
         }
         LOG_INFO("[MockClient] API 启动成功");

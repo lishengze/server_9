@@ -25,7 +25,7 @@
         "type": "login",
         "fields": {
           "err_code": 0,
-          "market_type": 1
+          "market_type": 101
         },
         "validate": ["err_code", "market_type"]
       }
@@ -51,14 +51,14 @@
           "order_qty": 100,
           "stop_price": 0,
           "client_seq_id": 2001,
-          "market_type": 1
+          "market_type": 101
         }
       },
       "expected_response": {
         "type": "order_rtn",
         "fields": {
           "order_status": 0,
-          "rtn_type": 1,
+          "rtn_type": 48,
           "order_qty": 100,
           "side": "1"
         },

@@ -1,6 +1,6 @@
 // json_utils.h - 轻量级 JSON 解析/序列化工具（mock 组件共用）
 //
-// 设计目标：零外部依赖，兼容 gcc 4.8.5，供 mock_client 与 98_counter_mock
+// 设计目标：零外部依赖，兼容 gcc 4.8.5，供 mock_client（98_counter_mock 已废弃删除）
 //   解析 JSON 配置文件与测试用例。
 // 主要类：
 //   - JsonValue：可存储 7 种 JSON 类型的变体节点（Null/Bool/Int/Double/String/Array/Object）

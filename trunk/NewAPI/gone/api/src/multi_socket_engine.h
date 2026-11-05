@@ -1,11 +1,11 @@
-// multi_socket_engine - 多 socket 引擎 (模型 c, 骨架)
+// multi_socket_engine - 多 socket 引擎
 //
-// 简化为 2 槽设计（融合 multi 槽 1 不同柜台语义）：
+// 2 槽设计：
 //   槽 0: g98_link_         - 98 柜台链接（恒存在）
 //   槽 1: fast_gw_link_      - 极速柜台网关链接：
-//                              · TFastCounter=gw_direct   → ❌ 闲置（个微在 fast_engine）
-//                              · TFastCounter=fpga_direct  → fpga GW 链接（登录/证券信息）
-//                              · TFastCounter=fpga_gateway → fpga GW 链接（登录/证券信息/业务）
+//                              · TFastCounter=gewei → ❌ 闲置（个微在 fast_engine）
+//                              · TFastCounter=fpga(单客户)  → fpga GW 链接（登录/证券信息）
+//                              · TFastCounter=fpga(多客户) → fpga GW 链接（登录/证券信息/业务）
 //
 // 模板参数 TFastCounter 硬编码消息路由 (无适配器, 无虚基类).
 //
@@ -40,10 +40,12 @@ using lb_common::uint32;
 using lb_common::uint64;
 using lb_common::uint8;
 
-/// 多 socket 引擎 (模型 c, 模板类)
-/// @tparam TFastCounter  柜台类型 (硬编码路由: fpga_* / counter98 / gw_direct_counter)
+/// 多 socket 引擎 (模板类)
+/// @tparam TFastCounter  柜台类型 (硬编码路由: fpga_* / counter98 / gw_counter_direct)
+/// 现实对象：无
 template <class TFastCounter> class multi_socket_engine : public lb_common::epoll_event_op {
 public:
+  /// 现实对象：无（链接层向引擎回操作的出口, 纯机制）
   class eng_link_op : public link_engine_outop {
   public:
     multi_socket_engine<TFastCounter> *owner_ = nullptr;
@@ -59,9 +61,11 @@ public:
 
   /// 启动多 socket 引擎线程 (同时启动 epoll_th_)
   int32 start();
-  /// 停止多 socket 引擎线程 (轻量: 停 epoll 线程 + 关已建链接, 保留 init 资源可重启)
+  /// 回退接口: api_impl::start 失败时回退用
+  /// 停止 epoll 线程并关闭已建立的链接(未启动为 no-op), 不关闭 timer/queue (保持资源可再次 start)
   void stop();
-  /// 关闭接口: 完整销毁 (停线程 + 关链接 + 关定时器 + 关发送队列), 析构时调用
+  /// 关闭接口: 用户主动停止 (api_impl::stop 调用)
+  /// 停止 epoll 线程并关闭链接/定时器/发送队列, 之后不可再 start
   void close();
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
@@ -71,10 +75,8 @@ public:
 
   lb_common::mthread *get_thread() { return &epoll_th_; }
 
-  multi_socket_engine()
-      : send_poll_num_(0), recv_poll_num_(0), queue_dealing_(0), counter_(nullptr), counter98_(nullptr), log_(nullptr), stopped_(0) {
-  }
-  ~multi_socket_engine() override { stop(); }
+  multi_socket_engine() : send_poll_num_(0), recv_poll_num_(0), queue_dealing_(0), counter_(nullptr), counter98_(nullptr), log_(nullptr) {}
+  ~multi_socket_engine() override { close(); }
 
   /// 禁用拷贝
   multi_socket_engine(const multi_socket_engine &) = delete;
@@ -96,9 +98,8 @@ protected:
 
   void deal_cust_login(const acc_login_event_info &pmlog);
   void deal_cust98_login(const acc_login_event_info &pmlog);
-  void deal_fpga_core_connect(const fpga_core_connect_info &pmlog);
 
-  void deal_agw98_login();
+  void deal_agw98_login(char *pdata, int32 data_len);
 
   // ---- 公共成员（先放队列，再放链接）----
 
@@ -106,28 +107,22 @@ protected:
   int32 recv_poll_num_;               ///< 接收轮询批量数 (从 cfg 拷贝)
   lb_common::que_mth_buf send_queue_; ///< 发送队列（柜台类 / 极速引擎 共享）
   lb_common::event_wake queue_wake_;  ///< 发送队列触发事件
-  int32 queue_dealing_;               ///< 发送队列处理中
+  int32 queue_dealing_;               ///< 发送队列处理中 (跨线程访问, 经 atomic_load32/atomic_store32 原子读写)
 
   /// 98 链接（恒存在）
   aio_socket_link<counter98> g98_link_;
   link_timer_op<aio_socket_link<counter98>, multi_socket_engine> g98_link_timer_;
 
   /// 极速柜台网关链接（fast_gw_link）
-  /// 语义：fpga_direct 模式 = fpga GW；fpga_gateway 模式 = fpga GW（业务也走此）；个微模式 = 闲置
+  /// 语义：fpga 柜台（单/多客户）= fpga GW（多客户网关模式业务也走此）；个微柜台 = 闲置
   aio_socket_link<TFastCounter> fast_gw_link_;
   link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_gw_link_timer_;
-
-  /// 极速柜台 Core 链接（fast_core_link，仅 fpga_direct 模式）
-  /// 语义：fpga_direct 模式 = fpga Core（委托/撤单/心跳）
-  aio_socket_link<TFastCounter> fast_core_link_;
-  link_timer_op<aio_socket_link<TFastCounter>, multi_socket_engine> fast_core_link_timer_;
 
   TFastCounter *counter_;       ///< 极速柜台指针 (init 阶段注入)
   counter98 *counter98_;        ///< 98 柜台指针 (init_98_counter 注入)
   lb_common::mthread epoll_th_; ///< epoll 线程
   lb_common::lb_log *log_;      ///< 日志
   eng_link_op link_outop_;
-  int32 stopped_;               ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api

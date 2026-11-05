@@ -1,6 +1,6 @@
 {
   "api_instance_name": "gw_fte_perf",
-  "market_type": 1,
+  "market_type": 101,
   "fast_counter_type": 1,
   "speed_link_type": 1,
   "speed_counter_addr": {"ip": "127.0.0.1", "port": 33001},
@@ -28,6 +28,6 @@
     "order_price": 250200,
     "order_qty": 100,
     "stop_price": 0,
-    "market_type": 1
+    "market_type": 101
   }
 }

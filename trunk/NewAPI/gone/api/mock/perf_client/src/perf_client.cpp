@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <thread>
 
 namespace perf {
@@ -25,14 +27,14 @@ void PerfCallback::on_login(const lb_api::LoginAns& ans) {
   std::cout << "[PerfCallback] on_login err_code=" << ans.err_code << std::endl;
 }
 
-void PerfCallback::on_link_status(int32_t counter_type, int32_t link_type, int32_t status) {
+void PerfCallback::on_link_status(lb_api::counter_type counter, int32_t link_type, int32_t status) {
   link_status = status;
-  std::cout << "[PerfCallback] on_link_status counter=" << counter_type
+  std::cout << "[PerfCallback] on_link_status counter=" << static_cast<int32_t>(counter)
             << " link=" << link_type << " status=" << status << std::endl;
 }
 
-void PerfCallback::on_error(lb_api::err_event_type event_type, int32_t err_code, const char* err_desc) {
-  std::cout << "[PerfCallback] on_error type=" << static_cast<int>(event_type)
+void PerfCallback::on_event(lb_api::api_event_type event_type, int32_t err_code, const char* err_desc) {
+  std::cout << "[PerfCallback] on_event type=" << static_cast<int>(event_type)
             << " code=" << err_code
             << " desc=" << (err_desc ? err_desc : "") << std::endl;
 }
@@ -47,15 +49,22 @@ bool PerfConfig::load(const std::string& path) {
     api_instance_name = root["api_instance_name"].as_string();
     market_type = static_cast<int32_t>(root["market_type"].as_int());
     fast_counter_type = static_cast<int32_t>(root["fast_counter_type"].as_int());
+    need_multi_cust = root.has("need_multi_cust") ? static_cast<int32_t>(root["need_multi_cust"].as_int()) : 0;
     speed_link_type = static_cast<int32_t>(root["speed_link_type"].as_int());
 
     JsonValue sca = root["speed_counter_addr"];
     speed_counter_ip = sca["ip"].as_string();
-    speed_counter_port = static_cast<int32_t>(sca["port"].as_int());
+    const auto speed_counter_port_value = sca["port"].as_int();
+    if (speed_counter_port_value < 1 || speed_counter_port_value > 65535)
+      throw std::runtime_error("柜台端口无效: speed_counter_addr");
+    speed_counter_port = static_cast<int32_t>(speed_counter_port_value);
 
     JsonValue c98a = root["counter98_addr"];
     counter98_ip = c98a["ip"].as_string();
-    counter98_port = static_cast<int32_t>(c98a["port"].as_int());
+    const auto counter98_port_value = c98a["port"].as_int();
+    if (counter98_port_value < 1 || counter98_port_value > 65535)
+      throw std::runtime_error("柜台端口无效: counter98_addr");
+    counter98_port = static_cast<int32_t>(counter98_port_value);
 
     agw_user = root["98agw_user"].as_string();
     agw_user_password = root["98agw_user_password"].as_string();
@@ -101,36 +110,51 @@ bool PerfClient::init(const std::string& config_path) {
   }
 
   // 创建 API 配置
-  lb_api::api_config* cfg = lb_api::api_config::create_config();
+  std::unique_ptr<lb_api::api_config, decltype(&lb_api::api_config::destroy_config)>
+      cfg(lb_api::api_config::create_config(), &lb_api::api_config::destroy_config);
   if (!cfg) {
     std::cerr << "[PerfClient] create_config 失败" << std::endl;
     return false;
   }
 
-  int32_t ra = 0;
-  ra = cfg->set_attr("api_instance_name", cfg_.api_instance_name.c_str());
-  ra = cfg->set_attr("market_type", static_cast<int8_t>(cfg_.market_type));
-  ra = cfg->set_attr("fast_counter_type", static_cast<int32_t>(cfg_.fast_counter_type));
-  ra = cfg->set_attr("speed_link_type", static_cast<int32_t>(cfg_.speed_link_type));
+  const auto check_attr = [](const char* name, int32_t result) {
+    if (result != 0)
+      throw std::runtime_error(std::string("配置项 ") + name + " 写入失败: " + std::to_string(result));
+  };
+  const auto set_address = [&](const char* name, const std::string& ip, int32_t port) {
+    lb_api::net_addr addr{};
+    if (ip.empty() || ip.size() >= sizeof(addr.ip))
+      throw std::runtime_error(std::string("柜台地址无效: ") + name);
+    std::memcpy(addr.ip, ip.data(), ip.size());
+    addr.port = port;
+    check_attr(name, cfg->set_attr(name, addr));
+  };
 
-  std::string speed_addr = cfg_.speed_counter_ip + ":" + std::to_string(cfg_.speed_counter_port);
-  ra = cfg->set_attr("speed_counter_addr", speed_addr.c_str());
-  std::string c98_addr = cfg_.counter98_ip + ":" + std::to_string(cfg_.counter98_port);
-  ra = cfg->set_attr("counter98_addr", c98_addr.c_str());
-  ra = cfg->set_attr("98agw_user", cfg_.agw_user.c_str());
-  ra = cfg->set_attr("98agw_user_password", cfg_.agw_user_password.c_str());
-  ra = cfg->set_attr("heartbeat_interval", static_cast<int32_t>(cfg_.heartbeat_interval));
-  ra = cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(cfg_.agw_user_login_timeout));
-  ra = cfg->set_attr("log_level", static_cast<int32_t>(cfg_.log_level));
-  ra = cfg->set_attr("log_output_dir", cfg_.log_output_dir.c_str());
-  (void)ra;
+  try {
+    check_attr("api_instance_name", cfg->set_attr("api_instance_name", cfg_.api_instance_name));
+    check_attr("market_type", cfg->set_attr("market_type", static_cast<int8_t>(cfg_.market_type)));
+    check_attr("fast_counter_type", cfg->set_attr("fast_counter_type", cfg_.fast_counter_type));
+    check_attr("need_multi_cust", cfg->set_attr("need_multi_cust", cfg_.need_multi_cust));
+    check_attr("speed_link_type", cfg->set_attr("speed_link_type", cfg_.speed_link_type));
+    set_address("speed_counter_addr", cfg_.speed_counter_ip, cfg_.speed_counter_port);
+    set_address("counter98_addr", cfg_.counter98_ip, cfg_.counter98_port);
+    check_attr("98agw_user", cfg->set_attr("98agw_user", cfg_.agw_user));
+    check_attr("98agw_user_password", cfg->set_attr("98agw_user_password", cfg_.agw_user_password));
+    check_attr("heartbeat_interval", cfg->set_attr("heartbeat_interval", cfg_.heartbeat_interval));
+    check_attr("agw_user_login_timeout", cfg->set_attr("agw_user_login_timeout", cfg_.agw_user_login_timeout));
+    check_attr("log_level", cfg->set_attr("log_level", cfg_.log_level));
+    check_attr("log_output_dir", cfg->set_attr("log_output_dir", cfg_.log_output_dir));
+  } catch (const std::exception& e) {
+    std::cerr << "[PerfClient] " << e.what() << std::endl;
+    return false;
+  }
 
   // 创建回调
   cb_ = new PerfCallback();
 
   // 创建 API 实例
   int32_t ret = lb_api::api_interface::create_instance(api_, *cfg, cb_);
-  lb_api::api_config::destroy_config(cfg);
+  cfg.reset();
 
   if (ret != 0 || !api_) {
     std::cerr << "[PerfClient] create_instance 失败: " << ret << std::endl;
@@ -144,10 +168,10 @@ bool PerfClient::init(const std::string& config_path) {
   ret = api_->start();
   if (ret != 0) {
     std::cerr << "[PerfClient] api->start() 失败: " << ret << std::endl;
-    delete cb_;
-    cb_ = nullptr;
     lb_api::api_interface::release_instance(api_);
     api_ = nullptr;
+    delete cb_;
+    cb_ = nullptr;
     return false;
   }
   std::cout << "[PerfClient] API 启动成功" << std::endl;
@@ -258,9 +282,8 @@ void run_benchmark(PerfClient& client, const PerfConfig& cfg, std::vector<uint64
       ++ok;
     }
 
-    // 计算 api 内耗时（纳秒）
-    uint64_t lat = req.api_leave_time_ns - req.api_arrive_time_ns;
-    latencies.push_back(lat);
+    // (接口漂移修复) OrderReq 的 api_leave_time_ns/api_arrive_time_ns 已随结构演进下线,
+    // api 内耗时统计随字段移除; latencies 保持空, 统计对空样本输出零值。
 
     // 等待到下一笔的发送时刻（匀速）
     next_send += interval;

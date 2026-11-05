@@ -1,0 +1,40 @@
+
+【SVN 提交日志】
+
+统一 API 委托入口，完善柜台登录、重连和回报处理
+
+- 普通、ETF 申赎和北交所委托统一使用 order_insert。各柜台按业务判断是否支持，98 新增回购、认购、质押及两融委托。
+- 按柜台和资金账户分别保存登录状态，完善重复登录、登出和断线重登。
+- 修正 98 撤单请求号和原单号的传递，按回报分区和记录号去重、续传，区分委托状态回报与实际成交。
+- 统一市场、数量和回报字典，拆分柜台类型与单多客户配置。更新动态库构建，适配 mock 客户端并补充离线回归。
+
+【开发者升级说明】
+
+一、创建实例和登录
+
+- API 实例市场改为沪 101、深 102。北交所只在委托中填 109，实例仍建在深圳。检查配置文件、请求构造和回报处理里是否还有旧市场值 1、2、3。
+- 柜台类型和客户模式分开配置。个微用 gewei=1，FPGA 用 fpga=2。旧 FPGA 网关配置值 3 改成 fpga=2、need_multi_cust=1、speed_link_type=0（共享 socket）。单客户 FPGA 配置 need_multi_cust=0，socket 场景用 speed_link_type=1。
+- start() 成功表示 API 已启动。98 接入用户登录移到 login()，接入失败从 login() 返回；客户账户登录结果仍看 on_login。调用方应按实际登录结果放行交易，避免在连接成功或 login() 返回 0 时就标记客户已登录。
+- 个微和 98 分开保存账户会话。单客户实例绑定账户后，换账户需新建实例。断线后，98 恢复接入登录，个微对曾成功的账户发起重登；个微内部重登成功不会再发一次用户登录成功回调。主动登出走 logout() 和 on_logout，表示本地账户登出，不等同于柜台协议登出。
+
+二、下单、数量和撤单
+
+- 用 order_insert 替换 etf_order_insert 和 bse_order_insert。ETF 申购用 side='D'，赎回用 'E'；北交所买卖仍用 '1'/'2'，并填委托市场 109。回购、发行认购、质押出入库、配股和两融等由 98 按 side 选择报文。接入侧有方向白名单时，应随新版 order_trade_type.h 一起更新。
+- 极速柜台只有返回 LBAPI_ERR_UNSUPPORTED_OP 或 LBAPI_ERR_COUNTER_OFFLINE 才转 98。FPGA 只支持买卖限价，沪深买卖市价返回 LBAPI_ERR_UNSUPPORTED_TYPE，不会因这个错误转 98。个微支持买卖和 ETF 申赎。链路断开和客户未登录也不属于回退条件。
+- 委托和回报数量统一按股数 ×100，100 股在 API 中填 10000。FPGA 发给柜台前换回整股，不能整除 100 的请求会被拒绝。检查订单录入、风控、持久化和展示各自在哪里换算，防止同一笔委托乘两次 100。
+- 撤单时区分三个号码。CancelReq.client_req_no 填本次撤单请求号，client_seq_id 填原委托的客户报单号，order_sys_no 填回报给出的原委托柜台号。新版 98 已修正前两个号码原先写反的问题，个微和 FPGA 均要求正的柜台委托号。用三者都不同的订单检查发送和回报关联。
+
+三、回调、流水和数据结构
+
+- 更新回调实现中的 override。on_error 改为 on_event(api_event_type,...)；on_link_status 的柜台参数改为 counter_type；按业务接入 on_logout 和 on_counter_status。旧 on_error 的事件和新版 on_event 没有逐项对应关系，尤其不能把 98 接入失败继续只当回调处理。
+- 个微和 98 的成交通道按执行类型分流，实际成交才进 on_trade_rtn，其余状态走 on_order_rtn。个微 ETF 请求消息号为 1010，对应的 2010 回报仍走 on_order_rtn。调整只监听成交回调的 ETF 用例，以及直接用旧状态整数推进订单的代码。例如全成在新版字典中是 2。
+- 98 的回报位置取 StreamInfo.partno 和 stream_seq。正记录号按分区去重，非正记录号不参与去重。保存断点时按分区记录，不要拿一个全局最大号覆盖其他分区；counter98_report_sync 改用 map<uint16_t,int64_t>，同步完成事件为 report_sync_finish。FPGA 的 partno 是板卡号，个微和 FPGA 的 stream_seq 为 0。
+- 查询请求原 user_seq_id 改为 client_seq_id。检查引用或序列化 API 结构体的代码，尤其是 OrderReq 已无两项内部计时字段，CreditMaxOrderQtyInfo.zero_reason 改为定长字符数组。用新版头文件重新编译并链接 libg1api.so，旧 liblbapi.so 和旧头文件不能混用。
+
+四、联调时需要确认的地方
+
+- 98 委托类型出站映射为限价 2→2、本方最优 4→U、五档剩转限价 3→K，其余已定义市价类型 1/5/6/7→1。98 委托和成交回报中的委托类型暂填 0，调用方应从原委托记录取得类型，避免把回报的 0 当作一种有效委托类型。
+- 98 ETF 当前只填实例市场的股东账号，另一市场留空。个微买卖和 ETF 报文目前都透传请求的 order_type；ETF 旁的固定填 '2' 是待确认注释。卖券还款 side='X' 尚未接入。
+- 当前 socket 版编译通过，743 项离线检查通过。真实柜台的登录重连、撤单关联、市价和 ETF 报文字段仍需联调验证。使用 TCPDirect 时应单独构建和验证 libg1api_sf.so。
+
+接口从 api/include/ 下的 api_interface.h、api_config.h、api_callback.h、order_trade_type.h 查起。路由和组包主要在 api/src/ 下的 api_instance.cpp、counter98.cpp、gw_counter_direct.cpp、fpga_counter_base.h。

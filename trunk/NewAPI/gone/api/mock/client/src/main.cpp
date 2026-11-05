@@ -35,6 +35,7 @@ void ensure_output_dir(const std::string& path) {
 
 /// 打印帮助信息
 void print_usage(const char* prog) {
+<<<<<<< .mine
     LOG_INFO("用法: " << prog << " [选项]");
     LOG_INFO("选项:");
     LOG_INFO("  --plan <path>        测试计划主配置文件路径 (推荐, 内容见 test_plan_*.json)");
@@ -46,13 +47,24 @@ void print_usage(const char* prog) {
     LOG_INFO("  --log <path>         日志文件路径 (默认: result/mock_client.log)");
     LOG_INFO("  --analysis <path>    结果分析文件路径 (默认: result/result_analysis.txt)");
     LOG_INFO("  --help               打印帮助信息");
+=======
+    std::cout << "用法: " << prog << " [选项]\n"
+              << "选项:\n"
+              << "  --config <path>       连接配置文件路径 (默认: config/connection_config.json)\n"
+              << "  --lib <path>          libg1api.so 路径 (默认: ../../lib/libg1api.so)\n"
+              << "  --testcase <path>     单个测试用例 JSON 文件路径\n"
+              << "  --testdir <path>      测试用例目录 (默认: config/test_cases)\n"
+              << "  --report <path>       测试报告输出路径 (默认: test_report.txt)\n"
+              << "  --help                打印帮助信息\n"
+              << std::endl;
+>>>>>>> .r22
 }
 
 int main(int argc, char* argv[]) {
     // 默认参数
     std::string plan_path;
     std::string config_path = "config/connection_config.json";
-    std::string lib_path = "../../build_cmake/lib/liblbapi.so";
+    std::string lib_path = "../../lib/libg1api.so";
     std::string testcase_path;
     std::string test_dir = "config/test_cases";
     std::string report_path = "result/test_report.txt";

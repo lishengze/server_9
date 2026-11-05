@@ -48,7 +48,8 @@ enum api_errno : int32_t {
   LBAPI_ERR_NO_SEC = -36,              ///< 证券信息不存在
   LBAPI_ERR_ALLOC_MEM = -37,           ///< 获取内存失败
   LBAPI_ERR_NO_CUST = -38,             ///< 客户信息不存在
-  LBAPI_ERR_INSERT_MAP = -39           ///< 插入map 失败
+  LBAPI_ERR_INSERT_MAP = -39,          ///< 插入 map 失败
+  LBAPI_ERR_FIND_MAP = -40             ///< 查找 map 失败
 };
 
 /// 获取错误码对应的错误信息

@@ -1,6 +1,6 @@
 // callback_handler.cpp - CallbackHandler 回调处理器实现
 //
-// 职责：继承 api_callback 虚接口，接收 liblbapi.so 发出的各类回报，
+// 职责：继承 api_callback 虚接口，接收 libg1api.so 发出的各类回报，
 //   并将回报数据记录到成员变量 + 通过条件变量通知等待中的测试线程。
 //
 // 线程模型：
@@ -50,7 +50,7 @@ void CallbackHandler::on_order_rtn(const lb_api::StreamInfo& si, const lb_api::O
     response_received_ = true;
     cv_.notify_one();
     LOG_INFO("[Callback] on_order_rtn: order_status=" << (int)rtn.order_status
-              << ", rtn_type=" << rtn.rtn_type
+              << ", rtn_type=" << (int)rtn.rtn_type
               << ", order_qty=" << rtn.order_qty
               << ", trade_qty=" << rtn.trade_qty);
 }
@@ -84,28 +84,40 @@ void CallbackHandler::on_cancel_rsp(const lb_api::StreamInfo& si, const lb_api::
 
 // on_link_status: 链接状态回调
 // 记录柜台类型、链接类型和状态值（0=断开, 1=连接）。
+<<<<<<< .mine
 // 若为业务链接(LINK_TYPE_SPEED_TRADE=1)，同时更新 trade 链接状态，
 // 供委托/撤单测试发送前判断 Core/业务链接是否就绪。
 void CallbackHandler::on_link_status(int32_t counter_type, int32_t link_type, int32_t status) {
+=======
+void CallbackHandler::on_link_status(lb_api::counter_type counter, int32_t link_type, int32_t status) {
+>>>>>>> .r22
     std::lock_guard<std::mutex> lock(mutex_);
-    last_counter_type_ = counter_type;
+    last_counter_type_ = static_cast<int32_t>(counter);
     last_link_type_ = link_type;
     last_link_status_ = status;
+<<<<<<< .mine
     if (link_type == lb_api::LINK_TYPE_SPEED_TRADE) {
         last_trade_link_status_ = status;
     }
     LOG_INFO("[Callback] on_link_status: counter_type=" << counter_type
+=======
+    std::cout << "[Callback] on_link_status: counter_type=" << static_cast<int32_t>(counter)
+>>>>>>> .r22
               << ", link_type=" << link_type
               << ", status=" << status);
 }
 
-// on_error: 错误事件回调
+// on_event: 错误/事件回调 (接口漂移修复: err_event_type/on_error 已演进为 api_event_type/on_event)
 // 记录错误码和错误描述，仅打印，不置位任何 received_ 标志。
-void CallbackHandler::on_error(lb_api::err_event_type event_type, int32_t err_code, const char* err_desc) {
+void CallbackHandler::on_event(lb_api::api_event_type event_type, int32_t err_code, const char* err_desc) {
     std::lock_guard<std::mutex> lock(mutex_);
     last_error_code_ = err_code;
     last_error_desc_ = err_desc ? err_desc : "";
+<<<<<<< .mine
     LOG_ERROR("[Callback] on_error: event_type=" << (int)event_type
+=======
+    std::cerr << "[Callback] on_event: event_type=" << (int)event_type
+>>>>>>> .r22
               << ", err_code=" << err_code
               << ", err_desc=" << (err_desc ? err_desc : ""));
 }
@@ -127,123 +139,61 @@ void CallbackHandler::reset() {
     response_received_ = false;
     cancel_rsp_received_ = false;
     trade_rtn_received_ = false;
-    // 清空查询结果
-    order_query_results_.clear();
-    trade_query_results_.clear();
-    position_query_results_.clear();
-    total_fund_asset_results_.clear();
-    fund_maxdraw_results_.clear();
 }
 
-// ============================================================
-// 查询回调实现
-// ============================================================
-
-void CallbackHandler::on_order_query_ans(const lb_api::OrderRtn* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+bool CallbackHandler::has_response() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (int32_t i = 0; i < ctl.count; i++) {
-        order_query_results_.push_back(ans_arr[i]);
-    }
-    if (ctl.is_last) {
-        response_received_ = true;
-        cv_.notify_one();
-    }
-    std::cout << "[Callback] on_order_query_ans: count=" << ctl.count
-              << ", is_last=" << ctl.is_last << std::endl;
+    return response_received_;
 }
 
-void CallbackHandler::on_trade_query_ans(const lb_api::TradeInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+bool CallbackHandler::has_trade_rtn() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (int32_t i = 0; i < ctl.count; i++) {
-        trade_query_results_.push_back(ans_arr[i]);
-    }
-    if (ctl.is_last) {
-        response_received_ = true;
-        cv_.notify_one();
-    }
-    std::cout << "[Callback] on_trade_query_ans: count=" << ctl.count
-              << ", is_last=" << ctl.is_last << std::endl;
+    return trade_rtn_received_;
 }
 
-void CallbackHandler::on_fund_query_ans(const lb_api::CustFundInfo& info) {
+bool CallbackHandler::has_cancel_rsp() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    fund_query_result_ = info;
-    response_received_ = true;
-    cv_.notify_one();
-    std::cout << "[Callback] on_fund_query_ans: avail_amount=" << info.avail_amount
-              << ", token_amount=" << info.token_amount << std::endl;
+    return cancel_rsp_received_;
 }
 
-void CallbackHandler::on_position_query_ans(const lb_api::CustPositionInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+lb_api::LoginAns CallbackHandler::last_login_ans() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (int32_t i = 0; i < ctl.count; i++) {
-        position_query_results_.push_back(ans_arr[i]);
-    }
-    if (ctl.is_last) {
-        response_received_ = true;
-        cv_.notify_one();
-    }
-    std::cout << "[Callback] on_position_query_ans: count=" << ctl.count
-              << ", is_last=" << ctl.is_last << std::endl;
+    return last_login_ans_;
 }
 
-void CallbackHandler::on_max_order_qty_query_ans(const lb_api::CustMaxOrderQtyInfo& info) {
+lb_api::OrderRtn CallbackHandler::last_order_rtn() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    max_order_qty_result_ = info;
-    response_received_ = true;
-    cv_.notify_one();
-    std::cout << "[Callback] on_max_order_qty_query_ans: max_order_qty=" << info.max_order_qty << std::endl;
+    return last_order_rtn_;
 }
 
-void CallbackHandler::on_total_fund_asset_query_ans(const lb_api::CustTotalFundAssetInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+lb_api::TradeRtn CallbackHandler::last_trade_rtn() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (int32_t i = 0; i < ctl.count; i++) {
-        total_fund_asset_results_.push_back(ans_arr[i]);
-    }
-    if (ctl.is_last) {
-        response_received_ = true;
-        cv_.notify_one();
-    }
-    std::cout << "[Callback] on_total_fund_asset_query_ans: count=" << ctl.count
-              << ", is_last=" << ctl.is_last << std::endl;
+    return last_trade_rtn_;
 }
 
-void CallbackHandler::on_fund_maxdraw_query_ans(const lb_api::CustFundMaxdrawInfo* ans_arr, const lb_api::QueryAnsCtl& ctl) {
+lb_api::CancelRsp CallbackHandler::last_cancel_rsp() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (int32_t i = 0; i < ctl.count; i++) {
-        fund_maxdraw_results_.push_back(ans_arr[i]);
-    }
-    if (ctl.is_last) {
-        response_received_ = true;
-        cv_.notify_one();
-    }
-    std::cout << "[Callback] on_fund_maxdraw_query_ans: count=" << ctl.count
-              << ", is_last=" << ctl.is_last << std::endl;
+    return last_cancel_rsp_;
 }
 
-void CallbackHandler::on_cust_margin_avl_query_ans(const lb_api::CustMarginAvlInfo& info) {
+int32_t CallbackHandler::last_link_status() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    cust_margin_avl_result_ = info;
-    response_received_ = true;
-    cv_.notify_one();
-    std::cout << "[Callback] on_cust_margin_avl_query_ans: margin_avl=" << info.margin_avl << std::endl;
+    return last_link_status_;
 }
 
-void CallbackHandler::on_asset_debts_query_ans(const lb_api::AssetDebtsInfo& info) {
+int32_t CallbackHandler::last_link_type() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    asset_debts_result_ = info;
-    response_received_ = true;
-    cv_.notify_one();
-    std::cout << "[Callback] on_asset_debts_query_ans: asset=" << info.asset
-              << ", liability=" << info.liability << std::endl;
+    return last_link_type_;
 }
 
-void CallbackHandler::on_credit_max_order_qty_query_ans(const lb_api::CreditMaxOrderQtyInfo& info) {
+int32_t CallbackHandler::last_counter_type() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    credit_max_order_qty_result_ = info;
-    response_received_ = true;
-    cv_.notify_one();
-    std::cout << "[Callback] on_credit_max_order_qty_query_ans: max_order_qty=" << info.max_order_qty << std::endl;
+    return last_counter_type_;
+}
+
+std::string CallbackHandler::last_error_desc() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_error_desc_;
 }
 
 } // namespace mock

@@ -13,16 +13,20 @@
 //      与 c98_session_cache.h §3 同口径);
 //   3. 断链仅清全部条目在途 (clear_all_pending, 无登录回调, 用户经链接断开事件
 //      感知), 登录状态保持, 重连后按 is_logined 条目批量自动重登。
-//
-// 附加（相对 api-compare 的增强）:
-//   4. (原 order_locators 原单定位映射已移除 —— 撤单优化后 orig_clordno 由
-//      OrderRtn.order_sys_no 直接返回客户端, 无需内部映射)
+//   4. 单/多客户两种存储模式 (need_multi_cust 配置: 0=单客户 / 非0=多客户):
+//      单客户模式 (set_one_cust) 条目直存成员 local_, 零哈希零 map 查找, 发单路径
+//      find 退化为键匹配比对 (不匹配拒单); 状态机/回填/重登收集/清在途语义与
+//      多客户完全一致 —— 模式只是存储策略, 不改任何登录行为 (断线自动重登照常)。
+//      唯一例外: local_ 条目一经绑定资金账户 (首次登录写入), 其他资金账户的登录
+//      事件一律拒绝 (含登出后 —— 换户 = 销毁实例重建; 返回 nullptr, 调用方回调
+//      失败)。绑定门同时守住两个窗口: 登录/重登在途时条目字段不可被 B 改写 (否则
+//      A 应答失配被当迟到丢弃、条目楔死到断链); 登出后也不可被 B 整块重建 (否则
+//      与发单路径对条目的无锁直读构成数据竞争, 委托包可撕裂出 A/B 混合身份)。
 
 #pragma once
 
 #include "api_event_msg.h"
 #include "gw_head.h"
-#include "gw_session_cache.h" // OrderLocator / GwSessionInfo
 
 #include <array>
 #include <cstdint>
@@ -36,6 +40,7 @@ namespace lb_api
 {
 
   /// 个微账户登录信息
+  /// 现实对象：个微柜台的客户登录会话条目（身份+凭据+登录状态机）
   struct GwLoginInfo
   {
     log_state_ctl log_gw;                       ///< 个微登录控制状态机 (原子, 状态+在途)
@@ -50,6 +55,7 @@ namespace lb_api
     int64_t agw_seq_id = 0;                     ///< 个微会话序号（登录应答回填）
     int64_t last_cust_req_no = 0;               ///< 最近一次登录请求号（重登事件关联用）
 
+    /// 现实操作：对会话条目的复位（身份空格化、状态机归零）
     void reset()
     {
       log_gw.log_state = 0;
@@ -65,11 +71,13 @@ namespace lb_api
       last_cust_req_no = 0;
     }
 
+    /// 现实操作：无
     GwLoginInfo() { reset(); }
   };
 
   /// 个微登录缓存管理器 (gw_counter_direct 成员)
   /// 键规范 (NUL 截止 + 裁尾空格) 为内部实现细节, 全部接口直接接收原始账户标识。
+  /// 现实对象：个微柜台的本实例客户登录会话表（单/多客户两种存储模式）
   class GwLoginCache
   {
   public:
@@ -84,27 +92,48 @@ namespace lb_api
     ///     fill_login_ok 的值 (身份字段以柜台登录应答为权威源, 不被后续事件覆盖);
     ///     状态机与 agw_seq_id 不动。
     /// 返回条目指针 (长期有效, 见文件头 §2)。
+    /// 现实操作：对客户登录会话条目的凭据暂存/刷新
     GwLoginInfo *prepare_login(const acc_login_event_info &login_req);
 
     /// 获取条目 (找不到返回 nullptr)。状态机 (log_gw) 为原子字可跨线程直接调用;
     /// 组包字段读取线程模型见文件头 §2。
+    /// 现实操作：按资金账号取客户登录会话条目
     GwLoginInfo *find(const char *fund_account_id, size_t len);
 
     /// 登录成功应答回填 (cust_id/branch_id/account_id/agw_seq_id, C 串源, 空值不覆盖)。
     /// 回填完成后由调用方驱动 log_gw.ans_login_ok (先回填再置 OK 形成屏障)。
+    /// 现实操作：对客户登录会话条目的身份回填（应答值）
     void fill_login_ok(GwLoginInfo *info, const char *cust_id, const char *branch_id,
                        const char *account_id, int64_t agw_seq_id);
 
     /// 收集已登录 (log_gw is_logined) 账户的自动重登事件 (user_origin=0, 内部重登)
+    /// 现实操作：收集全部已登录客户的自动重登事件
     void collect_relogin_events(std::vector<acc_login_event_info> &out);
 
     /// 清除全部条目在途 (断链: 只清在途不清状态)
+    /// 现实操作：清除全部客户登录会话的在途占位
     void clear_all_pending();
 
-    // 撤单优化：order_locators 原单定位映射已移除 —— orig_clordno 由 OrderRtn.order_sys_no
-    // 直接返回客户端，撤单时客户端原样回传，无需内部缓存
+    /// 单/多客户存储模式设置 (gw_counter_direct::init 按 need_multi_cust 配置设置:
+    /// 单客户=单条目直存, 多客户=逐账户 map; 见文件头 §4)
+    /// 现实操作：对登录会话表存储模式的设置
+    void set_one_cust(bool on) { one_cust_ = on; }
+
+    /// 现实操作：读登录会话表存储模式（单客户与否）
+    bool one_cust() const { return one_cust_; }
 
   private:
+    /// 条目身份字段完整构建 (登录请求字段全量; 单/多客户两分支共用, 语义=
+    /// "未登录成功也完整构建": 首次/失败重试/换户后重建, 已登录成功则不走此路)
+    static void build_identity(GwLoginInfo &info, const acc_login_event_info &ev)
+    {
+      memcpy(info.fund_account_id.data(), ev.fund_account_id, info.fund_account_id.size());
+      memcpy(info.cust_id.data(), ev.cust_id, info.cust_id.size());
+      memcpy(info.account_id.data(), ev.account_id, info.account_id.size());
+      memcpy(info.branch_id.data(), ev.branch_id, info.branch_id.size());
+      memcpy(info.password.data(), ev.password, info.password.size());
+    }
+
     /// 凭据类字段刷新 (事件为权威源: 委托方式/私有信息/密码/终端信息/请求号)
     static void copy_credentials(GwLoginInfo &info, const acc_login_event_info &ev)
     {
@@ -164,8 +193,29 @@ namespace lb_api
         dst[i] = '\0';
     }
 
-    std::mutex mutex_;
-    std::unordered_map<std::string, GwLoginInfo> logins_;
+    /// 会话条目 → 自动重登事件 (user_origin=0; 多客户遍历与单客户条目共用)
+    static void build_relogin_event(const GwLoginInfo &s, acc_login_event_info &ev)
+    {
+      std::memset(&ev, 0, sizeof(ev));
+      to_cstr(ev.fund_account_id, sizeof(ev.fund_account_id), s.fund_account_id);
+      to_cstr(ev.cust_id, sizeof(ev.cust_id), s.cust_id);
+      to_cstr(ev.account_id, sizeof(ev.account_id), s.account_id);
+      to_cstr(ev.branch_id, sizeof(ev.branch_id), s.branch_id);
+      ev.order_way_ext[0] = s.order_way_ext[0];
+      ev.order_way_ext[1] = s.order_way_ext[1];
+      to_cstr(ev.user_info, sizeof(ev.user_info), s.user_info);
+      std::memcpy(ev.password, s.password.data(), sizeof(ev.password));
+      std::memcpy(ev.client_feature_code, s.client_feature_code.data(), sizeof(ev.client_feature_code));
+      ev.cust_req_no = s.last_cust_req_no;
+      ev.user_origin = 0; ///< 内部重登 (应答成功静默)
+      ev.filled = 0;
+    }
+
+    std::mutex mutex_; ///< 保护 logins_/local_ (互斥访问)
+    ///< (one_cust_ = true 时 logins_ 不用, §4)(set_one_cust 设置)
+    bool one_cust_ = false;                               ///< 单客户模式标志
+    GwLoginInfo local_;                                   ///< 单客户模式条目
+    std::unordered_map<std::string, GwLoginInfo> logins_; ///< 多客户模式: 逐账户条目表
   };
 
   // ====== 内联实现 ======
@@ -173,6 +223,29 @@ namespace lb_api
   inline GwLoginInfo *GwLoginCache::prepare_login(const acc_login_event_info &login_req)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (one_cust_)
+    {
+      // 单客户模式 (§4): 条目直存成员, 构建语义与多客户完全一致
+      GwLoginInfo &info = local_;
+      // 绑定门: 条目一经绑定资金账户, 异账户登录一律拒 (含登出后) —— 在途改写会
+      // 楔死条目, 登出后整块重建会与发单路径的无锁直读构成数据竞争 (§4)
+      const bool tbound =
+          !norm_key(info.fund_account_id.data(), info.fund_account_id.size()).empty();
+      if (tbound &&
+          norm_key(login_req.fund_account_id, sizeof(login_req.fund_account_id)) !=
+              norm_key(info.fund_account_id.data(), info.fund_account_id.size()))
+      {
+        return nullptr;
+      }
+      if (!info.log_gw.is_logined())
+      {
+        // 未登录成功(NONE/LOGOUT/在途首登): 完整构建 (登录请求字段全量, 语义同
+        // 多客户分支的"未登录也完整构建"; 已登录成功则身份保持应答回填值)
+        build_identity(info, login_req);
+      }
+      copy_credentials(info, login_req);
+      return &info;
+    }
     std::string key = norm_key(login_req.fund_account_id, sizeof(login_req.fund_account_id));
     auto ret = logins_.emplace(key, GwLoginInfo{}); ///< 不存在则插入 (默认构造 reset(): 空格填充 + log_state=NONE)
     GwLoginInfo &info = ret.first->second;
@@ -180,11 +253,7 @@ namespace lb_api
     {
       // 不存在: 完整构建插入 (登录请求字段全量, 身份字段以事件值为初值)
       // 未登录成功也完整构建，防止用户第一次输入错误，以便第二次输出正确能更新
-      memcpy(info.fund_account_id.data(), login_req.fund_account_id, info.fund_account_id.size());
-      memcpy(info.cust_id.data(), login_req.cust_id, info.cust_id.size());
-      memcpy(info.account_id.data(), login_req.account_id, info.account_id.size());
-      memcpy(info.branch_id.data(), login_req.branch_id, info.branch_id.size());
-      memcpy(info.password.data(), login_req.password, info.password.size());
+      build_identity(info, login_req);
     }
     // 已存在: cust_id/account_id/branch_id 保持上次 fill_login_ok 的值, 仅刷新凭据
     copy_credentials(info, login_req);
@@ -194,6 +263,16 @@ namespace lb_api
   inline GwLoginInfo *GwLoginCache::find(const char *fund_account_id, size_t len)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (one_cust_)
+    {
+      // 单客户模式: 唯一条目键匹配 (资金账号与登录会话不符 → 拒单, 见 §4)
+      if (norm_key(fund_account_id, len) ==
+          norm_key(local_.fund_account_id.data(), local_.fund_account_id.size()))
+      {
+        return &local_;
+      }
+      return nullptr;
+    }
     auto it = logins_.find(norm_key(fund_account_id, len));
     if (it != logins_.end())
       return &it->second;
@@ -214,23 +293,24 @@ namespace lb_api
   inline void GwLoginCache::collect_relogin_events(std::vector<acc_login_event_info> &out)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (one_cust_)
+    {
+      // 单客户模式: 唯一条目已登录则收集一条 (§4, 语义与多客户一致)
+      if (local_.log_gw.is_logined())
+      {
+        acc_login_event_info ev;
+        build_relogin_event(local_, ev);
+        out.push_back(ev);
+      }
+      return;
+    }
     for (auto &kv : logins_)
     {
       GwLoginInfo &s = kv.second;
       if (!s.log_gw.is_logined())
         continue;
       acc_login_event_info ev;
-      std::memset(&ev, 0, sizeof(ev));
-      to_cstr(ev.fund_account_id, sizeof(ev.fund_account_id), s.fund_account_id);
-      to_cstr(ev.cust_id, sizeof(ev.cust_id), s.cust_id);
-      to_cstr(ev.account_id, sizeof(ev.account_id), s.account_id);
-      to_cstr(ev.branch_id, sizeof(ev.branch_id), s.branch_id);
-      ev.order_way_ext[0] = s.order_way_ext[0];
-      ev.order_way_ext[1] = s.order_way_ext[1];
-      to_cstr(ev.user_info, sizeof(ev.user_info), s.user_info);
-      std::memcpy(ev.password, s.password.data(), sizeof(ev.password));
-      std::memcpy(ev.client_feature_code, s.client_feature_code.data(), sizeof(ev.client_feature_code));
-      ev.cust_req_no = s.last_cust_req_no;
+      build_relogin_event(s, ev);
       out.push_back(ev);
     }
   }
@@ -238,6 +318,11 @@ namespace lb_api
   inline void GwLoginCache::clear_all_pending()
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (one_cust_)
+    {
+      local_.log_gw.clear_pending();
+      return;
+    }
     for (auto &kv : logins_)
     {
       kv.second.log_gw.clear_pending();

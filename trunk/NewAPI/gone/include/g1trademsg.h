@@ -5,7 +5,7 @@
 // api 请求消息
 #define G1_MSG_ORDER_REQ 1001u    ///< 委托请求
 #define G1_MSG_CANCEL_REQ 1002u   ///< 撤单请求
-#define G1_MSG_HEART_REQ 1003u    ///< 心跳请求（fwm↔fdm 管理链路形态：体=8字节管理层头、msg_len=8、board/user=0、req_no 回带；与 fgw/api 交易链路纯头帧 msg_len=0 形态不同——联调契约见 doc/SYSTEM_CONTRACT.md §7）
+#define G1_MSG_HEART_REQ 1003u    ///< 心跳请求（fwm↔fdm 管理链路形态：体=8字节管理层头、msg_len=8、board/user=0、req_no 回带可选——RUL-42 起 fwm 按 msg_id 认领应答；与 fgw/api 交易链路纯头帧 msg_len=0 形态不同——联调契约见 doc/SYSTEM_CONTRACT.md §7）
 #define G1_MSG_SEC_INFO_REQ 1004u ///< 证券信息请求
 #define G1_MSG_LOGIN_REQ 1005u    ///< 登录请求
 // 后台应答推送消息
@@ -110,7 +110,7 @@ struct order_req
   uint16_t board_no;                      // 板卡号
   uint16_t sec_index;                     // 证券索引
   char side;                              // 买卖方向 (G1_ORDER_SIDE_*, '1'买/'2'卖, =98 ATP AgwSide)
-  char order_type;                        // 委托类型 ('1'市价/'2'限价, API 字典=98 ATP AgwOrdType)
+  char order_type;                        // 委托类型 (API 字典 ORDER_TYPE_* '1'-'7' 委托市价类型; 本期校验域仅 '2' 限价, '3'-'7' 与 AgwOrdType 值域分歧见 SYSTEM_CONTRACT §7)
   char security_id[G1_SECURITYID_MAXLEN]; // 证券代码
   int64_t order_price;                    // 委托价格，放大10000
   int64_t order_qty;                      // 委托数量，不放大100
@@ -153,7 +153,7 @@ struct order_rtn
   uint16_t board_no;                      // 板卡号
   uint16_t sec_index;                     // 证券索引
   char side;                              // 买卖方向 (G1_ORDER_SIDE_*, '1'买/'2'卖, =98 ATP AgwSide)
-  char order_type;                        // 委托类型 ('1'市价/'2'限价, API 字典=98 ATP AgwOrdType)
+  char order_type;                        // 委托类型 (API 字典 ORDER_TYPE_* '1'-'7' 委托市价类型; 本期校验域仅 '2' 限价, '3'-'7' 与 AgwOrdType 值域分歧见 SYSTEM_CONTRACT §7)
   char security_id[G1_SECURITYID_MAXLEN]; // 证券代码
   int64_t order_price;                    // 放大10000
   int64_t order_qty;                      // 委托数量, 整型股不放大
@@ -207,7 +207,7 @@ struct trade_rtn
   uint16_t board_no;                      // 板卡号
   uint16_t sec_index;                     // 证券索引
   char side;                              // 买卖方向 (G1_ORDER_SIDE_*, '1'买/'2'卖, =98 ATP AgwSide)
-  char order_type;                        // 委托类型 ('1'市价/'2'限价, API 字典=98 ATP AgwOrdType)
+  char order_type;                        // 委托类型 (API 字典 ORDER_TYPE_* '1'-'7' 委托市价类型; 本期校验域仅 '2' 限价, '3'-'7' 与 AgwOrdType 值域分歧见 SYSTEM_CONTRACT §7)
   char security_id[G1_SECURITYID_MAXLEN]; // 证券代码
   int64_t order_price;                    // 放大10000
   int64_t order_qty;                      // 委托数量, 整型股不放大

@@ -1,6 +1,6 @@
-// shared_engine - 共享极速引擎 (模型 d, 实际是 multi_engine 的代理)
+// idle_engine - 空占位极速引擎实现
 //
-// 本类无链接、无线程、转发所有动作到 multi_engine 的 send_queue_。
+// 无链接、无线程、无队列; fpga 多客户网关模式的业务由 multi 引擎承载, 本类不转发任何动作。
 
 #include "idle_engine.h"
 #include "fpga_counter_gateway.h"
@@ -12,7 +12,7 @@ template <class TFastCounter> idle_engine<TFastCounter>::idle_engine() : counter
 
 template <class TFastCounter> idle_engine<TFastCounter>::~idle_engine() = default;
 
-// 初始化: 仅记录柜台 / 日志, 队列由 init_set_que 注入
+// 初始化: 仅记录柜台 / 日志指针
 template <class TFastCounter>
 int32 idle_engine<TFastCounter>::init(const api_config_impl &cfg, TFastCounter *tfst, lb_common::lb_log *log) {
   counter_ = tfst;

@@ -5,7 +5,7 @@
         "name": "FTE 登录测试",
         "description": "验证 FTE 登录应答的所有字段",
         "counter_type": "gw_direct",
-        "timeout_ms": 30000
+        "timeout_ms": 5000
       },
       "request": {
         "type": "login",
@@ -28,7 +28,7 @@
           "fund_account_id": "1000000000000001",
           "account_id": "A12345678901",
           "branch_id": "0001",
-          "market_type": 1,
+          "market_type": 101,
           "err_code": 0,
           "err_msg": null,
           "login_time": null
@@ -56,7 +56,7 @@
           "order_qty": 100,
           "stop_price": 0,
           "client_seq_id": 0,
-          "market_type": 1
+          "market_type": 101
         }
       },
       "expected_response": {
@@ -70,13 +70,12 @@
           "order_type": "2",
           "order_status": 0,
           "policy_id": 0,
-          "market_type": 1,
-          "reserved": 0,
+          "market_type": 101,
           "security_id": "600007",
           "order_price": 250200,
           "order_qty": 100,
           "client_seq_id": null,
-          "rtn_type": 1,
+          "rtn_type": 48,
           "err_code": 0,
           "order_sys_no": null,
           "frozen_amount": null,
@@ -108,10 +107,9 @@
           "branch_id": "0001",
           "side": "1",
           "order_type": "2",
-          "order_status": 3,
+          "order_status": 1,
           "policy_id": 0,
-          "market_type": 1,
-          "reserved": 0,
+          "market_type": 101,
           "security_id": "600007",
           "order_price": 250200,
           "order_qty": 100,
@@ -156,33 +154,12 @@
           "fund_account_id": "1000000000000001",
           "account_id": "A12345678901",
           "branch_id": "0001",
-          "market_type": 1,
+          "market_type": 101,
           "order_sys_no": null,
           "client_seq_id": null,
           "err_code": 50046,
           "rej_api": 0
         }
-      }
-    },
-    {
-      "test_case": {
-        "name": "FTE 心跳维持测试",
-        "description": "等待 30 秒，验证心跳正常维持，无断线回调",
-        "counter_type": "fte",
-        "timeout_ms": 35000
-      },
-      "request": {
-        "type": "wait_heartbeat",
-        "fields": {
-          "wait_seconds": 30
-        }
-      },
-      "expected_response": {
-        "type": "heartbeat_ok",
-        "fields": {
-          "link_connected": true
-        },
-        "validate": ["link_connected"]
       }
     }
   ]

@@ -48,7 +48,7 @@ struct PerfConfig {
     int64_t order_price = 0;
     int64_t order_qty = 0;
     int64_t stop_price = 0;
-    int32_t order_market_type = 1;
+    int32_t order_market_type = 101; ///< 市场字典 AgwMarketID (RUL-16)
 
     /// 从 JSON 节点加载 perf_test 配置
     bool load(const JsonValue& node);

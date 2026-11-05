@@ -4,13 +4,7 @@
 //   1. 从 JSON 配置加载连接配置 + 测试参数（测试时长 / TPS / warmup / CPU 等）
 //   2. 初始化 API（创建 api_config → create_instance → start）并登录 FTE
 //   3. 匀速发单（每笔间隔 1/TPS 秒），调用 api_->order_insert()
-//   4. 通过 OrderReq 的 api_arrive_time_ns / api_leave_time_ns 计算每笔 api 内耗时
-//   5. 收集全部耗时样本，供 metric_stats 分析
-//
-// 性能测量语义：
-//   api_arrive_time_ns 在 api_impl::order_insert 入口记录（请求到达 api）
-//   api_leave_time_ns  在 api_impl::order_insert 出口记录（请求离开 api）
-//   耗时 = api_leave_time_ns - api_arrive_time_ns（即 api 内处理委托的时间）
+//   4. 统计发单结果。新版 API 已移除内部计时字段，当前没有耗时样本。
 
 #pragma once
 
@@ -27,8 +21,8 @@ namespace perf {
 class PerfCallback : public lb_api::api_callback {
 public:
   void on_login(const lb_api::LoginAns& ans) override;
-  void on_link_status(int32_t counter_type, int32_t link_type, int32_t status) override;
-  void on_error(lb_api::err_event_type event_type, int32_t err_code, const char* err_desc) override;
+  void on_link_status(lb_api::counter_type counter, int32_t link_type, int32_t status) override;
+  void on_event(lb_api::api_event_type event_type, int32_t err_code, const char* err_desc) override;
 
   bool login_done = false;   ///< 是否已收到登录应答
   bool login_ok = false;     ///< 登录是否成功
@@ -40,8 +34,9 @@ public:
 struct PerfConfig {
   // ---- 连接配置 ----
   std::string api_instance_name;
-  int32_t market_type = 1;
+  int32_t market_type = 101; ///< 市场字典 AgwMarketID (RUL-16): 101 沪/102 深
   int32_t fast_counter_type = 1;
+  int32_t need_multi_cust = 0; ///< 压测 API 实例是否支持多客户。
   int32_t speed_link_type = 1;
   std::string speed_counter_ip;
   int32_t speed_counter_port = 0;
@@ -71,7 +66,7 @@ struct PerfConfig {
   int64_t order_price = 0;
   int64_t order_qty = 0;
   int64_t stop_price = 0;
-  int32_t order_market_type = 1;
+  int32_t order_market_type = 101; ///< 市场字典 AgwMarketID (RUL-16)
 
   /// 从 JSON 文件加载配置
   bool load(const std::string& path);
@@ -100,7 +95,7 @@ private:
   PerfCallback* cb_ = nullptr;
 };
 
-/// 匀速发单并收集每笔耗时（纳秒）到 latencies
+/// 匀速发单并打印发送结果，当前不写入耗时样本。
 void run_benchmark(PerfClient& client, const PerfConfig& cfg, std::vector<uint64_t>& latencies);
 
 } // namespace perf

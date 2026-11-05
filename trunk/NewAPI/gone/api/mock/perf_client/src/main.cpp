@@ -8,9 +8,8 @@
 //   2. CPU 绑定（sched_setaffinity，通用化）
 //   3. warmup 等待（确保绑核生效）
 //   4. 初始化 API + 登录 FTE
-//   5. 匀速发单（间隔 = 1/TPS 秒），收集每笔 api 内耗时
-//   6. 分析指标（均值/P50/P75/P90/最大/最小/标准差）
-//   7. 输出报告到控制台 + 文件
+//   5. 匀速发单（间隔 = 1/TPS 秒），打印发送结果
+//   6. 输出报告到控制台和文件
 
 #include "cpu_affinity.h"
 #include "metric_stats.h"
@@ -144,11 +143,10 @@ int main(int argc, char* argv[]) {
   report << "========== FTE 委托通路性能测试报告 ==========\n"
          << "测试时间 : " << real_sec << " 秒\n"
          << "目标 TPS : " << cfg.tps << "\n"
-         << "实际 TPS : " << (latencies.size() / real_sec) << "\n"
          << "样本数   : " << latencies.size() << "\n"
          << "CPU 绑定 : " << (cfg.cpu_id >= 0 ? std::to_string(cfg.cpu_id) : "不绑定") << "\n\n"
          << "------- API 内处理耗时（纳秒）-------\n"
-         << stats.to_string() << "\n";
+         << (latencies.empty() ? "新版 API 未提供内部耗时样本\n" : stats.to_string()) << "\n";
 
   std::cout << report.str();
 

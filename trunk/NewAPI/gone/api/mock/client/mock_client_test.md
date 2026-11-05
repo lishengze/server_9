@@ -2,6 +2,11 @@
 
 > 本文档详细记录在 FTE（上海/深圳）柜台联调测试过程中遇到的问题、修改的代码、增删的数据、解决方案与实际结果。
 > 时间跨度：2026-09-14 ~ 2026-09-15
+>
+> **字典基准变更说明(2026-09-30, RUL-16)**:API 数据字典已重定义为以 98 ATP 为准——市场 101/102/109、
+> 委托状态=AgwOrdStatus(0已申报/1部成/2全成/4已撤/8拒…)、回报类型=AgwExecType 字符值(rtn_type 数值
+> '0'=48/'F'=70…)。本文正文中出现的旧字典值(如 order_status 3=部成、rtn_type 1=柜台响应、market_type 1=上海)
+> 均为变更前口径,历史记录不改写;test_cases 配置期望值已同步新字典。
 
 ---
 
@@ -34,16 +39,15 @@ cd /mnt/work/gt_trunk/DYS-FRAMEWORK/fte/test_all
 
 ### 1.4 mock_client / counter98_mock
 ```bash
-# counter98_mock（单独启动，start_all.sh 不含）
-cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/98_counter
-/home/lsz/code/work/api_trunk/build_cmake/bin/counter98_mock --config config/server_config.json &
+# counter98_mock —— 已废弃删除（依赖的 c98msg_tmp.h 临时生成头不再支持，见 SYSTEM_CONTRACT RUL-25）
+# 原：cd …/api/mock/98_counter && …/counter98_mock --config config/server_config.json &
 
-# mock_client（运行组合测试，需 LD_LIBRARY_PATH 指向 liblbapi.so）
+# mock_client（运行组合测试，需 LD_LIBRARY_PATH 指向 libg1api.so）
 cd /home/lsz/code/work/api_trunk/trunk/NewAPI/gone/api/mock/client
 LD_LIBRARY_PATH=/home/lsz/code/work/api_trunk/build_cmake/lib:$LD_LIBRARY_PATH \
   /home/lsz/code/work/api_trunk/build_cmake/bin/mock_client \
   --config config/connection_config.json \
-  --lib /home/lsz/code/work/api_trunk/build_cmake/lib/liblbapi.so \
+  --lib /home/lsz/code/work/api_trunk/build_cmake/lib/libg1api.so \
   --testcase config/test_cases/fte_combo.json --report test_report.txt
 ```
 

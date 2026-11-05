@@ -1,4 +1,4 @@
-// single_socket_engine - 单 socket 极速引擎 (模型 b, 骨架)
+// single_socket_engine - 单 socket 极速引擎
 //
 // 一个 aio_socket_link + 一个 link_timer_op + 一个发送队列 + 一条专属线程.
 // 与 tcpdirect_engine 结构对称, 但使用 aio_socket_link (基于 aio_tcp / mthread epoll)
@@ -11,8 +11,6 @@
 #include "comm_sys.h"
 #include "link_timer_op.h"
 #include "mlog.h"
-//#include "multi_socket_engine.h"
-#include "mthread.h"
 #include "que_mth_buf.h"
 #include "simple_thread.h"
 
@@ -29,7 +27,7 @@ using lb_common::uint32;
 using lb_common::uint64;
 using lb_common::uint8;
 
-/// 单 socket 极速引擎 (模型 b, 模板类)
+/// 单 socket 极速引擎 (模板类)
 /// @tparam TFastCounter  极速柜台类型
 template <class TFastCounter> class single_socket_engine : public lb_common::simple_thread {
 public:
@@ -48,9 +46,12 @@ public:
 
   /// 启动引擎线程
   int32 start();
-  /// 停止引擎线程
+  /// 回退接口: api_impl::start 失败时回退用
+  /// 仅停止已运行的引擎线程(未启动为 no-op), 不关闭 timer/queue/link (保持可重新 start);
+  /// 线程 join 后复位 simple_thread state, 允许再次 run()
   void stop();
-  /// 关闭接口: 完整销毁 (停线程 + 关定时器 + 关发送队列 + 关链接), 析构时调用
+  /// 关闭接口: 用户主动停止 (api_impl::stop 调用)
+  /// 停止引擎线程并关闭定时器/发送队列/链接, 之后不可再 start
   void close();
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
@@ -58,8 +59,8 @@ public:
 
   link_engine_outop *get_out_op() { return &link_outop_; }
 
-  single_socket_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr), stopped_(0) {}
-  ~single_socket_engine() override { stop(); }
+  single_socket_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr) {}
+  ~single_socket_engine() override { close(); }
 
   single_socket_engine(const single_socket_engine &) = delete;
   single_socket_engine &operator=(const single_socket_engine &) = delete;
@@ -83,10 +84,8 @@ private:
   aio_socket_link<TFastCounter> link_; ///< 极速交易链接
   TFastCounter *counter_;              ///< 极速柜台指针 (init 阶段注入)
   lb_common::lb_log *log_;             ///< 日志指针
-  lb_common::mthread recv_th_;         ///< 链接接收线程 (epoll, aio_tcp 需要非空接收线程)
   link_timer_op<aio_socket_link<TFastCounter>, single_socket_engine> timer_op_; ///< 链接定时器 (由 link_timer_op 决策)
   eng_link_op link_outop_;
-  int32 stopped_;                ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api

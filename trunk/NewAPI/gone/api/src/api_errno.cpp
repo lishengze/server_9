@@ -92,6 +92,8 @@ const char *api_strerror(int32_t err) {
     return "customer info not found";
   case LBAPI_ERR_INSERT_MAP:
     return "insert into map failed";
+  case LBAPI_ERR_FIND_MAP:
+    return "find from map failed";
   default:
     return "unknown error";
   }

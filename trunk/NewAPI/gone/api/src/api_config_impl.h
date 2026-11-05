@@ -1,6 +1,7 @@
 #pragma once
 
 #include "api_config.h"
+#include "order_trade_type.h"
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -39,7 +40,7 @@ public:
   int32_t set_attr(const char *attr_name, const std::string &attr_val) override;
   int32_t set_attr(const char *attr_name, bool attr_val) override;
   int32_t set_attr(const char *attr_name, const net_addr &attr_val) override;
-  int32_t set_attr(const char *attr_name, const std::map<uint8_t, int32_t> &attr_val) override;
+  int32_t set_attr(const char *attr_name, const std::map<uint16_t, int64_t> &attr_val) override;
 
   int32_t get_attr(const char *attr_name, int8_t &o_val) const override;
   int32_t get_attr(const char *attr_name, int16_t &o_val) const override;
@@ -49,7 +50,7 @@ public:
   int32_t get_attr(const char *attr_name, std::string &o_val) const override;
   int32_t get_attr(const char *attr_name, bool &o_val) const override;
   int32_t get_attr(const char *attr_name, net_addr &o_val) const override;
-  int32_t get_attr(const char *attr_name, std::map<uint8_t, int32_t> &o_val) const override;
+  int32_t get_attr(const char *attr_name, std::map<uint16_t, int64_t> &o_val) const override;
 
   int32_t validate() const override;
   int32_t copy_from(const api_config &src) override;
@@ -58,8 +59,10 @@ public:
 
   /// 获取极速柜台类型
   counter_type get_fast_counter_type() const { return fast_counter_type_; }
-  /// 获取市场类型
-  market_type_t get_market_type() const { return market_type_; }
+  /// 获取是否支持多客户 (仅对 gewei/fpga 极速柜台生效; fpga 多客户=网关模式; 不影响98柜台)
+  int32_t get_need_multi_cust() const { return need_multi_cust_; }
+  /// 获取市场类型 (MARKET_TYPE_* 字典, order_trade_type.h)
+  int16_t get_market_type() const { return market_type_; }
   /// 获取极速链接类型
   speed_link_type get_speed_link_type() const { return speed_link_type_; }
   /// 获取 Solarflare 网卡接口名 (tcpdirect 模式时必填)
@@ -74,7 +77,6 @@ public:
   net_addr get_counter98_addr_bak() const { return counter98_addr_bak_; }
   /// 获取回调模式 (direct/queued)
   callback_mode get_callback_mode() const { return callback_mode_; }
-  // run_mode 概念已合并到 fast_counter_type，无独立 getter
   /// 获取发送轮询批量数
   int32_t get_send_poll_num() const { return send_poll_num_; }
   /// 获取接收轮询批量数
@@ -103,6 +105,11 @@ public:
   const char *get_agw98_user_password() const { return agw98_user_password_; }
   /// 获取 AGW 用户登录超时 (秒)
   int32_t get_agw_user_login_timeout() const { return agw_user_login_timeout_; }
+  /// 获取 98 柜台登录模式 (0=同步登录, 1=快速登录跳过回报同步)
+  int32_t get_counter98_mode() const { return counter98_mode_; }
+  /// 获取 98 回报同步配置 (键=分区号, 值=回报记录号起点; 类型对齐 StreamInfo, RUL-34;
+  /// 空=agw 登录后不发回报同步; counter98 init 转换为柜台内部 uint8/int32 宽度)
+  const std::map<uint16_t, int64_t> &get_counter98_report_sync() const { return counter98_report_sync_; }
   // 日志相关
   /// 获取日志队列大小 (MB, 0=同步写文件)
   int32_t get_log_queue_size_mb() const { return log_queue_size_mb_; }
@@ -112,12 +119,6 @@ public:
   const char *get_api_instance_name() const { return api_instance_name_; }
   /// 获取日志输出目录
   const char *get_log_output_dir() const { return log_output_dir_; }
-/// 获取是否单链接单客户模式 (true=单客户, false=多客户)
-  bool get_single_cust_per_link() const { return single_cust_per_link_; }
-  /// 获取 98 柜台登录模式 (0=默认登录模式, 1=快速登录模式)
-  int32_t get_counter98_mode() const { return counter98_mode_; }
-  /// 获取回报同步分区/索引配置
-  const std::map<uint8_t, int32_t> &get_counter98_report_sync() const { return counter98_report_sync_; }
 
 private:
   /// 检查属性名是否已知且期望类型匹配
@@ -126,7 +127,8 @@ private:
   // ---- 成员变量(均有默认值) ----
 
   counter_type fast_counter_type_;  ///< 极速柜台类型(默认: fixed_98, 必须设置)
-  market_type_t market_type_;       ///< 市场类型(默认: 0, 必须设置, 1=上海, 2=深交所/北交所)
+  int32_t need_multi_cust_ = 0;     ///< 是否支持多客户(默认: 0不支持; 仅对gewei/fpga生效, fpga多客户=网关模式)
+  int16_t market_type_;             ///< 市场类型(MARKET_TYPE_* 字典; 默认: 0, 必须设置, 101=上海, 102=深交所)
   speed_link_type speed_link_type_; ///< 极速链接类型(默认: socket_single)
   char solarflare_iface_[64];       ///< Solarflare网卡接口名(默认: 空, tcpdirect模式时必须设置)
   net_addr speed_counter_addr_;     ///< 极速柜台地址-主(默认: 空, 必须设置)
@@ -134,8 +136,8 @@ private:
   net_addr counter98_addr_;         ///< 98柜台地址(默认: 空, 必须设置)
   net_addr counter98_addr_bak_;     ///< 98柜台地址-备(默认: 空)
   callback_mode callback_mode_;     ///< 回调模式(默认: direct)
-  int32_t send_poll_num_;           ///< 发送轮询批量数(默认: 6)
-  int32_t recv_poll_num_;           ///< 接收轮询批量数(默认: 2)
+  int32_t send_poll_num_;           ///< 发送轮询批量数(默认: 6, 配置<=0时取默认)
+  int32_t recv_poll_num_;           ///< 接收轮询批量数(默认: 4, 配置<=0时取默认)
   int32_t heartbeat_interval_;      ///< 心跳间隔秒数(默认: 5)
   int32_t max_reconnect_count_;     ///< 最大重连次数(默认: 0=无限)
   int32_t speed_engine_cpu_;        ///< 极速引擎CPU亲和(默认: -1)
@@ -143,18 +145,17 @@ private:
   int32_t callback_thread_cpu_;     ///< 回调线程CPU亲和(默认: -1)
   int32_t send_queue_size_mb_;      ///< 发送队列大小/MB(默认: 2)
   int32_t callback_queue_size_mb_;  ///< 回调队列大小/MB(默认: 8)
-  int32_t callback_wait_ms_;        ///< 回调线程epoll等待毫秒(默认: 10, 0=死轮询)
-  int32_t multi_io_wait_ms_;        ///< 多socket引擎epoll_wait等待毫秒(默认: 100, 0=不等待)
-  char agw98_user_[32];             ///< 98网关用户名(默认: 空, 必须设置)
+  int32_t callback_wait_ms_;        ///< 回调线程epoll等待毫秒(默认: 100, 0=死轮询)
+  int32_t multi_io_wait_ms_;        ///< 多socket引擎epoll_wait等待毫秒(默认: 1, 0=不等待)
+  char agw98_user_[MAX_AGW_USER_LEN]; ///< 98网关用户名(默认: 空, 必须设置)
   char agw98_user_password_[256];   ///< 98网关用户密码(默认: 空, 必须设置)
   int32_t agw_user_login_timeout_;  ///< AGW 登录超时秒数（默认: 10；建链超时由基础库提供）
+  int32_t counter98_mode_;          ///< 98柜台登录模式(默认: 0=同步登录; 1=快速登录跳过回报同步)
+  std::map<uint16_t, int64_t> counter98_report_sync_; ///< 98回报同步配置(默认: 空=不发回报同步; 类型对齐 StreamInfo)
   int32_t log_queue_size_mb_;       ///< 日志队列大小/MB(默认: 8, 0=同步写文件)
   int32_t log_level_;               ///< 日志级别(默认: 1=通知)
   char api_instance_name_[64];      ///< API实例名称(默认: 空, 必须设置)
   char log_output_dir_[256];        ///< 日志输出目录(默认: ./api_log)
-bool single_cust_per_link_;       ///< 单链接单客户模式(默认: true)
-  int32_t counter98_mode_;          ///< 98柜台登录模式(默认: 0=默认登录模式, 1=快速登录模式)
-  std::map<uint8_t, int32_t> counter98_report_sync_; ///< 回报同步分区/索引配置(默认: 空)
 };
 
 } // namespace lb_api

@@ -1,16 +1,19 @@
-// tcpdirect_engine - TCPDirect 极速引擎 (模型 a, 骨架)
+// tcpdirect_engine - TCPDirect 极速引擎
 //
 // 一个 TCPDirect stack (由 tcpdir_link 自包含) + 一个 tcpdir_link +
 // 一个 link_timer_op + 一个发送队列 + 一条专属线程.
 
 #pragma once
 
+// HAS_TCPDIRECT（api/CMakeLists.txt WITH_TCPDIRECT 检测后定义）：
+// 未定义 = 无 solarflare 环境的 socket-only 变体，本文件全部内容裁剪
+#ifdef HAS_TCPDIRECT
+
 #include "api_config_impl.h"
 #include "comm_sys.h"
 #include "link_timer_op.h"
 #include "mlog.h"
 #include "mthread.h"
-//#include "multi_socket_engine.h"
 #include "que_mth_buf.h"
 #include "simple_thread.h"
 #include "tcpdir_link.h"
@@ -28,7 +31,7 @@ using lb_common::uint32;
 using lb_common::uint64;
 using lb_common::uint8;
 
-/// TCPDirect 极速引擎 (模型 a, 模板类)
+/// TCPDirect 极速引擎 (模板类)
 /// @tparam TFastCounter  极速柜台类型
 template <class TFastCounter> class tcpdirect_engine : public lb_common::simple_thread {
 public:
@@ -47,9 +50,12 @@ public:
 
   /// 启动引擎线程
   int32 start();
-  /// 停止引擎线程
+  /// 回退接口: api_impl::start 失败时回退用
+  /// 仅停止已运行的引擎线程(未启动为 no-op), 不关闭 timer/queue/link (保持可重新 start);
+  /// 线程 join 后复位 simple_thread state, 允许再次 run()
   void stop();
-  /// 关闭接口: 完整销毁 (停线程 + 关定时器 + 关发送队列 + 关链接), 析构时调用
+  /// 关闭接口: 用户主动停止 (api_impl::stop 调用)
+  /// 停止引擎线程并关闭定时器/发送队列/链接, 之后不可再 start
   void close();
 
   /// 获取发送队列 (供柜台类 / api_impl 注入)
@@ -57,8 +63,8 @@ public:
 
   link_engine_outop *get_out_op() { return &link_outop_; }
 
-  tcpdirect_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr), stopped_(0) {}
-  ~tcpdirect_engine() override { stop(); }
+  tcpdirect_engine() : send_poll_num_(0), recv_poll_num_(0), counter_(nullptr), log_(nullptr) {}
+  ~tcpdirect_engine() override { close(); }
 
   friend class eng_heart_ans_op;
 
@@ -84,7 +90,8 @@ private:
   lb_common::lb_log *log_;                                              ///< 日志指针
   link_timer_op<tcpdir_link<TFastCounter>, tcpdirect_engine> timer_op_; ///< 链接定时器 (由 link_timer_op 决策)
   eng_link_op link_outop_;
-  int32 stopped_;               ///< 停止标志（防止 stop() 被重复调用）
 };
 
 } // namespace lb_api
+
+#endif // HAS_TCPDIRECT

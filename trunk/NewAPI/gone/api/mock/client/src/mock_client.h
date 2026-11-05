@@ -1,6 +1,6 @@
 // mock_client.h - MockClient 主类声明
 //
-// 职责：作为 mock_client 测试程序的顶层门面，封装被测 API（liblbapi.so）的
+// 职责：作为 mock_client 测试程序的顶层门面，封装被测 API（libg1api.so）的
 //   加载、初始化、测试执行与资源释放，并向外部暴露测试报告。
 //   内部协调：CallbackHandler（接收回报）、TestCaseRunner（执行用例）、
 //   TestReport（汇总结果）。
@@ -28,7 +28,7 @@ public:
     MockClient();
     ~MockClient();
 
-    /// 加载 API 动态库（直接链接 liblbapi.so）
+    /// 加载 API 动态库（直接链接 libg1api.so）
     bool load_api(const std::string& lib_path);
 
     /// 初始化（加载连接配置，创建 API 实例）
