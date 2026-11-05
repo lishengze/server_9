@@ -278,7 +278,9 @@
 
 ### 13.2 推送需要代理时的处理（**用后必须取消**）
 
-本机（`D:\code\work\api_trunk`）远端是 **SSH 地址** `git@github.com:lishengze/server_9.git`，而直连 22/443 均超时，必须挂 HTTP 代理 **`172.16.0.11:3128`**。
+远端是 **SSH 地址** `git@github.com:lishengze/server_9.git`。**推送顺序：先试直连 SSH，不通再走 HTTPS+代理。**
+ - **直连 SSH 可用时（2026-11-05 Linux 主机实测）**：`ssh -T git@github.com` 返回 `Hi lishengze!` → 直接 `git push origin master` 即可，**无代理、无残留**（实测一次推送成功）。
+ - **直连不通时（2026-10-29 Windows 主机）**：直连 22/443 均超时，必须挂 HTTP 代理 **`172.16.0.11:3128`**（见下方脚本/命令）。
 
 **推荐：直接用现成脚本**（内置探活重试 + 推后三步校验）：
 
@@ -297,7 +299,7 @@ git -c http.proxy=http://172.16.0.11:3128 push https://github.com/lishengze/serv
 
 **关键：推的是 HTTPS URL，不是 `origin`** —— `origin` 是 SSH 地址，SSH 过不了代理（见 §13.3）。
 
-**Linux 主机（2026-11-05 实测，`/home/lsz/code/work/api_trunk`）等价做法** —— 同一代理可用，无需 PowerShell：
+**代理路径的 Linux 等价命令（备用，2026-11-05 实测代理探活 200）** —— 无需 PowerShell：
 
 ```bash
 cd /home/lsz/code/work/api_trunk
@@ -317,6 +319,7 @@ git update-ref refs/remotes/origin/master FETCH_HEAD
 | SSH 经代理（`connect.exe -H`/`-T`） | ❌ 隧道 200 但无 banner | 隧道能建立、随后 `Connection timed out during banner exchange` → **代理只放行 HTTPS，不放行 SSH** |
 | HTTPS 凭据 | ✅ 无需交互 | Windows 凭据管理器已存 `git:https://github.com`（用户 `lishengze`） |
 | 进程环境变量 | ⚠️ 已存在 `HTTP_PROXY`/`HTTPS_PROXY` | 由启动 dsh 的父进程注入（User/Machine 级均为空、不落盘），非本规则所设；**校验以 `git config` 无 proxy 项为准** |
+| **直连 SSH（Linux 主机，2026-11-05）** | ✅ **可用** | `ssh -T git@github.com` → `Hi lishengze!`；`git push origin master` 成功（`143d763..49ec5b7`）。**Linux 主机优先直连 SSH，不必绕代理** |
 
 > 结论 1：**不要在 `GIT_SSH_COMMAND` / `ProxyCommand` / `connect.exe` 上花时间**——那是代理策略限制，不是参数问题。
 > 结论 2：**502 是常态性抖动，不是配置错误**。判定标准是 `curl -x <proxy> https://github.com/` 返回 200；拿到 200 后立刻推，成功率最高。
@@ -342,7 +345,7 @@ git -c http.proxy=http://172.16.0.11:3128 ls-remote https://github.com/lishengze
 
 ### 13.5 规则（硬性）
 
-1. **优先用 `git -c http.proxy=...` 一次性传参**（或直接跑 `task/tool/git_push_proxy.ps1`），不写配置 → 天然不会残留代理。
+1. **先试直连 SSH**（`ssh -T git@github.com`）；通了就 `git push origin master`，不用代理。需要代理时才用 `git -c http.proxy=...` 一次性传参（或跑 `task/tool/git_push_proxy.ps1`），不写配置 → 天然不会残留代理。
 2. 若必须写配置，**推送结束立即 `git config --unset http.proxy` / `--unset https.proxy`**，并在工作日志记一条"代理已取消"。
 3. **推送后必须执行 §13.4 三步校验**，不能只看 `push` 的返回码——漏了 ② 会让下次会话误判"未推送"而重复提交。
 4. **502 用重试循环处理**（探活 200 → 立即推；最长等 10~15 分钟），不要因一次 502 就判定"网络不可用"而放弃推送。

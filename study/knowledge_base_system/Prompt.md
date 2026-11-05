@@ -609,6 +609,6 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 | 不可用 | `svn` ❌（宿主机与容器内均无）、`rg` ❌、`/home/lsz/code/work/skill` 技能库 ❌ |
 | 编译/测试可行性 | ✅ `./build.sh Release`（自动转发 `docker exec otc`）；`build_cmake/` 有 liblbapi.so + mock 三件套；FTE `ute` 在 `/home/lsz/code/work/gt_test/work_atp/cmake/fte/bin/`；`gt_trunk` 源码就位（`FTE_DSE_FIFO_LEN=65536` 已生效） |
 | 复盘脚本 | ✅ `bash task/review/review_prepare.sh daily` 直接可跑（GNU date/数组均支持，**不再需要 Git bash**） |
-| Git 推送 | 远端是 SSH 地址且 **SSH 过不了代理**；直连 HTTPS 也会中断 → 走 HTTPS URL + 命令级代理 `172.16.0.11:3128`（2026-11-05 探活 200），**推完确认无 proxy 残留**。详见 `task/task_rule.md` §13 |
+| Git 推送 | 远端是 SSH 地址，**本机直连 SSH 可用**（2026-11-05 实测 `git push origin master` 一次通过）→ 优先直推；直连不通时再用 HTTPS URL + 代理 `172.16.0.11:3128`（探活 200），推完确认无 proxy 残留。详见 `task/task_rule.md` §13 |
 
 > 结论：**当前 Linux 主机是完整工作环境**——文档/规范、编译、功能回归、性能测试全部可做，仅缺 `svn`/`rg`。历史 Windows 主机（`D:\code\work\api_trunk`）无 docker、mingw 编不了（依赖 `sys/epoll.h`），只能做文档类工作——**该限制不适用于当前主机**。体系完整说明见 `study/knowledge_base_system/体系总览_工作规范与知识库体系.md`（§7 环境事实 / §7.4 缺口复核）。
