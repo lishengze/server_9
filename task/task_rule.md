@@ -138,7 +138,8 @@
 
 ## 4. 知识沉淀规则（来源：task_all.txt 第 5 行 + 自进化体系）
 
-1. 当前知识库目录：`study/knowledge_base_system`（唯一知识库，原业务级 `study/knowledge_base` 已融合进来），对工程各环节进行了总结。
+1. 当前知识库目录：`study/knowledge_base_system`（系统级：架构/开发/编译/部署/测试/排障/消息/数据流转/复盘体系；原业务级 `study/knowledge_base` 已整体并入本库），对工程各环节进行了总结。若其他项目另建业务级知识库 `study/knowledge_base`（业务细节/出入参/新旧映射），两级维度互补、互相引用而非重复。
+
 2. **每次工作完成后，对此次工作所学的经验、教训进行总结**，更新到对应的知识库文档中。
 3. **更新 `Prompt.md` 的内容**，使后续学习能覆盖最新知识（跨会话知识迁移）。
 4. 遵循**知识生命周期**：捕获 → 验证 → 提炼 → 索引 → 应用 → 保鲜。
@@ -168,7 +169,8 @@
 
 ## 6. 问题解决准则（来源：用户 2026-10-10 明确要求）
 
-1. **遇到尝试三次以上仍解决不了的问题**，**先完整学习知识库中已总结的内容**（`study/knowledge_base_system/`、`memory/`、`work_log/`、`study/<模块>.md` 深度专题），**再去拓展性地思考解决方案**，不能一直重复排查已知问题。
+1. **遇到尝试三次以上仍解决不了的问题**，**先完整学习知识库中已总结的内容**（`study/knowledge_base_system/`、`memory/`（含 `MEMORY.md` 索引）、`work_log/`、`study/<模块>.md` 深度专题），**再去拓展性地思考解决方案**，不能一直重复排查已知问题。
+
 2. 问题**解决之后**，若属于**新出现的问题**（知识库中未记录），**记得补充到知识库**（对应主题文档 + 记忆索引 + Prompt.md）。
 3. 此准则需跨会话长期遵守。
 
@@ -283,7 +285,7 @@
 
 1. **对话窗口**：用自然语言清晰表达任务意图、上下文、期望结果。
 2. **命令执行**：有充分权限，可执行安装/卸载等命令；高风险操作（删数据/改历史/装依赖）先确认。
-3. **项目规则**：`.chat/rules/project_rules.md` 面向所有 agent/会话，统一遵守。
+3. **项目规则**：`.chat/rules/project_rules.md` 面向所有 agent/会话，统一遵守。该文件**不入 git**（`.chat/.gitignore` 内容为 `*`），是**本机会话侧副本**，换主机需在本机重新生成；**唯一事实来源是 `task/task_rule.md`**，改完规则执行 `bash task/sync_rules.sh` 生成/更新副本（`-c` 只校验，不一致返回退出码 1），**不要手工复制粘贴**（2026-11-05 实测手工双写曾落后 §10 第 6 条与整个 §13；脚本化后由 §12 自检兜底）。
 4. **Skills**：按需从 skills 广场加载合适技能，并将技能用法沉淀进知识库。
 5. **工具选择**：文件/代码探索优先用 `list_files`/`search_relative`/`get_file_content`；编辑用 `replace_in_file`/`write_to_file`；构建测试部署用 `run_command`。
 6. **工具调用次数限制**：当系统因工具调用次数达到上限而询问"是否继续"时，**直接选择继续工作**，无需询问用户。保持工作连续性，避免无谓中断。
@@ -349,5 +351,95 @@
 - [ ] 多轮复查已执行且**末轮零修改**（六维度全勾、无待改项），台账已填（§11.3）？
 - [ ] 引用/路径/章节号已用 `rg` 全局核对，非凭记忆？
 - [ ] 已显式询问用户是否提交 git（若选择是，已设置合适 commit 并推送远程）？
+- [ ] 远程推送按 §13 走：必要时临时挂代理，**推送后已取消代理**？
 - [ ] docker 已关闭？
 - [ ] 若本次改动了 `task/task_rule.md`，已执行 `bash task/sync_rules.sh` 同步 `.chat/rules/project_rules.md`（`-c` 校验）？
+
+---
+
+## 13. git 提交与远程推送规则（代理，2026-10-29 新增，同日实测校准）
+
+### 13.1 提交前
+
+1. **先问用户**是否提交 git（§12）；用户同意后，**工作日志与知识库改动一并提交**，防止"代码提交了、日志没提交"。
+2. **检查待提交内容**：`git status --short` + `git diff --stat`，确认没有误提交临时脚本/大文件/敏感信息（含密码的脚本必须清理，见 §7 教训）。
+3. **先拉后推**：`git fetch` 刷新远端 tracking → 有他人提交则 `git merge`（或 `git pull --rebase`）后再推，避免 non-fast-forward。
+4. **注意工作区里别人的改动**：`git status` 里出现不是本轮产出的文件（并发会话/用户手改），**只 `git add` 自己产出的路径**，不 `git add -A`。
+
+### 13.2 推送需要代理时的处理（**用后必须取消**）
+
+远端是 **SSH 地址** `git@github.com:lishengze/server_9.git`。**推送顺序：先试直连 SSH，不通再走 HTTPS+代理。**
+ - **直连 SSH 可用时（2026-11-05 Linux 主机实测）**：`ssh -T git@github.com` 返回 `Hi lishengze!` → 直接 `git push origin master` 即可，**无代理、无残留**（实测一次推送成功）。
+ - **直连不通时（2026-10-29 Windows 主机）**：直连 22/443 均超时，必须挂 HTTP 代理 **`172.16.0.11:3128`**（见下方脚本/命令）。
+
+**推荐：直接用现成脚本**（内置探活重试 + 推后三步校验）：
+
+```powershell
+pwsh -NoProfile -File task/tool/git_push_proxy.ps1
+# 可选参数：-Branch dev -RepoUrl <https-url> -Proxy 172.16.0.11:3128 -MaxMinutes 15
+```
+
+**手动等价命令**：
+
+```powershell
+cd D:\code\work\api_trunk
+$env:GIT_TERMINAL_PROMPT='0'; $env:GCM_INTERACTIVE='never'   # 防交互卡死
+git -c http.proxy=http://172.16.0.11:3128 push https://github.com/lishengze/server_9.git master
+```
+
+**关键：推的是 HTTPS URL，不是 `origin`** —— `origin` 是 SSH 地址，SSH 过不了代理（见 §13.3）。
+
+**代理路径的 Linux 等价命令（备用，2026-11-05 实测代理探活 200）** —— 无需 PowerShell：
+
+```bash
+cd /home/lsz/code/work/api_trunk
+export GIT_TERMINAL_PROMPT=0
+curl -sS -m 8 -x http://172.16.0.11:3128 -o /dev/null -w '%{http_code}\n' https://github.com/   # 探活需 200
+git -c http.proxy=http://172.16.0.11:3128 push  https://github.com/lishengze/server_9.git master
+git -c http.proxy=http://172.16.0.11:3128 fetch https://github.com/lishengze/server_9.git master
+git update-ref refs/remotes/origin/master FETCH_HEAD
+```
+
+### 13.3 环境实测结论（2026-10-29 Windows 主机实测；2026-11-05 Linux 主机复核）
+
+| 路径 | 结果 | 说明 |
+|------|------|------|
+| 直连 `github.com:22` / `:443` | ❌ 超时 | `Test-NetConnection` 全 False |
+| HTTPS 经代理 | ✅ 200，但**会成片 502** | 实测出现过连续 ~7 分钟、20 次探活全部 502，之后恢复；**必须用重试循环，不能试 2~3 次就放弃** |
+| SSH 经代理（`connect.exe -H`/`-T`） | ❌ 隧道 200 但无 banner | 隧道能建立、随后 `Connection timed out during banner exchange` → **代理只放行 HTTPS，不放行 SSH** |
+| HTTPS 凭据 | ✅ 无需交互 | Windows 凭据管理器已存 `git:https://github.com`（用户 `lishengze`） |
+| 进程环境变量 | ⚠️ 已存在 `HTTP_PROXY`/`HTTPS_PROXY` | 由启动 dsh 的父进程注入（User/Machine 级均为空、不落盘），非本规则所设；**校验以 `git config` 无 proxy 项为准** |
+| **直连 SSH（Linux 主机，2026-11-05）** | ✅ **可用** | `ssh -T git@github.com` → `Hi lishengze!`；`git push origin master` 成功（`143d763..49ec5b7`）。**Linux 主机优先直连 SSH，不必绕代理** |
+
+> 结论 1：**不要在 `GIT_SSH_COMMAND` / `ProxyCommand` / `connect.exe` 上花时间**——那是代理策略限制，不是参数问题。
+> 结论 2：**502 是常态性抖动，不是配置错误**。判定标准是 `curl -x <proxy> https://github.com/` 返回 200；拿到 200 后立刻推，成功率最高。
+> 结论 3（2026-11-05 Linux 主机复核）：代理地址**跨主机一致可用**（探活 200）；直连 HTTPS 大包会中断（8s 收 366KB 后超时）→ 仍必须走代理。Linux 侧只需 `git -c http.proxy=... <https-url>`，无 PowerShell/凭据管理器依赖。
+
+### 13.4 推送后必须做的三步校验（缺一步就算没推完）
+
+```powershell
+# ① 确认无代理配置残留（应无输出）
+git config --list --show-origin | Select-String -Pattern 'proxy'
+
+# ② 同步远端跟踪引用（推的是 URL 不是 remote 名，否则 git status 一直显示 ahead）
+git -c http.proxy=http://172.16.0.11:3128 fetch https://github.com/lishengze/server_9.git master
+git update-ref refs/remotes/origin/master FETCH_HEAD
+
+# ③ 验证远端已收到：输出 SHA 应等于本地 git rev-parse HEAD
+git -c http.proxy=http://172.16.0.11:3128 ls-remote https://github.com/lishengze/server_9.git refs/heads/master
+```
+
+收尾判据：`git status -sb` 显示 `## master...origin/master`（无 ahead），`git config` 无 proxy 项，`git remote -v` 仍是原 SSH 地址。
+
+> `task/tool/git_push_proxy.ps1` 已把推送 + ②③ + 残留校验全部内置，一条命令完成。
+
+### 13.5 规则（硬性）
+
+1. **先试直连 SSH**（`ssh -T git@github.com`）；通了就 `git push origin master`，不用代理。需要代理时才用 `git -c http.proxy=...` 一次性传参（或跑 `task/tool/git_push_proxy.ps1`），不写配置 → 天然不会残留代理。
+2. 若必须写配置，**推送结束立即 `git config --unset http.proxy` / `--unset https.proxy`**，并在工作日志记一条"代理已取消"。
+3. **推送后必须执行 §13.4 三步校验**，不能只看 `push` 的返回码——漏了 ② 会让下次会话误判"未推送"而重复提交。
+4. **502 用重试循环处理**（探活 200 → 立即推；最长等 10~15 分钟），不要因一次 502 就判定"网络不可用"而放弃推送。
+5. 代理地址属环境信息，**换网络环境需向用户确认**，不假设固定值。
+6. 推送失败先分辨是"网络不通"还是"权限/冲突"：`ssh ... Connection timed out` = 网络；`CONNECT tunnel failed, response 502` = 代理出口抖动（重试）；`Could not read from remote repository` 且网络可达 = 权限/仓库名。
+
+> 同类案例：其他项目（origin 亦为 SSH）在 `SHHQ-office` wifi 下同样直连超时，改用 HTTPS URL + 代理后 fetch/merge/push 全部成功。
