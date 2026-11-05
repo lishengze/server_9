@@ -213,7 +213,7 @@
 
 1. **对话窗口**：用自然语言清晰表达任务意图、上下文、期望结果。
 2. **命令执行**：有充分权限，可执行安装/卸载等命令；高风险操作（删数据/改历史/装依赖）先确认。
-3. **项目规则**：`.chat/rules/project_rules.md` 面向所有 agent/会话，统一遵守。
+3. **项目规则**：`.chat/rules/project_rules.md` 面向所有 agent/会话，统一遵守。该文件**不入 git**（`.chat/.gitignore` 内容为 `*`），是**本机会话侧副本**，换主机需在本机重新同步；**唯一事实来源是 `task/task_rule.md`**，改完规则立即整文件复制过去，否则两份会漂移（2026-11-05 实测曾落后 §10.6 与整个 §13）。
 4. **Skills**：按需从 skills 广场加载合适技能，并将技能用法沉淀进知识库。
 5. **工具选择**：文件/代码探索优先用 `list_files`/`search_relative`/`get_file_content`；编辑用 `replace_in_file`/`write_to_file`；构建测试部署用 `run_command`。
 6. **工具调用次数限制**：当系统因工具调用次数达到上限而询问"是否继续"时，**直接选择继续工作**，无需询问用户。保持工作连续性，避免无谓中断。
@@ -297,7 +297,18 @@ git -c http.proxy=http://172.16.0.11:3128 push https://github.com/lishengze/serv
 
 **关键：推的是 HTTPS URL，不是 `origin`** —— `origin` 是 SSH 地址，SSH 过不了代理（见 §13.3）。
 
-### 13.3 环境实测结论（2026-10-29）
+**Linux 主机（2026-11-05 实测，`/home/lsz/code/work/api_trunk`）等价做法** —— 同一代理可用，无需 PowerShell：
+
+```bash
+cd /home/lsz/code/work/api_trunk
+export GIT_TERMINAL_PROMPT=0
+curl -sS -m 8 -x http://172.16.0.11:3128 -o /dev/null -w '%{http_code}\n' https://github.com/   # 探活需 200
+git -c http.proxy=http://172.16.0.11:3128 push  https://github.com/lishengze/server_9.git master
+git -c http.proxy=http://172.16.0.11:3128 fetch https://github.com/lishengze/server_9.git master
+git update-ref refs/remotes/origin/master FETCH_HEAD
+```
+
+### 13.3 环境实测结论（2026-10-29 Windows 主机实测；2026-11-05 Linux 主机复核）
 
 | 路径 | 结果 | 说明 |
 |------|------|------|
@@ -309,6 +320,7 @@ git -c http.proxy=http://172.16.0.11:3128 push https://github.com/lishengze/serv
 
 > 结论 1：**不要在 `GIT_SSH_COMMAND` / `ProxyCommand` / `connect.exe` 上花时间**——那是代理策略限制，不是参数问题。
 > 结论 2：**502 是常态性抖动，不是配置错误**。判定标准是 `curl -x <proxy> https://github.com/` 返回 200；拿到 200 后立刻推，成功率最高。
+> 结论 3（2026-11-05 Linux 主机复核）：代理地址**跨主机一致可用**（探活 200）；直连 HTTPS 大包会中断（8s 收 366KB 后超时）→ 仍必须走代理。Linux 侧只需 `git -c http.proxy=... <https-url>`，无 PowerShell/凭据管理器依赖。
 
 ### 13.4 推送后必须做的三步校验（缺一步就算没推完）
 

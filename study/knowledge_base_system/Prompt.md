@@ -600,15 +600,15 @@ LD_LIBRARY_PATH=build_cmake/lib ./build_cmake/bin/mock_client --plan mock/client
 5. 按第六节的"回答风格"输出回答
 ```
 
-## 九、环境事实（2026-10-29 实测校验）
+## 九、环境事实（2026-11-05 Linux 主机复核；2026-10-29 Windows 主机历史）
 
-| 项 | 事实 |
+| 项 | 事实（当前 Linux 主机） |
 |----|------|
-| 当前工作区 | Windows `D:\code\work\api_trunk`（git `origin=git@github.com:lishengze/server_9.git`，分支 `master`） |
-| 可用 | `git`、Git bash（GNU date ✅）、`cmake`、`make`/`g++`（w64devkit mingw）、`python`、`node` |
-| 不可用 | `docker` ❌、`svn` ❌、`rg` ❌、WSL 发行版 ❌ |
-| 编译可行性 | 依赖 `sys/epoll.h`（`comm_sock.h`/`wait_poll.h`）→ **Linux-only**；mingw 编译不了，`build.sh` 宿主机分支会 `docker exec` 失败 |
-| 复盘脚本 | `task/review/review_prepare.sh` 须用 **Git bash**（`C:\Program Files\Git\bin\bash.exe`）运行；w64devkit 的 bash 不支持数组（第 63 行 `FILES=()` 语法报错 exit=2）、`date` 也无 `-d` |
-| Git 推送 | 远端是 SSH 地址但 **SSH 过不了代理**；须用 HTTPS URL + 命令级代理 `172.16.0.11:3128` 推送，**推完取消代理**。详见 `task/task_rule.md` §13 |
+| 当前工作区 | `/home/lsz/code/work/api_trunk`（git `origin=git@github.com:lishengze/server_9.git`，分支 `master`，HEAD `143d763`） |
+| 可用 | `git`、`bash`/`zsh`、`cmake` 3.19、`make`/`g++`、`python3`、`node`、**`docker`**（容器 `otc` 已在运行，挂载 `/home/lsz/code → /mnt`，容器内 gcc 4.8.5 / 23 核） |
+| 不可用 | `svn` ❌（宿主机与容器内均无）、`rg` ❌、`/home/lsz/code/work/skill` 技能库 ❌ |
+| 编译/测试可行性 | ✅ `./build.sh Release`（自动转发 `docker exec otc`）；`build_cmake/` 有 liblbapi.so + mock 三件套；FTE `ute` 在 `/home/lsz/code/work/gt_test/work_atp/cmake/fte/bin/`；`gt_trunk` 源码就位（`FTE_DSE_FIFO_LEN=65536` 已生效） |
+| 复盘脚本 | ✅ `bash task/review/review_prepare.sh daily` 直接可跑（GNU date/数组均支持，**不再需要 Git bash**） |
+| Git 推送 | 远端是 SSH 地址且 **SSH 过不了代理**；直连 HTTPS 也会中断 → 走 HTTPS URL + 命令级代理 `172.16.0.11:3128`（2026-11-05 探活 200），**推完确认无 proxy 残留**。详见 `task/task_rule.md` §13 |
 
-> 结论：Windows 本机只做文档/知识/规范类工作；编译、功能回归、性能测试需 Linux 主机或 WSL2+docker `otc`。体系层面完整说明（工作规范/复盘手册/缺口清单）见 `study/knowledge_base_system/体系总览_工作规范与知识库体系.md`。
+> 结论：**当前 Linux 主机是完整工作环境**——文档/规范、编译、功能回归、性能测试全部可做，仅缺 `svn`/`rg`。历史 Windows 主机（`D:\code\work\api_trunk`）无 docker、mingw 编不了（依赖 `sys/epoll.h`），只能做文档类工作——**该限制不适用于当前主机**。体系完整说明见 `study/knowledge_base_system/体系总览_工作规范与知识库体系.md`（§7 环境事实 / §7.4 缺口复核）。

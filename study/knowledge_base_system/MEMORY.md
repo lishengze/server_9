@@ -15,8 +15,8 @@
 ## 核心结论速查（体系层）
 
 - **一次任务三份产出**：任务交付物 + work_log 条目 + 提炼后的知识条目，缺一不可。
-- **复盘一句话触发**：说"进行 daily/weekly/monthly 复盘" → 先跑 `review_prepare.sh` 刷新输入（本机须用 Git bash）→ 核心五问 → 成果五转化 → 更新知识库/`Prompt.md` → 写报告 → 知识库融合核查。
-- **本机（Windows）只能做文档类工作**：无 docker/svn/WSL，项目依赖 `sys/epoll.h` 无法用 mingw 编译；编译/回归/性能测试需 Linux 主机或 WSL2+docker。
+- **复盘一句话触发**：说"进行 daily/weekly/monthly 复盘" → 先跑 `review_prepare.sh` 刷新输入（本机 Linux 直接 `bash` 即可）→ 核心五问 → 成果五转化 → 更新知识库/`Prompt.md` → 写报告 → 知识库融合核查。
+- **本机（2026-11-05 复核）= Linux + docker `otc` 可用**：编译（`./build.sh Release` 自动转发容器）、功能回归/性能测试（mock_client / gone_counter_mock / counter98_mock / FTE `ute`）都能做；缺 `svn`、`rg`。历史 Windows 主机的"只能做文档类工作"结论不适用于当前主机。
 
 ## 知识库两级维度（融合方案）
 - **系统级（本目录）**：回答"怎么在系统上干活"——架构、开发、编译、部署、测试、排障、性能调优。由 `NewAPI_知识库.md` + `Prompt.md` 承载。
@@ -26,4 +26,4 @@
 1. 新会话先读 `Prompt.md`（角色 + 加载指引 + 分析框架）。
 2. 再读 `NewAPI_知识库.md`（按目录定位到具体章节）。
 3. 需要工作规范/复盘/环境事实时读 `体系总览_工作规范与知识库体系.md`。
-4. 记忆速查见会话记忆目录 `MEMORY.md`（本机：`C:\Users\lsz-work\.chat\projects\code-work-api_trunk\memory\MEMORY.md`；旧主机为 `/home/lsz/.chat/projects/home-lsz-code-work-api_trunk/memory/MEMORY.md`）。
+4. L0 记忆速查：本机（Linux）无 `~/.chat`，由会话运行时记忆提供；仓库 `memory/` 仅 `self_evolution.md`。历史主机路径：Windows `C:\Users\lsz-work\.chat\projects\code-work-api_trunk\memory\MEMORY.md`、旧 Linux `/home/lsz/.chat/projects/home-lsz-code-work-api_trunk/memory/MEMORY.md`。
