@@ -48,6 +48,7 @@
 33. **GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复** ✅（§40）：GCC 4.8.5（C++11）兼容（mutils.h is_integral_v→is_integral<T>::value、mthread.h stdatomic.h→atomic、mock_client 补 iostream）；**counter98 发送队列"预留/提交/消费长度不一致"bug**——所有 `deal_*_req` 预留上限 take_len(2064) 提交 take_len+sizeof，但 reader 按 sizeof+data_len(=sizeof+msg_len) 消费，导致 reader 把预留空隙读成大量零长度 98 SEND_MSG 事件并错位，`leave_time_ptr` 变垃圾指针崩溃（GOne 测试 2/5 委托买入 SIGSEGV）。修复=先组包到临时缓冲确定 msg_len，再用新 `send_req_msg()` 按精确长度预留/拷贝/提交，20 个调用点全部改造；GOne 功能测试 5/5 通过。**队列铁律：预留==提交==读者消费口径三者一致**。详细见 `task/api_dev/counter98_queue_fix.md`
 34. **结构性重构四件套** ✅（§41，2026-10-19）：① **stop/close 分离**——stop() 轻量（join+关链接，保留 init 资源可重启）、close() 完整（+关定时器/队列/log，析构调用），引擎/callback_manager/api_instance 统一双接口，idle_engine.close() no-op；② **回调事件扩展**——cb_event_type 新增 logout=16 / trade_counter=17，新增 LogoutAns 结构，api_callback 新增 on_logout / on_trade_counter（direct/queued 双模式）；③ **账户缓存实例化**——GwLoginCache（gw 单客户 local_session_ / 多客户 login_cache_）+ C98SessionCache（counter98），从全局单例改为实例缓存消除全局锁，登录成功回报时缓存（RUL-15 发布屏障），断链 collect_relogin_events() 批量自动重登；④ **撤单优化**——OrderRtn.order_sys_no 直接返回 FTE clordno，build_cancel_msg orig_clordno=req.order_sys_no（orig_client_seq_id 在前、orig_clordno 在后），消除 order_locators 原单定位映射。回归：GOne 功能 5/5 + perf 90053/90053；GW(FTE) 功能 5/5（撤单 err_code=50046 符合预期）
 35. **仓库目录核对与 api-compare**（§42，2026-11-05）：代码树 = `gone/api`（主实现，编译入口在 `gone/api/CMakeLists.txt`）+ `gone/api-compare`（框架开发者转存版，**未接入 CMake、不编译**，仅作对照取长，分析见 `task/api_dev/api_compare.md`）+ `gone/counter98` + `gone/include`（g1 头）+ `common` + `solarflare`；`-DBUILD_MOCK=ON` 产出 mock 四目标（client/98_counter/gone_counter/perf_client）+ `api_net_time_capture`；**引用 FTE 源码请用 `…/DYS-FRAMEWORK/fte/include/…`（无 `fte/fte` 双段），FTE 文档在 `…/fte/doc/`、任务单是 `task/api_dev/task_dev.txt`**；`study/*.md` 的行号未随代码更新，勿照抄。
+36. **SVN r21/r22 上游接口变更与冲突**（§43，2026-11-06）：r21 由框架开发者提交「统一委托入口 + 登录/重连/回报重构」，是 **breaking change**——库名 `liblbapi.so`→**`libg1api.so`**、三个委托入口统一为 `order_insert`（ETF 用 `side='D'/'E'`）、`on_error`→**`on_event(api_event_type)`**、`on_link_status` 柜台参数改枚举、地址配置改 `lb_api::net_addr` 结构、`single_cust_per_link`→`need_multi_cust`、市场 1/2/3→**101/102/109**、数量 **股×100**、`OrderReq` 的 `api_arrive_time_ns/api_leave_time_ns` **已移除**（性能打点须改客户端口径）。当前 `trunk/NewAPI/gone/api/mock/client/src/` 有 **7 文件 11 块 SVN 冲突未解决**（`.mine/.r17/.r22` 且已被提交进 git），处置策略「接口跟上游、能力保本地」；另有 **47 处 `待确认/todo`**（src 28 + include 19）待柜台联调。详见 `task/svn/svn_analysis_20261106.md`。
 
 ## 三、分析框架
 
@@ -180,6 +181,9 @@
 | **GW 柜台分析** | `trunk/NewAPI/gone/api/gw_counter.md`（FTE 协议/撤单优化/单客户vs多客户/原子状态/时序图） |
 | **GOne 柜台分析** | `trunk/NewAPI/gone/api/gone_counter.md`（G1 协议/base/direct双链路/gateway多客户/模板特化/类图时序图） |
 | **SVN 提交分析** | `task/svn/svn_update_20261019.md`（M/A/? 状态分类 + 分批提交命令 + 注意事项） |
+| **SVN 冲突与待确认分析** | `task/svn/svn_analysis_20261106.md`（r21/r22 接口变更、7 文件 11 块冲突逐块处置、47 处待确认、执行步骤与验证命令） |
+| **上游升级说明** | `trunk/NewAPI/gone/api/开发者升级说明.txt`（r21 权威迁移指引）、`个微和98柜台-消息组包解包对比分析.txt` |
+| **上线离线用例** | `trunk/NewAPI/gone/api/test/`（order_insert_test / test_api_config / test_order_dispatch + run_order_insert_test.sh，743 项检查） |
 
 ## 五、常见问答模板
 

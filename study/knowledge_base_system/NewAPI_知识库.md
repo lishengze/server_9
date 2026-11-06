@@ -53,6 +53,7 @@
 40. [GCC 4.8.5 兼容 + counter98 队列提交长度 bug 修复](#40-gcc-485-兼容--counter98-队列提交长度-bug-修复)
 41. [结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化](#41-结构性重构stopclose-分离--回调事件扩展--账户缓存实例化--撤单优化2026-10-19)
 42. [仓库目录核对与 api-compare 参考模块](#42-仓库目录核对与-api-compare-参考模块2026-11-05)
+43. [SVN r21/r22 上游接口变更与冲突处置](#43-svn-r21r22-上游接口变更与冲突处置2026-11-06)
 
 ---
 
@@ -2524,3 +2525,49 @@ trunk/NewAPI/
 - ✅ 已核对：编译目标与产物、mock 四目标、`doc/` 设计文档、FTE 源码与文档路径、`task_dev.txt`。
 - ⚠️ **未核对**：`study/*.md`（L3 深度专题 `counter.md`/`gw_counter.md`/`gone_counter.md`/`question.md`/`技术实现.md`/`数据流转.md`/`产品使用.md`）里的**代码行号**仍按 2026-09/10 版本撰写，引用前按本节口径核对，别照抄行号。
 - ⚠️ `gone/api-compare/doc/`（`ARCHITECTURE.md`/`BUILD.md`/`LOGIN_COMPLIANCE.md`/`REQUIREMENTS.md`）与 `gone/api/doc/ARCHITECTURE.md` 是两套，引用时写明是哪一套。
+
+---
+
+## 43. SVN r21/r22 上游接口变更与冲突处置（2026-11-06）
+
+> 完整分析见 `task/svn/svn_analysis_20261106.md`（冲突逐块、47 处待确认、执行步骤、验证命令）。本节只留检索用结论。
+
+### 43.1 版本线（SVN `https://jyjs2.svn.gtja.net/svn/NewAPI/trunk`）
+
+| 版本 | 内容 | 影响 |
+|------|------|------|
+| r18~r20 | 本方提交（GCC4.8.5 兼容、三 counter 文档、stop/close 分离、回调扩展、98 撤单优化） | 基线 |
+| **r21** | 框架开发者 zouyi024572：**统一委托入口 + 登录/重连/回报重构**，新增正式 98 协议库 `gone/api/counter98/`、`gone/api/test/` 离线用例、两份升级说明 txt | **breaking change**，与本地 mock 增强正面重叠 |
+| r22 | `aio_socket_link.cpp` 链接 family 修复 | 无冲突 |
+
+### 43.2 对外接口不兼容清单（必须按此改，否则编译/运行必错）
+
+| 维度 | 旧 | 新 |
+|------|----|----|
+| 库名 | `liblbapi.so` | **`libg1api.so`**（`libg1api_sf.so` 为 Solarflare 变体；新旧头文件不可混用） |
+| 委托入口 | `order_insert` + `etf_order_insert` + `bse_order_insert` | **统一 `order_insert`**（ETF 用 `side='D'/'E'`，北交所填市场 109） |
+| 错误回调 | `on_error(err_event_type,…)` | **`on_event(api_event_type,…)`** |
+| 链接回调 | `on_link_status(int32_t counter_type,…)` | **`on_link_status(counter_type,…)`**（枚举）；新增 `on_counter_status` / `on_logout` |
+| 地址配置 | `set_attr("speed_counter_addr","ip:port")` | **`set_attr(name, lb_api::net_addr{ip,port})`** |
+| 多客户 | `single_cust_per_link` | **`need_multi_cust`**（true→0 / false→1），柜台类型 `gewei=1`/`fpga=2`，旧值 3 废弃 |
+| 市场字典 | 1/2/3 | **101 沪 / 102 深 / 109 北交所** |
+| 数量口径 | 股 | **股×100**（100 股 ⇒ 10000） |
+| 计时字段 | `OrderReq.api_arrive_time_ns/api_leave_time_ns` | **已移除**（性能打点须改客户端时间戳口径） |
+| 其他 | `zero_reason` 为 string；查询 `user_seq_id` | 定长字符数组；`client_seq_id` |
+
+### 43.3 冲突处置要点（7 文件 11 块，全在 `mock/client/src/`）
+
+- **策略：接口跟上游、能力保本地**——`include/*` 是对外契约按上游；`mock/client/**` 是自有测试工具，保留 test_plan/logger/result_analysis/trade 链接就绪判断/查询测试。
+- 逐文件处置见分析文档 §3.2；重点是 `mock_client.cpp`（配置写入 string→`net_addr`、`check_attr` 失败即抛）与 `perf_runner.cpp`（打点字段下线，**不可沿用上游"空统计"**，否则性能报告恒 0）。
+- 上游 r21 从 mock 的 `TestCaseType` 删除了 10 个查询类型，属**功能退化**，本地应保留并适配新接口。
+
+### 43.4 常踩的"隐藏地雷"（不在冲突列表里）
+
+1. `perf_runner.cpp:120/127`、`test_case_runner.cpp:448` 引用已下线字段/接口 → 编译必挂。
+2. `mock/client/config/*.json`：4 个连接配置仍写 `market_type: 1`，`cases/*_expected.json` 仍期望 1；`single_cust_per_link` 键需换 `need_multi_cust`。
+3. 撤单三号码：`client_req_no`（本次撤单号）/`client_seq_id`（原委托客户号）/`order_sys_no`（原委托柜台号），用"三者互异"用例验证。
+4. 提交红线：冲突未解决即入库（提交 `bc03c3b` 曾把 `<<<<<<< .mine` 与 `.mine/.r17/.r22` 提交进 git）→ 提交前必须 `git diff --check` + 冲突标记扫描为空。
+
+### 43.5 待确认分布（47 处 = src 28 + include 19）
+
+`counter98.cpp` 16（字典/登录语义/回报分类）、`struct_req.h` 14（14 类业务回报未知）、`gw_counter_direct.cpp` 9（FTE side/order_type/order_sys_no）、`counter98.h` 2、`common_struct.h` 2（`transact_time`）、`order_trade_type.h` 2、`api_interface.h` 1（卖券还款 `side='X'`）。**全部依赖真实柜台联调，离线只能保证不崩、不能保证业务正确。**
