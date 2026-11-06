@@ -2,7 +2,8 @@
 //
 // 职责：在功能测试（登录、委托等）通过的基础上，对 FTE 柜台委托请求通路做
 //   性能测试：匀速发单（间隔 = 1/TPS 秒）、收集每笔请求在 api 内的处理耗时
-//   （api_leave_time_ns - api_arrive_time_ns）、计算统计指标并输出到报告文件。
+//   （计时口径 v2：客户端 CLOCK_MONOTONIC，order_insert 调用耗时 = 组包+入队）、计算统计指标并输出到报告文件。
+//   注：r21 起 OrderReq 的 api_arrive_time_ns/api_leave_time_ns 已下线，不再有 API 内部打点。
 //
 // 使用方式：在 connection_config.json 的 "perf_test" 配置块中设置
 //   enable=true 及测试参数，mock_client 在功能测试完成后自动执行性能测试。
@@ -36,7 +37,7 @@ struct PerfConfig {
     int32_t cpu_id = -1;        ///< CPU 绑定目标，-1 表示不绑定
     std::string report_file = "result/perf_report.txt"; ///< 报告输出文件
     std::string counter_name = "FTE"; ///< 柜台名称（用于报告标题，FTE/GOne 等）
-    std::string net_time_map_file;    ///< 网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns），空则不写
+    std::string net_time_map_file;    ///< 网卡抓包关联映射文件（client_seq_id -> 发送前单调时钟 ns），空则不写
 
     // 委托模板（用于构造性能测试的委托请求）
     std::string fund_account_id;
@@ -97,7 +98,7 @@ private:
     double actual_tps_ = 0.0;   ///< 实际 TPS
     double test_time_sec_ = 0.0;///< 实际测试时长（秒）
     std::string cpu_bind_desc_; ///< CPU 绑定描述
-    std::vector<std::pair<int64_t, uint64_t>> net_time_map_; ///< (client_seq_id, api_arrive_time_ns)
+    std::vector<std::pair<int64_t, uint64_t>> net_time_map_; ///< (client_seq_id, 发送前 CLOCK_MONOTONIC ns)
 };
 
 } // namespace mock

@@ -25,7 +25,6 @@ enum class TestCaseType {
     OrderCancel,
     TradeRtn,
     WaitHeartbeat,
-<<<<<<< .mine
     None,       // 无请求（如仅等待异步回报）或无预期字段
     // 查询类型
     OrderQuery,
@@ -38,8 +37,6 @@ enum class TestCaseType {
     CustMarginAvlQuery,
     AssetDebtsQuery,
     CreditMaxOrderQtyQuery,
-=======
->>>>>>> .r22
     Unknown
 };
 

@@ -107,18 +107,6 @@ bool MockClient::init_from_json(const JsonValue& config) {
             return false;
         }
 
-<<<<<<< .mine
-        // 设置配置属性
-        int32_t ret_attr = 0;
-        ret_attr = cfg->set_attr("api_instance_name", config["api_instance_name"].as_string().c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(api_instance_name)=" << ret_attr);
-        ret_attr = cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(market_type)=" << ret_attr);
-        ret_attr = cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(fast_counter_type)=" << ret_attr);
-        ret_attr = cfg->set_attr("speed_link_type", static_cast<int32_t>(config["speed_link_type"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(speed_link_type)=" << ret_attr);
-=======
         const auto check_attr = [](const char* name, int32_t result) {
             if (result != 0) {
                 throw std::runtime_error(std::string("配置项 ") + name + " 写入失败: " + std::to_string(result));
@@ -136,16 +124,7 @@ bool MockClient::init_from_json(const JsonValue& config) {
             addr.port = static_cast<int32_t>(port);
             check_attr(name, cfg->set_attr(name, addr));
         };
->>>>>>> .r22
 
-<<<<<<< .mine
-        // 柜台地址
-        std::string speed_ip = config["speed_counter_addr"]["ip"].as_string();
-        int speed_port = config["speed_counter_addr"]["port"].as_int();
-        std::string speed_addr = speed_ip + ":" + std::to_string(speed_port);
-        ret_attr = cfg->set_attr("speed_counter_addr", speed_addr.c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(speed_counter_addr)=" << ret_attr);
-=======
         check_attr("api_instance_name", cfg->set_attr("api_instance_name", config["api_instance_name"].as_string()));
         check_attr("market_type", cfg->set_attr("market_type", static_cast<int8_t>(config["market_type"].as_int())));
         check_attr("fast_counter_type", cfg->set_attr("fast_counter_type", static_cast<int32_t>(config["fast_counter_type"].as_int())));
@@ -161,40 +140,18 @@ bool MockClient::init_from_json(const JsonValue& config) {
         check_attr("agw_user_login_timeout", cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int())));
         check_attr("log_level", cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int())));
         check_attr("log_output_dir", cfg->set_attr("log_output_dir", config["log_output_dir"].as_string()));
->>>>>>> .r22
 
-<<<<<<< .mine
-        std::string c98_ip = config["counter98_addr"]["ip"].as_string();
-        int c98_port = config["counter98_addr"]["port"].as_int();
-        std::string c98_addr = c98_ip + ":" + std::to_string(c98_port);
-        ret_attr = cfg->set_attr("counter98_addr", c98_addr.c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(counter98_addr)=" << ret_attr);
-
-        ret_attr = cfg->set_attr("98agw_user", config["98agw_user"].as_string().c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(98agw_user)=" << ret_attr);
-        ret_attr = cfg->set_attr("98agw_user_password", config["98agw_user_password"].as_string().c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(98agw_user_password)=" << ret_attr);
-        ret_attr = cfg->set_attr("heartbeat_interval", static_cast<int32_t>(config["heartbeat_interval"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(heartbeat_interval)=" << ret_attr);
-        ret_attr = cfg->set_attr("agw_user_login_timeout", static_cast<int32_t>(config["agw_user_login_timeout"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(agw_user_login_timeout)=" << ret_attr);
-        ret_attr = cfg->set_attr("log_level", static_cast<int32_t>(config["log_level"].as_int()));
-        if (ret_attr) LOG_DEBUG("set_attr(log_level)=" << ret_attr);
-        ret_attr = cfg->set_attr("log_output_dir", config["log_output_dir"].as_string().c_str());
-        if (ret_attr) LOG_DEBUG("set_attr(log_output_dir)=" << ret_attr);
-
-=======
->>>>>>> .r22
         // 可选：发送队列大小(MB)，默认 2MB；压测高 TPS 时建议调大避免 SEND_QUEUE_FULL
         if (config.has("send_queue_size_mb")) {
-            ret_attr = cfg->set_attr("send_queue_size_mb", static_cast<int32_t>(config["send_queue_size_mb"].as_int()));
-            if (ret_attr) LOG_DEBUG("set_attr(send_queue_size_mb)=" << ret_attr);
+            check_attr("send_queue_size_mb", cfg->set_attr("send_queue_size_mb",
+                static_cast<int32_t>(config["send_queue_size_mb"].as_int())));
         }
 
-        // 可选：单链接单客户模式（默认 true）。true=单客户（登录缓存为成员，委托直接用），false=多客户（以 fund_account_id 为 key 存 map）
-        if (config.has("single_cust_per_link")) {
-            ret_attr = cfg->set_attr("single_cust_per_link", config["single_cust_per_link"].as_bool());
-            if (ret_attr) LOG_DEBUG("set_attr(single_cust_per_link)=" << ret_attr);
+        // 可选：客户模式。新键 need_multi_cust（1=多客户）；兼容旧键 single_cust_per_link（语义相反）
+        if (!config.has("need_multi_cust") && config.has("single_cust_per_link")) {
+            const bool single_cust = config["single_cust_per_link"].as_bool();
+            check_attr("need_multi_cust", cfg->set_attr("need_multi_cust",
+                static_cast<int32_t>(single_cust ? 0 : 1)));
         }
 
         // 创建回调

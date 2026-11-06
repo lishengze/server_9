@@ -30,21 +30,7 @@ public:
     void reset();
 
     // ========== 查询方法 ==========
-<<<<<<< .mine
-    bool has_response() const { return response_received_; }
-    bool has_trade_rtn() const { return trade_rtn_received_; }
-    bool has_cancel_rsp() const { return cancel_rsp_received_; }
-    const lb_api::LoginAns& last_login_ans() const { return last_login_ans_; }
-    const lb_api::OrderRtn& last_order_rtn() const { return last_order_rtn_; }
-    const lb_api::TradeRtn& last_trade_rtn() const { return last_trade_rtn_; }
-    const lb_api::CancelRsp& last_cancel_rsp() const { return last_cancel_rsp_; }
-    int32_t last_link_status() const { return last_link_status_; }
-    int32_t last_link_type() const { return last_link_type_; }
-    int32_t last_counter_type() const { return last_counter_type_; }
-    /// 业务链接（LINK_TYPE_SPEED_TRADE=1，委托/撤单走此链接）是否已就绪
-    bool trade_link_ready() const { return last_trade_link_status_ != 0; }
-    std::string last_error_desc() const { return last_error_desc_; }
-=======
+    // 声明式 + .cpp 内加锁实现（回调线程写、测试线程读，必须串行化）
     bool has_response() const;
     bool has_trade_rtn() const;
     bool has_cancel_rsp() const;
@@ -56,7 +42,8 @@ public:
     int32_t last_link_type() const;
     int32_t last_counter_type() const;
     std::string last_error_desc() const;
->>>>>>> .r22
+    /// 业务链接（LINK_TYPE_SPEED_TRADE=1，委托/撤单走此链接）是否已就绪
+    bool trade_link_ready() const;
 
 private:
     mutable std::mutex mutex_;

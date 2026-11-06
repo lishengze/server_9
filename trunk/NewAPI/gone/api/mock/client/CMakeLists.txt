@@ -35,6 +35,8 @@ file(GLOB MOCK_CLIENT_SRC
   src/test_report.cpp
   src/perf_runner.cpp
   src/metric_stats.cpp
+  src/logger.cpp
+  src/result_analysis.cpp
   src/cpu_affinity.cpp
 )
 

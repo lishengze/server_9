@@ -20,6 +20,7 @@ TestCaseRunner::TestCaseRunner(lb_api::api_interface* api, CallbackHandler* hand
 TestCaseType TestCaseRunner::parse_type(const std::string& type_str) {
     if (type_str == "login") return TestCaseType::Login;
     if (type_str == "order_insert" || type_str == "order_rtn") return TestCaseType::OrderInsert;
+    // 注：用例 JSON 仍沿用 "etf_order_insert" 类型名（历史用例兼容）；r21 起实际统一走 order_insert
     if (type_str == "etf_order_insert") return TestCaseType::EtfOrderInsert;
     if (type_str == "order_cancel" || type_str == "cancel_rsp") return TestCaseType::OrderCancel;
     if (type_str == "trade_rtn") return TestCaseType::TradeRtn;
@@ -235,10 +236,6 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
 
     // 发送请求
     if (tc.response_type == TestCaseType::TradeRtn) {
-<<<<<<< .mine
-        // 成交回报(2005)是异步回报：无需发送新请求，等待并校验已存储的成交回报
-        LOG_INFO("[Runner] 等待并校验异步成交回报(2005)...");
-=======
         // 空字段的旧用例只等待上一笔成交；有委托字段的用例先走统一下单入口。
         const bool order = tc.request_type == TestCaseType::OrderInsert ||
                            tc.request_type == TestCaseType::EtfOrderInsert;
@@ -248,9 +245,7 @@ TestResult TestCaseRunner::execute(const TestCase& tc) {
                 std::chrono::steady_clock::now() - start).count();
             return result;
         }
-        std::cout << "[Runner] 等待并校验成交回报..." << std::endl;
-        int64_t timeout_ms = tc.timeout_ms > 0 ? tc.timeout_ms : 5000;
->>>>>>> .r22
+        LOG_INFO("[Runner] 等待并校验成交回报...");
         auto wait_start = std::chrono::steady_clock::now();
         while (!handler_->has_trade_rtn()) {
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -430,8 +425,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.side = side_str.empty() ? 0 : side_str[0];
                 std::string order_type_str = tc.request_fields["order_type"].as_string();
                 req.order_type = order_type_str.empty() ? 0 : order_type_str[0];
-                req.policy_id = tc.request_fields["policy_id"].as_int();
-                req.tgw_id = tc.request_fields["tgw_id"].as_int();
+                // r21 起 OrderReq 已无 policy_id / tgw_id（仅回报结构 OrderRtn 保留 policy_id，供校验）
 
                 val = tc.request_fields["security_id"].as_string();
                 std::memcpy(req.security_id.data(), val.c_str(),
@@ -443,11 +437,14 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 req.client_seq_id = tc.request_fields["client_seq_id"].as_int();
                 req.market_type = tc.request_fields["market_type"].as_int();
 
-                // 普通委托走 order_insert，ETF 委托走 etf_order_insert
-                bool is_etf = (tc.request_type == TestCaseType::EtfOrderInsert);
-                int32_t ret = is_etf ? api_->etf_order_insert(req) : api_->order_insert(req);
-                LOG_INFO("[Runner] " << (is_etf ? "etf_order_insert" : "order_insert")
-                          << "() 返回: " << ret);
+                // r21 起委托统一走 order_insert：ETF 申购 side='D'、赎回 side='E'（北交所买卖仍 '1'/'2' 且市场填 109）
+                const bool is_etf = (tc.request_type == TestCaseType::EtfOrderInsert);
+                if (is_etf && (req.side == 0 || req.side == '1' || req.side == '2')) {
+                    req.side = lb_api::ORDER_SIDE_PURCHASE;   // 未显式指定方向时按申购处理
+                }
+                int32_t ret = api_->order_insert(req);
+                LOG_INFO("[Runner] order_insert() 返回: " << ret
+                          << (is_etf ? " (ETF)" : "")); 
                 return ret == 0;
             }
 

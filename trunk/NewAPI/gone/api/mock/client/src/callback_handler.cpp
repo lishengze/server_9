@@ -84,25 +84,17 @@ void CallbackHandler::on_cancel_rsp(const lb_api::StreamInfo& si, const lb_api::
 
 // on_link_status: 链接状态回调
 // 记录柜台类型、链接类型和状态值（0=断开, 1=连接）。
-<<<<<<< .mine
 // 若为业务链接(LINK_TYPE_SPEED_TRADE=1)，同时更新 trade 链接状态，
 // 供委托/撤单测试发送前判断 Core/业务链接是否就绪。
-void CallbackHandler::on_link_status(int32_t counter_type, int32_t link_type, int32_t status) {
-=======
 void CallbackHandler::on_link_status(lb_api::counter_type counter, int32_t link_type, int32_t status) {
->>>>>>> .r22
     std::lock_guard<std::mutex> lock(mutex_);
     last_counter_type_ = static_cast<int32_t>(counter);
     last_link_type_ = link_type;
     last_link_status_ = status;
-<<<<<<< .mine
     if (link_type == lb_api::LINK_TYPE_SPEED_TRADE) {
         last_trade_link_status_ = status;
     }
-    LOG_INFO("[Callback] on_link_status: counter_type=" << counter_type
-=======
-    std::cout << "[Callback] on_link_status: counter_type=" << static_cast<int32_t>(counter)
->>>>>>> .r22
+    LOG_INFO("[Callback] on_link_status: counter_type=" << static_cast<int32_t>(counter)
               << ", link_type=" << link_type
               << ", status=" << status);
 }
@@ -113,11 +105,7 @@ void CallbackHandler::on_event(lb_api::api_event_type event_type, int32_t err_co
     std::lock_guard<std::mutex> lock(mutex_);
     last_error_code_ = err_code;
     last_error_desc_ = err_desc ? err_desc : "";
-<<<<<<< .mine
-    LOG_ERROR("[Callback] on_error: event_type=" << (int)event_type
-=======
-    std::cerr << "[Callback] on_event: event_type=" << (int)event_type
->>>>>>> .r22
+    LOG_ERROR("[Callback] on_event: event_type=" << static_cast<int32_t>(event_type)
               << ", err_code=" << err_code
               << ", err_desc=" << (err_desc ? err_desc : ""));
 }
@@ -194,6 +182,11 @@ int32_t CallbackHandler::last_counter_type() const {
 std::string CallbackHandler::last_error_desc() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return last_error_desc_;
+}
+
+bool CallbackHandler::trade_link_ready() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_trade_link_status_ != 0;
 }
 
 } // namespace mock

@@ -10,7 +10,7 @@
 #
 # 构建产物：
 #   - common    → lib/liblbcommon.a（lb_common 基础库）
-#   - gone/api  → lib/liblbapi.so（交易 API 动态库）
+#   - gone/api  → lib/libg1api.so（交易 API 动态库，r21 起由 lbapi 更名）
 #   - solarflare→ lib/libzyslfch.a（可选，需 Solarflare SDK）
 #
 # 说明：
@@ -96,8 +96,8 @@ endif()
 
 add_subdirectory(gone/api)
 
-add_dependencies(lbapi lbcommon) # 确保 lbcommon 先编译
+add_dependencies(g1api lbcommon) # 确保 lbcommon 先编译（r21 起目标名 lbapi → g1api）
 
 message(STATUS "NewAPI 项目构建完成!")
 message(STATUS "  - 静态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblbcommon.a")
-message(STATUS "  - 动态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/liblbapi.so")
+message(STATUS "  - 动态库：${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libg1api.so")

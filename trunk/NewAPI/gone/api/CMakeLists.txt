@@ -16,14 +16,29 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # C++ 标准
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 11)  # 容器 gcc4.8.5 不支持 C++17（上游默认 17，本地回退验证）
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 警告
 add_compile_options(-Wall -Wextra -Wno-unused-result -Wno-unused-parameter -D__linux__)
 
 # 全局基础 FLAGS
-set(CMAKE_CXX_FLAGS "--std=c++17 -march=native -mtune=native -mprefer-vector-width=256 -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
+# -mprefer-vector-width 需 GCC>=8（容器为 4.8.5），按编译器能力探测后再决定是否加入
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-mprefer-vector-width=256" HAS_PREFER_VECTOR_WIDTH)
+if(HAS_PREFER_VECTOR_WIDTH)
+    set(PREFER_VECTOR_FLAG "-mprefer-vector-width=256")
+else()
+    set(PREFER_VECTOR_FLAG "")
+    message(STATUS "编译器不支持 -mprefer-vector-width=256，已跳过")
+endif()
+# C++ 标准：上游默认 C++17；容器 gcc 4.8.5 仅支持到 C++11，故按编译器能力回退
+if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
+    set(API_CXX_STD "c++11")
+else()
+    set(API_CXX_STD "c++17")
+endif()
+set(CMAKE_CXX_FLAGS "--std=${API_CXX_STD} -march=native -mtune=native ${PREFER_VECTOR_FLAG} -mpopcnt -m64 -ffast-math -frename-registers -mno-tls-direct-seg-refs -Wall -Wno-nonnull -Wno-reorder -Wpointer-arith -D_LINUX -DLINUX")
 
 # Debug/Release
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -ggdb -fno-optimize-sibling-calls -fno-omit-frame-pointer ${CMAKE_CXX_FLAGS} -D_DEBUG")
@@ -111,8 +126,10 @@ if(TCPDIRECT_FOUND)
     target_include_directories(g1api_sf BEFORE PRIVATE ${ZF_INCLUDE_DIR})
     target_link_libraries(g1api_sf PRIVATE ${ZF_LINK_LIBS})
 
-    # 链接 lbcommon 静态库（sf 变体同需）
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
+    # 链接 lbcommon 静态库（sf 变体同需）：优先同次构建的 target，避免预编译归档缺失/过期
+    if(TARGET lbcommon)
+        target_link_libraries(g1api_sf PRIVATE lbcommon)
+    elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
         target_link_libraries(g1api_sf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
     elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/build/liblbcommon.a)
         target_link_libraries(g1api_sf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/build/liblbcommon.a)
@@ -124,8 +141,10 @@ else()
     message(STATUS "TCPDirect: DISABLED → 仅产出 libg1api.so (socket-only, tcpdirect 选型双防线返回 UNSUPPORT_LINK)")
 endif()
 
-# 链接 lbcommon 静态库
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
+# 链接 lbcommon 静态库：优先同次构建的 target（common/lib、common/build 通常为空，命中即漏链）
+if(TARGET lbcommon)
+    target_link_libraries(g1api PRIVATE lbcommon)
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
     target_link_libraries(g1api PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/lib/liblbcommon.a)
 elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../common/build/liblbcommon.a)
     target_link_libraries(g1api PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/build/liblbcommon.a)

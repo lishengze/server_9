@@ -12,11 +12,21 @@
 
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <thread>
 
 namespace mock {
+
+namespace {
+// 单调时钟纳秒（CLOCK_MONOTONIC）：与 api_net_time_capture 抓包时间戳同基准，可直接相减
+inline uint64_t mono_now_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+}
+} // namespace
 
 // ==================== PerfConfig ====================
 
@@ -111,25 +121,21 @@ void PerfRunner::run_benchmark(std::vector<uint64_t>& latencies) {
         lb_api::OrderReq req;
         build_order(cfg_, seq++, req);
 
+        const uint64_t t0 = mono_now_ns();
         int32_t ret = api_->order_insert(req);
+        const uint64_t t1 = mono_now_ns();
         ++sent_;
         if (ret == 0) {
             ++ok_;
-            // 记录 (client_seq_id, api_arrive_time_ns) 映射，供网卡抓包程序关联分析
+            // 记录 (client_seq_id, 发送前单调时钟纳秒) 映射，供网卡抓包程序关联分析
             // 仅成功委托有实际网络包，失败委托不记录（避免 unmatched 条目干扰统计）
-            net_time_map_.emplace_back(req.client_seq_id, req.api_arrive_time_ns);
+            net_time_map_.emplace_back(req.client_seq_id, t0);
         } else {
             ++fail_codes_[ret];
         }
 
-<<<<<<< .mine
-        // 计算 api 内耗时（纳秒），成功与失败均统计
-        uint64_t lat = req.api_leave_time_ns - req.api_arrive_time_ns;
-        latencies.push_back(lat);
-=======
-        // (接口漂移修复) OrderReq 的 api_leave_time_ns/api_arrive_time_ns 已随结构演进下线,
-        // api 内耗时统计随字段移除; latencies 保持空, compute 对空样本输出零值。
->>>>>>> .r22
+        // 计时口径 v2（客户端）：order_insert 调用耗时（组包+入队），与失败与否无关均统计
+        latencies.push_back(t1 - t0);
 
         // 匀速等待
         next_send += interval;
@@ -204,7 +210,7 @@ bool PerfRunner::run() {
         }
     }
 
-    // 6. 写出网卡抓包关联映射文件（client_seq_id -> api_arrive_time_ns）
+    // 6. 写出网卡抓包关联映射文件（client_seq_id -> 发送前 CLOCK_MONOTONIC 纳秒）
     if (!cfg_.net_time_map_file.empty()) {
         if (apinet::write_map_file(cfg_.net_time_map_file, net_time_map_)) {
             LOG_INFO("[PerfRunner] 网卡抓包映射已写出: " << cfg_.net_time_map_file
@@ -226,8 +232,8 @@ std::string PerfRunner::report_text() const {
         << "样本数   : " << stats_.count << "\n"
         << "CPU 绑定 : " << cpu_bind_desc_ << "\n"
         << "\n"
-        << "------- API 内处理耗时（纳秒）-------\n"
-        << (stats_.count == 0 ? "新版 API 未提供内部耗时样本\n" : stats_.to_string());
+        << "----- API 入队耗时（纳秒，客户端计时口径 v2：组包+入队）-----\n"
+        << (stats_.count == 0 ? "无耗时样本\n" : stats_.to_string());
 
     // 失败统计
     if (!fail_codes_.empty()) {

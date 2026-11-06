@@ -73,7 +73,7 @@ if(NOT EXISTS ${NEWAPI_ROOT})
 endif()
 
 ###################### 添加子项目（按构建顺序） ######################
-add_subdirectory(${NEWAPI_ROOT} newapi)   # NewAPI 交易 API 框架（lbcommon + lbapi）
+add_subdirectory(${NEWAPI_ROOT} newapi)   # NewAPI 交易 API 框架（lbcommon + g1api）
 
 message("整个工程当前 共编译 ${BUILD_SUM_COUNT} 个文件")
 

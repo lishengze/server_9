@@ -28,7 +28,7 @@
 #endif
 
 #include <cstring>
-#include <stdatomic.h>
+// 注：gcc 4.8.5 无 <stdatomic.h>；原子操作统一用 "matomic.h" 的 __atomic 内建（上方已包含）
 
 namespace lb_api
 {
