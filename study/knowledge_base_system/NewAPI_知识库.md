@@ -54,6 +54,7 @@
 41. [结构性重构：stop/close 分离 + 回调事件扩展 + 账户缓存实例化 + 撤单优化](#41-结构性重构stopclose-分离--回调事件扩展--账户缓存实例化--撤单优化2026-10-19)
 42. [仓库目录核对与 api-compare 参考模块](#42-仓库目录核对与-api-compare-参考模块2026-11-05)
 43. [SVN r21/r22 上游接口变更与冲突处置](#43-svn-r21r22-上游接口变更与冲突处置2026-11-06)
+44. [r21 冲突解决与本地编译适配（已通过）](#44-r21-冲突解决与本地编译适配已通过2026-11-06)
 
 ---
 
@@ -2571,3 +2572,46 @@ trunk/NewAPI/
 ### 43.5 待确认分布（47 处 = src 28 + include 19）
 
 `counter98.cpp` 16（字典/登录语义/回报分类）、`struct_req.h` 14（14 类业务回报未知）、`gw_counter_direct.cpp` 9（FTE side/order_type/order_sys_no）、`counter98.h` 2、`common_struct.h` 2（`transact_time`）、`order_trade_type.h` 2、`api_interface.h` 1（卖券还款 `side='X'`）。**全部依赖真实柜台联调，离线只能保证不崩、不能保证业务正确。**
+
+---
+
+## 44. r21 冲突解决与本地编译适配（已通过，2026-11-06）
+
+> 前置分析见 `task/svn/svn_analysis_20261106.md`；本节记录**实际落地结果**：7 文件 11 块冲突已解、构建链 5 处修正、clean 重编与冒烟通过。
+
+### 44.1 冲突解决结果（策略：接口跟上游、能力保本地）
+
+| 文件 | 处置要点 |
+|------|---------|
+| `callback_handler.cpp` | 签名取上游 `on_link_status(lb_api::counter_type,…)`；日志用本地 `LOG_INFO/LOG_ERROR`；保留本地业务链接状态跟踪 `last_trade_link_status_` |
+| `callback_handler.h` | **声明式 + .cpp 加锁实现**（回调线程写／测试线程读，必须串行化）；补 `trade_link_ready()` 声明与实现 |
+| `main.cpp` | 保留 `--plan/--log/--analysis` 等本地参数；`--lib` 默认改 `../../lib/libg1api.so` |
+| `mock_client.cpp` | 取上游 `check_attr`（失败即抛）+ `set_address`（`lb_api::net_addr`）+ 全属性序列；旧键 `single_cust_per_link` 兼容映射为 `need_multi_cust`（语义相反：true→0） |
+| `perf_runner.cpp` | **不采上游"空统计"**；重建为客户端计时口径 v2：`CLOCK_MONOTONIC` 测 `order_insert` 调用耗时（组包+入队），`net_time_map_` 记"发送前时刻"（与 `api_net_time_capture` 同基准） |
+| `test_case_runner.cpp` | 取上游统一入口逻辑；ETF 走 `order_insert` + 未指定方向时默认 `ORDER_SIDE_PURCHASE('D')`；`req.policy_id/tgw_id` 删除（OrderReq 已无，**OrderRtn 仍保留 `policy_id`**） |
+| `test_case_runner.h` | 保留本地枚举（含上游删掉的 10 个查询类型） |
+
+### 44.2 构建链 6 处修正（r21 引入，文本无冲突但必炸）
+
+| # | 文件 | 问题 | 修法 |
+|---|------|------|------|
+| 1 | `NewAPI/CMakeLists.txt` | `add_dependencies(lbapi …)` 目标已改名 | → `g1api` |
+| 2 | `gone/api/CMakeLists.txt` | 硬编码 `-std=c++17`（容器 gcc 4.8.5 不支持） | 按编译器版本分支：`<5.0` 用 `c++11`，否则 `c++17` |
+| 3 | `gone/api/CMakeLists.txt` | 硬编码 `-mprefer-vector-width=256`（需 GCC≥8） | `check_cxx_compiler_flag` 探测后再加 |
+| 4 | `gone/api/CMakeLists.txt` | 只从 `common/lib|build` 找 `liblbcommon.a`（实际为空）→ 600+ 行 `undefined reference` | **优先链接同次构建 target `lbcommon`**，归档探测作兜底 |
+| 5 | `mock/client/CMakeLists.txt` | 源文件清单无 `logger.cpp`/`result_analysis.cpp`（本地新增） | 补入（否则链接期 `mock::Logger` 未定义） |
+| 6 | `src/api_instance.cpp` | `#include <stdatomic.h>`（gcc 4.8.5 无此头） | 移除（原子操作统一用 `matomic.h` 的 `__atomic` 内建） |
+
+### 44.3 验证结果
+
+- **clean 全量重编**：`lbcommon` → `g1api` → `perf_client` → `mock_client` 四目标全部 `Built target`；产物 `gone/api/lib/libg1api.so`（7.3MB）、`mock_client`、`perf_client`。
+- **符号**：`nm -D libg1api.so` 含 `on_event`/`on_link_status(counter_type)`/`on_counter_status`；`on_error`/`err_event_type` 0 残留。
+- **冒烟**：`--help` 正常；`--config connection_config.json` 装载无异常 → API 实例创建成功 → `on_link_status: counter_type=0, link_type=0, status=1`（新签名生效）→ 用例加载正常。
+- **SVN 状态**：7 文件由 `C` 转 `M`，`.mine/.r17/.r22` 已清理。
+
+### 44.4 尚未完成（后续）
+
+1. `config/*.json` 仍写旧市场值 `market_type: 1`（应 101/102），`cases/*_expected.json` 期望值同样待改。
+2. 上游删除的 10 个查询用例需适配 `client_seq_id` 与批量查询接口。
+3. 47 处 `待确认/todo` 全部依赖真实柜台联调。
+4. 功能/性能回归（`--plan` 双柜台 5/5、743 项离线检查）需在柜台环境执行。
