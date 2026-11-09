@@ -135,3 +135,99 @@ svn commit -m "[NewAPI] counter98 采用线上r17 + 撤单优化(消除order_loc
   NewAPI/gone/api/src/gw_counter_direct.cpp \
   NewAPI/gone/api/src/gw_counter_direct.h \
   NewAPI/gone/api/src/gw_session_cache.h        
+
+2026年11月9日
+      任务: r21/r22 冲突解决的 SVN 提交命令（对应已提交的 r23）
+
+    说明:
+      1. 本批改动已于 2026-11-06 提交为 SVN **r23**；以下为等价命令记录，供复盘、另一主机重放或误删后重建使用。
+      2. 工作副本：docker otc 容器内 /mnt/work/api_trunk/trunk（URL https://jyjs2.svn.gtja.net/svn/NewAPI/trunk）。
+      3. 必须在命令前设置 LANG=zh_CN.utf8，否则中文文件名触发 E000022 UTF-8 转换错误。
+      4. 改动性质：7 个冲突文件解决（11 处冲突块）+ 6 处构建链适配 + 4 个 mock 既有本地增强，共 17 个文件。
+      5. 禁止把未版本化产物加入提交（build/、*.log、result/、lib 下 .so 与可执行文件）。
+
+# ============================================================
+# 第零步（仅当仍处于冲突态时执行；已在 r23 解决，正常跳过）
+# ============================================================
+# 0.1 确认冲突清单（应为 7 个 C，且 src 下有 .mine/.r17/.r22）
+svn status | grep '^C'
+ls NewAPI/gone/api/mock/client/src/*.mine NewAPI/gone/api/mock/client/src/*.r[0-9]*
+
+# 0.2 按"接口跟上游、能力保本地"逐个人工改完后，标记为已解决
+svn resolve --accept working \
+  NewAPI/gone/api/mock/client/src/callback_handler.cpp \
+  NewAPI/gone/api/mock/client/src/callback_handler.h \
+  NewAPI/gone/api/mock/client/src/main.cpp \
+  NewAPI/gone/api/mock/client/src/mock_client.cpp \
+  NewAPI/gone/api/mock/client/src/perf_runner.cpp \
+  NewAPI/gone/api/mock/client/src/test_case_runner.cpp \
+  NewAPI/gone/api/mock/client/src/test_case_runner.h
+
+# 0.3 清理 svn 生成的临时副本（解决后即无用）
+rm -f NewAPI/gone/api/mock/client/src/*.mine \
+      NewAPI/gone/api/mock/client/src/*.r17 \
+      NewAPI/gone/api/mock/client/src/*.r22
+
+# 0.4 提交前自检：冲突标记必须为 0、临时文件必须为 0
+grep -rnE -e '<<<<<<<' -e '>>>>>>>' NewAPI | wc -l          # 期望 0
+ls NewAPI/gone/api/mock/client/src/*.mine 2>/dev/null | wc -l  # 期望 0
+
+# ============================================================
+# 第一步：提交冲突解决 + 构建链适配（17 个文件，对应 r23）
+# ============================================================
+svn commit -m "[NewAPI] 解决 r21/r22 冲突 + 构建链适配（socket 版编译通过）" \
+  NewAPI/CMakeLists.txt \
+  NewAPI/gone/api/CMakeLists.txt \
+  NewAPI/gone/api/src/api_instance.cpp \
+  NewAPI/gone/api/mock/client/CMakeLists.txt \
+  NewAPI/gone/api/mock/client/src/callback_handler.cpp \
+  NewAPI/gone/api/mock/client/src/callback_handler.h \
+  NewAPI/gone/api/mock/client/src/main.cpp \
+  NewAPI/gone/api/mock/client/src/mock_client.cpp \
+  NewAPI/gone/api/mock/client/src/mock_client.h \
+  NewAPI/gone/api/mock/client/src/perf_runner.cpp \
+  NewAPI/gone/api/mock/client/src/perf_runner.h \
+  NewAPI/gone/api/mock/client/src/test_case_runner.cpp \
+  NewAPI/gone/api/mock/client/src/test_case_runner.h \
+  NewAPI/gone/api/mock/client/src/metric_stats.cpp \
+  NewAPI/gone/api/mock/client/src/metric_stats.h \
+  NewAPI/gone/api/mock/client/src/test_report.cpp \
+  NewAPI/gone/api/mock/client/src/test_report.h
+
+# 分组说明（便于回溯）：
+#   A. 冲突解决（7 个，11 处冲突块）
+#      callback_handler.cpp/.h  ← 采用 lb_api::counter_type / on_event(api_event_type)，
+#                                  访问器改"声明+.cpp 加锁实现"，补 trade_link_ready()
+#      main.cpp                 ← 保留 --plan/--log/--analysis，--lib 默认改 libg1api.so
+#      mock_client.cpp          ← 采用 check_attr + lb_api::net_addr，旧键 single_cust_per_link→need_multi_cust
+#      perf_runner.cpp          ← 重建计时口径 v2（CLOCK_MONOTONIC 测 order_insert 耗时）
+#      test_case_runner.cpp/.h  ← 统一 order_insert（ETF 默认 side='D'），保留 10 个查询用例类型
+#   B. 构建链适配（4 个）
+#      NewAPI/CMakeLists.txt                 ← add_dependencies(lbapi → g1api)
+#      NewAPI/gone/api/CMakeLists.txt        ← C++17 按编译器能力回退 c++11；-mprefer-vector-width 探测；
+#                                              优先链接同次构建 target lbcommon
+#      NewAPI/gone/api/src/api_instance.cpp  ← 移除 <stdatomic.h>（gcc 4.8.5 无此头）
+#      NewAPI/gone/api/mock/client/CMakeLists.txt ← 补 logger.cpp / result_analysis.cpp
+#   C. mock 既有本地增强（4 个）
+#      mock_client.h、metric_stats.cpp/.h、test_report.cpp/.h
+
+# ============================================================
+# 第二步：提交后校验（缺一步都不算提交完成）
+# ============================================================
+svn status | grep -E '^[MC]'                    # 期望：无输出（M/C = 0）
+svn info -r HEAD | grep 'Last Changed Rev'      # 期望：r23
+svn log -l 1 | head -3                          # 期望：显示本提交日志
+svn update                                      # 同步工作副本到 r23
+
+# ============================================================
+# 第三步（可选）：若工作副本另有"非冲突解决"的小改动（如尾随空格），单独提交
+# ============================================================
+# svn commit -m "[NewAPI] mock_client: 清理 test_case_runner.cpp 尾随空格"  NewAPI/gone/api/mock/client/src/test_case_runner.cpp
+
+# ============================================================
+# 编译验证（宿主机执行，自动转发到容器；确认冲突解决后语法正确）
+# ============================================================
+# cd /home/lsz/code/work/api_trunk
+# ./build.sh Release -DBUILD_MOCK=ON            # 期望四目标 Built target：lbcommon/g1api/perf_client/mock_client
+# nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -E "on_event|on_counter_status"   # 新接口符号在
+# nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -cE "on_error|err_event_type"     # 期望 0

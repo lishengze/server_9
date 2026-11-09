@@ -1,9 +1,12 @@
 # SVN 更新冲突与待办分析报告（r17→r22）
 
-> **生成日期**：2026-11-06
-> **分析对象**：`trunk/NewAPI`（SVN 工作副本 `/mnt/work/api_trunk/trunk`，URL `https://jyjs2.svn.gtja.net/svn/NewAPI/trunk`，当前 r22）
+> **状态**：✅ **已执行完成** —— 11 处冲突已解决、构建链已适配、clean 全量重编通过，SVN 已提交 **r23**，git 已提交并推送。
+> **生成日期**：2026-11-06 ~ 2026-11-09（先出方案，同日执行；本版补入执行结果，见 §九）
+> **分析对象**：`trunk/NewAPI`（SVN 工作副本 `/mnt/work/api_trunk/trunk`，URL `https://jyjs2.svn.gtja.net/svn/NewAPI/trunk`；分析时 r22，执行后 r23）
 > **输入依据**：`svn status` / `svn log -v -r 17:22` / `svn diff -r 20:21`、`.mine/.r17/.r22` 三份临时文件、上游两份说明文档（`开发者升级说明.txt`、`个微和98柜台-消息组包解包对比分析.txt`）
 > **结论摘要**：7 个文件、11 处文本冲突，**全部集中在 `gone/api/mock/client/src/`**，本质不是"文字撞车"，而是**上游 r21 重构了公共接口（含库名/回调签名/结构字段）**，与我们本地对 mock 客户端的增强（test_plan/logger/性能打点/查询测试）正面重叠。另有 **47 处 `待确认/todo`**（28 处 `src/` + 19 处 `include/`），全部是**协议字典与联调语义未定**，而非功能缺失。
+>
+> **执行结果（2026-11-06）**：11 处冲突按「接口跟上游、能力保本地」全部解决；此外编译阶段又暴露 **6 处构建链问题**（r21 引入，文本无冲突但必炸），一并修复后 clean 全量重编四目标（`lbcommon`/`g1api`/`perf_client`/`mock_client`）通过，`mock_client --help` 与配置装载冒烟通过。**47 处 `待确认` 与 config/cases 字典值仍未改动**，属需柜台联调的后续项（见 §九.4）。
 
 ---
 
@@ -20,12 +23,24 @@
 
 > 本地首次冲突发生在更新到 r17 时（留下 `.r17`），随后更新到 r22 再次冲突（留下 `.r22`），两轮冲突**均未解决即被提交进 git**（提交 `bc03c3b "S:更新代码"`，2026-11-05 17:54，作者 `lsz_nuc_linux`）。
 
-### 1.2 当前工作副本状态
+### 1.2 工作副本状态（冲突当时 → 执行后）
+
+**冲突当时（2026-11-06 上午，r22 基线）**：
 
 ```
 ?  35 项   未版本化（mock/*/build、*.log、result/ 等构建与日志产物）
 C   7 项   文本冲突（全部在 gone/api/mock/client/src/）
-M   6 项   本地已改、无冲突（`metric_stats.cpp`、`metric_stats.h`、`mock_client.h`、`perf_runner.h`、`test_report.cpp`、`test_report.h`）
+M   6 项   本地已改、无冲突（metric_stats.cpp、metric_stats.h、mock_client.h、
+           perf_runner.h、test_report.cpp、test_report.h）
+```
+
+**执行后（2026-11-06 晚，r23）**：
+
+```
+C   0 项   冲突全部解决（7 文件转为 M 并提交）
+M   0 项   17 个改动文件已随 r23 提交，工作副本同时更新到 r23
+?  16 项   未版本化产物仍在（build/、*.log、result/、lib/ 下产物；已补 .gitignore，
+           svn:ignore 尚未配置）
 ```
 
 ### 1.3 上游 r21 的改动面（非 api-compare）
@@ -146,59 +161,59 @@ M   6 项   本地已改、无冲突（`metric_stats.cpp`、`metric_stats.h`、`
 
 ### 3.2 逐文件取舍表
 
-| 文件                                   |                   上游接口                   |                   本地增强                   | 处置                           |
-| -------------------------------------- | :------------------------------------------: | :------------------------------------------: | ------------------------------ |
-| callback_handler.cpp                   |                   ✅ 全取                   |         保留 LOG_* + trade 链接跟踪         | 手工合并（3 块均小）           |
-| callback_handler.h                     |         部分（`last_error_desc`）         | ✅ 保留内联引用访问器 + `trade_link_ready` | 以本地为骨架补齐               |
-| main.cpp                               |             仅 `--lib` 默认值             |                  ✅ 全保留                  | 改 2 处字符串                  |
-| mock_client.cpp                        | ✅ 取 check_attr/set_address/need_multi_cust |     ✅ 保留 test_plan/perf/analysis 流程     | 重写配置段（并集）             |
-| `perf_runner.cpp`、`perf_runner.h` |                 字段下线事实                 |              ✅ 打点能力需重建              | 改口径（见 3.4 P1-3）          |
-| test_case_runner.cpp                   |               ✅ 统一委托入口               |            ✅ 保留查询测试与日志            | 合并 + 改 `etf_order_insert` |
-| test_case_runner.h                     |                上游删 10 类型                |            ✅ 保留 10 个查询类型            | 保留本地枚举                   |
+| 文件                                   |                   上游接口                   |                   本地增强                   | 计划处置                       | **实际结果** |
+| -------------------------------------- | :------------------------------------------: | :------------------------------------------: | ------------------------------ | :----------: |
+| callback_handler.cpp                   |                   ✅ 全取                   |         保留 LOG_* + trade 链接跟踪         | 手工合并（3 块均小）           | ✅ 已合（签名取上游 + 保留 trade 跟踪 + LOG_*） |
+| callback_handler.h                     |         部分（`last_error_desc`）         | ✅ 保留内联引用访问器 + `trade_link_ready` | 以本地为骨架补齐               | ⚠️ 改方案：**声明式 + .cpp 加锁实现**（跨线程安全），补 `trade_link_ready()` 实现 |
+| main.cpp                               |             仅 `--lib` 默认值             |                  ✅ 全保留                  | 改 2 处字符串                  | ✅ 已改（`--lib` 默认 `../../lib/libg1api.so`） |
+| mock_client.cpp                        | ✅ 取 check_attr/set_address/need_multi_cust |     ✅ 保留 test_plan/perf/analysis 流程     | 重写配置段（并集）             | ✅ 已重写（并集）；旧键 `single_cust_per_link` 兼容映射 `need_multi_cust` |
+| `perf_runner.cpp`、`perf_runner.h` |                 字段下线事实                 |              ✅ 打点能力需重建              | 改口径（见 3.4 P1-3）          | ✅ 已重建：客户端 `CLOCK_MONOTONIC` 口径 v2 |
+| test_case_runner.cpp                   |               ✅ 统一委托入口               |            ✅ 保留查询测试与日志            | 合并 + 改 `etf_order_insert` | ✅ 已统一 `order_insert`（ETF 默认 `side='D'`），删除 `policy_id/tgw_id` |
+| test_case_runner.h                     |                上游删 10 类型                |            ✅ 保留 10 个查询类型            | 保留本地枚举                   | ✅ 已保留（枚举未删） |
 
-### 3.3 执行步骤（建议按序，每步可独立验证）
+### 3.3 执行步骤（已按序执行，S0~S5、S9 完成；S2 部分完成、S6~S8 待环境）
 
-| 步 | 动作                                                                                                                                    | 验证                                          |
-| :-: | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| S0 | **冻结现状**：记录 `svn status` 与冲突文件清单；确认 `.mine/.r17/.r22` 三份副本已归档（`task/svn/evidence/` 或 git 已跟踪） | 清单与本报告一致（7 文件 11 块）              |
-| S1 | **判定基线**：明确"以 r22 为内容基线，本地增强逐项移植"，不做 `svn revert`（会丢本地增强）                                      | 评审确认                                      |
-| S2 | 处理 `include/` 侧无冲突但语义变化的引用：market 1/2/3→101/102/109、`user_seq_id`→`client_seq_id`、`zero_reason` 定长         | `grep -rn` 清单归零                         |
-| S3 | 逐文件解决 11 处冲突（按 3.2 表），**每解一个立即 `svn resolve --accept working <file>`**                                       | `svn status` 的 C 逐项转 M                  |
-| S4 | 删除临时文件：`.mine/.r17/.r22`（解决后 `svn resolve` 会清理，或手工 `rm` 并从 git 索引移除）                                     | `svn status` 无 `?` 于 src/               |
-| S5 | 全量编译：`./build.sh Release -DBUILD_MOCK=ON`（库名 `libg1api.so`）                                                                | 0 error；`build_cmake/lib/libg1api.so` 存在 |
-| S6 | 离线回归：`gone/api/test/run_order_insert_test.sh`（上游称 **743 项检查**）                                                     | 全绿                                          |
-| S7 | 功能回归：mock_client `--plan` FTE / GOne 两套（登录/委托/成交/撤单/心跳 5/5）                                                        | 5/5 PASS                                      |
-| S8 | 性能回归：确认新计时口径并在报告中标注口径变化（避免与历史数据误比）                                                                    | 报告含口径说明                                |
-| S9 | 提交：**先 git（含冲突解决记录）后 svn**；提交前 `git diff --check` + 禁止冲突标记入库                                          | 见 §6 流程红线                               |
+| 步 | 动作                                                                                                                                    | 验证                                          | **状态** |
+| :-: | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | :------: |
+| S0 | **冻结现状**：记录 `svn status` 与冲突文件清单；确认 `.mine/.r17/.r22` 三份副本已归档 | 清单与本报告一致（7 文件 11 块） | ✅ 已完成 |
+| S1 | **判定基线**：明确"以 r22 为内容基线，本地增强逐项移植"，不做 `svn revert` | 评审确认 | ✅ 已完成 |
+| S2 | 处理 `include/` 侧无冲突但语义变化的引用：market 1/2/3→101/102/109、`user_seq_id`→`client_seq_id`、`zero_reason` 定长 | `grep -rn` 清单归零 | ⚠️ 部分完成：代码侧 `policy_id/tgw_id/etf_order_insert` 已清；**config/cases 的字典值未改** |
+| S3 | 逐文件解决 11 处冲突（按 3.2 表），**每解一个立即 `svn resolve --accept working`** | `svn status` 的 C 逐项转 M | ✅ 已完成（11/11，C=0） |
+| S4 | 删除临时文件：`.mine/.r17/.r22` | `svn status` 无 `?` 于 src/ | ✅ 已完成（14 个已删并入库删除记录） |
+| S5 | 全量编译：`./build.sh Release -DBUILD_MOCK=ON` | 0 error；产物存在 | ✅ 已完成（另修 6 处构建链问题，见 §九.2） |
+| S6 | 离线回归：`gone/api/test/run_order_insert_test.sh`（743 项检查） | 全绿 | ⏸ 待执行（需柜台/测试环境） |
+| S7 | 功能回归：mock_client `--plan` FTE / GOne 两套 | 5/5 PASS | ⏸ 待执行（需 FTE / gone_counter_mock 环境） |
+| S8 | 性能回归：确认新计时口径并在报告标注 | 报告含口径说明 | ⏸ 待执行（口径已改，报告标题已标注 v2） |
+| S9 | 提交：先提交（含冲突解决记录）后推送；提交前禁止冲突标记入库 | 见 §6 流程红线 | ✅ 已完成（SVN r23 → git 3 次提交 → 推送） |
 
 ### 3.4 优先级建议
 
-|     优先级     | 事项                                                         | 理由                                                                    |
-| :------------: | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
-|  **P0**  | S2+S3+S5（接口对齐 + 解决冲突 + 编译通过）                   | 当前**编译处于坏状态**（冲突标记 + 已下线符号），一切验证无从谈起 |
-| **P1-1** | `etf_order_insert` 分支改统一入口（side D/E）              | 否则 ETF 用例必挂                                                       |
-| **P1-2** | 市场字典 101/102/109 全量替换                                | 否则委托被拒/回报错乱，且难定位                                         |
-| **P1-3** | 性能打点重建（客户端时间戳口径）                             | 否则性能报告恒 0，掩盖回归                                              |
-|  **P2**  | 查询测试类型适配（`client_seq_id`、批量查询）              | 能力恢复，非阻塞主链路                                                  |
-|  **P2**  | 35 项未版本化产物加 `svn:ignore`（build/、*.log、result/） | 消除 `svn status` 噪声，防误提交                                      |
-|  **P3**  | 把"冲突不得入库"写入 `task_rule.md` §13 提交前检查        | 流程红线（见 §6）                                                      |
+|     优先级     | 事项                                                         | 理由                                                                    | **状态** |
+| :------------: | ------------------------------------------------------------ | ----------------------------------------------------------------------- | :------: |
+|  **P0**  | S2+S3+S5（接口对齐 + 解决冲突 + 编译通过）                   | 原为编译坏状态，一切验证无从谈起 | ✅ 已完成 |
+| **P1-1** | `etf_order_insert` 分支改统一入口（side D/E）              | 否则 ETF 用例必挂 | ✅ 已完成 |
+| **P1-2** | 市场字典 101/102/109 全量替换                                | 否则委托被拒/回报错乱 | ⚠️ **代码侧已就位，配置/用例侧未改**（config 4 个文件、cases 3 个期望文件） |
+| **P1-3** | 性能打点重建（客户端时间戳口径）                             | 否则性能报告恒 0 | ✅ 已完成（口径 v2） |
+|  **P2**  | 查询测试类型适配（`client_seq_id`、批量查询）              | 能力恢复，非阻塞主链路 | ⏸ 待做（枚举已保留，运行时适配未做） |
+|  **P2**  | 35 项未版本化产物加 `svn:ignore`（build/、*.log、result/） | 消除 `svn status` 噪声 | ⚠️ **git 侧已配**（`.gitignore`），svn:ignore 未配 |
+|  **P3**  | 把"冲突不得入库"写入 `task_rule.md` §13 提交前检查        | 流程红线（见 §6） | ⏸ 待做（本次已人工检查） |
 
 ---
 
 ## 四、非冲突但受影响的"隐藏地雷"
 
-> 这些位置**不在冲突列表里**（自动合并成功），但语义已变，**编译或运行必然出问题**。必须在 S2 阶段一并处理。
+> 这些位置**不在冲突列表里**（自动合并成功），但语义已变，**编译或运行必然出问题**。执行后状态：**1/2/4/5 已修**，**3/6/7/8 属运行时/配置项，仍未做**。
 
-| # | 位置                                         | 问题                                                                                                                                                                                                                                                                                 | 处置                                                                                                                                                                                                |
-| - | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 | `mock/client/src/perf_runner.cpp:120,127`  | `req.api_arrive_time_ns/api_leave_time_ns` 字段已不存在                                                                                                                                                                                                                            | 改客户端时间戳口径（P1-3）                                                                                                                                                                          |
-| 2 | `mock/client/src/test_case_runner.cpp:448` | `api_->etf_order_insert(req)` 接口已删                                                                                                                                                                                                                                             | 统一 `order_insert` + side D/E                                                                                                                                                                    |
-| 3 | `mock/client/config/*.json`                | 上游已把 `perf_runner.h` 默认值改为 `order_market_type = 101`（自动合并生效），但**5 个连接配置里有 4 个仍写 `market_type: 1`**，`cases/*_expected.json`（login/order/cancel）也仍期望 `market_type: 1`；且 `single_cust_per_link` 键已被 `need_multi_cust` 取代 | 逐项改 `101`（沪）/`102`（深）；`connection_config.json` 已由上游更新为 101，可作为样板；`single_cust_per_link` → `need_multi_cust`（`true`→`0`、`false`→`1`，语义相反需注意） |
-| 4 | `mock/client/src/*` 全部 override          | `on_error`/`int32_t counter_type` 已废                                                                                                                                                                                                                                           | 改 `on_event(api_event_type)` / `counter_type`                                                                                                                                                  |
-| 5 | 构建脚本与文档                               | 仍写 `liblbapi.so`、`build_cmake/lib/liblbapi.so`                                                                                                                                                                                                                                | 统一 `libg1api.so`（`build.sh`、各 `.md`、`study/*`）                                                                                                                                       |
-| 6 | 配置样例 `config/*.json`                   | 缺 `need_multi_cust`、`agw_user_login_timeout`、`log_level`，且 `fast_counter_type=3` 已废                                                                                                                                                                                   | 按升级说明：旧网关配 3 → `fast_counter_type=2` + `need_multi_cust=1` + `speed_link_type=0`                                                                                                   |
-| 7 | 数量口径                                     | 委托/回报统一"股×100"（100 股 = 10000）                                                                                                                                                                                                                                             | 检查 mock 用例与预期文件中的数量值，防"同一笔乘两次 100"                                                                                                                                            |
-| 8 | 撤单三号码                                   | `CancelReq.client_req_no`（本次撤单号）/`client_seq_id`（原委托客户号）/`order_sys_no`（原委托柜台号）                                                                                                                                                                         | 用"三者互不相同"的用例验证关联                                                                                                                                                                      |
+| # | 位置                                         | 问题                                                                                                                                                                                                                                                                                 | 处置                                                                                                                                                                                                | **实际状态** |
+| - | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------: |
+| 1 | `mock/client/src/perf_runner.cpp`（冲突当时 120/127 行） | `req.api_arrive_time_ns/api_leave_time_ns` 字段已不存在                                                                                                                                                                                                                            | 改客户端时间戳口径（P1-3）                                                                                                                                                                          | ✅ 已改：`mono_now_ns()`（CLOCK_MONOTONIC） |
+| 2 | `mock/client/src/test_case_runner.cpp`（冲突当时 448 行） | `api_->etf_order_insert(req)` 接口已删                                                                                                                                                                                                                                             | 统一 `order_insert` + side D/E                                                                                                                                                                    | ✅ 已改（未指定方向默认 `'D'`） |
+| 3 | `mock/client/config/*.json`                | 上游已把 `perf_runner.h` 默认值改为 `order_market_type = 101`（自动合并生效），但**5 个连接配置里有 4 个仍写 `market_type: 1`**，`cases/*_expected.json`（login/order/cancel）也仍期望 `market_type: 1`；且 `single_cust_per_link` 键已被 `need_multi_cust` 取代 | 逐项改 `101`（沪）/`102`（深）；`connection_config.json` 已由上游更新为 101，可作为样板；`single_cust_per_link` → `need_multi_cust`（`true`→`0`、`false`→`1`，语义相反需注意） | ⏸ **未改**（代码已兼容旧键，值仍为 1） |
+| 4 | `mock/client/src/*` 全部 override          | `on_error`/`int32_t counter_type` 已废                                                                                                                                                                                                                                           | 改 `on_event(api_event_type)` / `counter_type`                                                                                                                                                  | ✅ 已改（`nm -D` 验证 0 旧符号） |
+| 5 | 构建脚本与文档                               | 仍写 `liblbapi.so`、`build_cmake/lib/liblbapi.so`                                                                                                                                                                                                                                | 统一 `libg1api.so`（`build.sh`、各 `.md`、`study/*`）                                                                                                                                       | ⚠️ 已改 CMake/CMakeLists/mock 帮助文本；`study/*.md` 与部分文档仍可能写旧名 |
+| 6 | 配置样例 `config/*.json`                   | 缺 `need_multi_cust`、`agw_user_login_timeout`、`log_level`，且 `fast_counter_type=3` 已废                                                                                                                                                                                   | 按升级说明：旧网关配 3 → `fast_counter_type=2` + `need_multi_cust=1` + `speed_link_type=0`                                                                                                   | ⏸ **未改**（现有配置无 3，但缺 `need_multi_cust` 键） |
+| 7 | 数量口径                                     | 委托/回报统一"股×100"（100 股 = 10000）                                                                                                                                                                                                                                             | 检查 mock 用例与预期文件中的数量值，防"同一笔乘两次 100"                                                                                                                                            | ⏸ **未核对**（用例数量仍为旧口径值） |
+| 8 | 撤单三号码                                   | `CancelReq.client_req_no`（本次撤单号）/`client_seq_id`（原委托客户号）/`order_sys_no`（原委托柜台号）                                                                                                                                                                         | 用"三者互不相同"的用例验证关联                                                                                                                                                                      | ⏸ **未验证**（需联调/回归） |
 
 ---
 
@@ -281,46 +296,122 @@ M   6 项   本地已改、无冲突（`metric_stats.cpp`、`metric_stats.h`、`
 
 ---
 
-## 七、验证方案（解决后必须全部通过）
+## 七、验证方案与实际结果
 
-| 层       | 命令 / 用例                                                        | 通过标准                                        |
-| -------- | ------------------------------------------------------------------ | ----------------------------------------------- |
-| 构建     | `./build.sh Release -DBUILD_MOCK=ON`                             | 0 error；产出 `libg1api.so` + `mock_client` |
-| 离线     | `gone/api/test/run_order_insert_test.sh`                         | 743 项全绿（上游基线）                          |
-| 冲突清洁 | `grep -rnE -e '<<<<<<<' -e '>>>>>>>' trunk/NewAPI`               | 0 命中                                          |
-| 功能     | `mock_client --plan test_plan_gw.json` / `test_plan_gone.json` | 登录/委托/成交/撤单/心跳 5/5                    |
-| 字段     | 撤单"三号互异"用例；市场 101/102/109；数量 ×100                   | 关联成功、回报字典正确                          |
-| 性能     | `--plan` 的 perf 段                                              | 报告非 0；口径已在报告标注                      |
-
----
-
-## 八、遗留与风险
-
-| # | 遗留                              | 风险等级 | 说明                                                                                 |
-| - | --------------------------------- | :------: | ------------------------------------------------------------------------------------ |
-| 1 | 上游删除的 10 个查询测试类型      |    中    | 本地保留后需适配 `client_seq_id`/批量查询，工作量中等                              |
-| 2 | 性能打点口径重建                  |   中高   | 影响历史数据可比性；建议在报告头写"口径 v2（客户端端到端）"                          |
-| 3 | 47 处待确认                       |    高    | 全部依赖**真实柜台联调**，无法离线闭环；离线只能保证"不崩"，不能保证"业务正确" |
-| 4 | `api-compare/` 双副本           |    低    | 另一开发者副本，本次未纳入；后续需明确"谁是主干"，避免第三份分叉                     |
-| 5 | r21 后 `net_time_map_` 抓包关联 |    中    | 依赖 `api_arrive_time_ns` 的映射需重建，否则抓包比对工具失效                       |
+| 层       | 命令 / 用例                                                        | 通过标准                                        | **实际结果** |
+| -------- | ------------------------------------------------------------------ | ----------------------------------------------- | :----------: |
+| 构建     | `./build.sh Release -DBUILD_MOCK=ON`（clean 全量）                | 0 error；产出 `libg1api.so` + `mock_client` | ✅ 通过：四目标 `Built target`（见 §9.3） |
+| 编译告警 | 同上（mock 侧 `-Werror`）                                          | 无告警即通过                                    | ✅ 通过 |
+| 符号     | `nm -D libg1api.so` 查新旧回调                                     | 新符号在、旧符号 0                              | ✅ 通过（`on_error`/`err_event_type` 0 残留） |
+| 冒烟     | `mock_client --help`；`--config connection_config.json`            | 正常输出、实例创建成功                          | ✅ 通过（`on_link_status: counter_type=0, link_type=0, status=1`） |
+| 冲突清洁 | `grep -rnE -e '<<<<<<<' -e '>>>>>>>' trunk/NewAPI`               | 0 命中                                          | ✅ 通过 |
+| 离线     | `gone/api/test/run_order_insert_test.sh`                         | 743 项全绿（上游基线）                          | ⏸ 未执行（需测试环境） |
+| 功能     | `mock_client --plan test_plan_gw.json` / `test_plan_gone.json` | 登录/委托/成交/撤单/心跳 5/5                    | ⏸ 未执行（需 FTE / gone_counter_mock） |
+| 字段     | 撤单"三号互异"用例；市场 101/102/109；数量 ×100                   | 关联成功、回报字典正确                          | ⏸ 未执行（配置与用例值待改） |
+| 性能     | `--plan` 的 perf 段                                              | 报告非 0；口径已在报告标注                      | ⏸ 未执行（口径 v2 已就位） |
 
 ---
 
-## 附：可复现命令
+## 八、遗留与风险（执行后更新）
+
+| # | 遗留                              | 原风险 | 说明                                                                                 | **执行后状态** |
+| - | --------------------------------- | :------: | ------------------------------------------------------------------------------------ | :------------: |
+| 1 | 上游删除的 10 个查询测试类型      |    中    | 本地保留后需适配 `client_seq_id`/批量查询，工作量中等                              | 枚举已保留；**运行时适配未做** |
+| 2 | 性能打点口径重建                  |   中高   | 影响历史数据可比性；建议在报告头写"口径 v2（客户端端到端）"                          | ✅ 已重建（v2，报告标题已标注）；历史数据不可直接比较 |
+| 3 | 47 处待确认                       |    高    | 全部依赖**真实柜台联调**，无法离线闭环；离线只能保证"不崩"，不能保证"业务正确" | **未动**（最高风险，仍需联调） |
+| 4 | `api-compare/` 双副本           |    低    | 另一开发者副本，本次未纳入；后续需明确"谁是主干"                     | 未变 |
+| 5 | r21 后 `net_time_map_` 抓包关联 |    中    | 依赖 `api_arrive_time_ns` 的映射需重建                                 | ✅ 已改用"发送前 `CLOCK_MONOTONIC` 时刻"（与抓包同基准）；待实抓验证 |
+
+---
+
+## 九、执行结果（2026-11-06 落地，2026-11-09 补记）
+
+### 9.1 冲突解决结果（11/11）
+
+| 文件 | 块 | 实际处置 |
+|------|:--:|---------|
+| `callback_handler.cpp` | 3 | 采用上游 `on_link_status(lb_api::counter_type,…)` 与 `on_event(api_event_type,…)` 签名；日志统一走本地 `LOG_INFO/LOG_ERROR`；**保留**本地业务链接状态跟踪 `last_trade_link_status_`（供委托/撤单前判断链接就绪） |
+| `callback_handler.h` | 1 | ⚠️ **方案调整**：原计划"以本地内联为骨架"改为**声明式 + `.cpp` 内加锁实现**——这些访问器由回调线程写、测试线程轮询读，必须串行化；同时补 `trade_link_ready()` 声明与实现 |
+| `main.cpp` | 1 | 保留 `--plan/--log/--analysis` 等本地全部参数；`--lib` 帮助与默认值改 `../../lib/libg1api.so` |
+| `mock_client.cpp` | 3 | 采用上游 `check_attr`（配置写失败即 `throw`）+ `set_address`（组 `lb_api::net_addr{ip,port}` + 合法性校验）+ 全属性序列；后续共用段由 `ret_attr` 改 `check_attr`；旧键 `single_cust_per_link` 兼容映射为 `need_multi_cust`（**语义相反**：`true`→`0`） |
+| `perf_runner.cpp` | 1 | **未采用**上游"空统计"（会让性能报告恒 0）；重建为客户端计时口径 v2：`mono_now_ns()`（`CLOCK_MONOTONIC`）测 `order_insert` 调用耗时（组包+入队），`net_time_map_` 记"发送前时刻" |
+| `test_case_runner.cpp` | 1 | 采用上游"统一入口 + 空字段兼容"逻辑；ETF 走 `order_insert` 且未指定方向时默认 `lb_api::ORDER_SIDE_PURCHASE`（`'D'`）；删除 `OrderReq.policy_id/tgw_id`；`"etf_order_insert"` 仅作**用例类型名**兼容保留 |
+| `test_case_runner.h` | 1 | 保留本地枚举（含上游删除的 10 个查询类型） |
+
+**收尾**：`svn resolve --accept working` 7 个文件；删除 14 个 `.mine/.r17/.r22`（git 侧记录为删除）。
+
+### 9.2 构建链 6 处修正（r21 引入，文本无冲突但必炸）
+
+| # | 文件 | 现象 | 修法 |
+|---|------|------|------|
+| 1 | `trunk/NewAPI/CMakeLists.txt` | `Cannot add target-level dependencies to non-existent target "lbapi"` | `add_dependencies(lbapi → g1api)`（r21 目标改名） |
+| 2 | `trunk/NewAPI/gone/api/CMakeLists.txt` | `requires the language dialect "CXX17", but CMake does not know the compile flags`（容器 gcc 4.8.5） | 按编译器版本分支：`<5.0` → `c++11`，否则 `c++17` |
+| 3 | 同上 | `unrecognized command line option '-mprefer-vector-width=256'` | `check_cxx_compiler_flag` 探测后再加入 `CMAKE_CXX_FLAGS` |
+| 4 | 同上 | 600+ 行 `undefined reference to lb_common::*` | 优先链接**同次构建 target `lbcommon`**（`common/lib`、`common/build` 为空，原逻辑直接漏链），归档探测保留为兜底 |
+| 5 | `mock/client/CMakeLists.txt` | `undefined reference to mock::Logger::instance()/log()` | 源文件清单补 `logger.cpp`、`result_analysis.cpp`（本地新增文件，上游清单没有） |
+| 6 | `src/api_instance.cpp` | `fatal error: stdatomic.h: No such file or directory` | 移除该 include（gcc 4.8.5 无此头；原子操作统一用 `matomic.h` 的 `__atomic` 内建） |
+
+### 9.3 验证证据
+
+| 项 | 证据 |
+|----|------|
+| clean 全量重编 | `lbcommon` → `g1api` → `perf_client` → `mock_client` 四目标全部 `Built target`，`编译完成！` |
+| 产物 | `trunk/NewAPI/gone/api/lib/libg1api.so`（7.3MB）、`mock_client`、`perf_client` |
+| 符号核对 | `nm -D libg1api.so` 含 `on_event` / `on_link_status(counter_type,…)` / `on_counter_status`；`on_error`、`err_event_type` **0 残留** |
+| 冒烟 | `--help` 正常；`--config connection_config.json`：实例创建成功 → `on_link_status: counter_type=0, link_type=0, status=1`（新签名生效）→ 用例加载正常 |
+| 冲突清洁 | `grep -c '^<<<<<<<'` = 0；`.mine/.r17/.r22` = 0；`svn status` 无 `C` |
+| 提交 | SVN **r23**（17 文件）；git 三次提交并推送（代码 / 文档+日志 / 任务单），远端 = 本地 |
+
+### 9.4 仍未完成（按优先级）
+
+| 优先级 | 事项 | 说明 |
+|:------:|------|------|
+| P1 | `config/*.json` 的 `market_type: 1` → `101`（沪）/`102`（深）；`cases/*_expected.json` 同步 | 代码已兼容，但值仍为旧字典；不改则委托/回报校验会与实际字典不符 |
+| P1 | `single_cust_per_link` → `need_multi_cust`（配置侧） | 代码已兼容旧键，建议按升级说明迁移到新键 |
+| P2 | 10 个查询用例适配 `client_seq_id`、批量查询（`order_batch_query`/`trade_batch_query`） | 枚举已保留，运行时未接 |
+| P2 | `svn:ignore`（build/、*.log、result/、lib 产物） | git 侧 `.gitignore` 已配，SVN 侧仍是 16 项 `?` |
+| P3 | 「冲突不得入库」写入 `task_rule.md` §13 提交前检查 | 本次为人工检查（`git diff --check` + 冲突标记扫描） |
+| 阻塞 | 47 处 `待确认/todo` | 需真实柜台联调；建议先落 `doc/PENDING_CONFIRMATIONS.md` 台账 |
+| 待环境 | `gone/api/test/` 743 项离线检查、`--plan` 双柜台 5/5、性能回归 | 需 FTE / gone_counter_mock / 柜台环境 |
+
+### 9.5 本次执行的复盘要点
+
+1. **冲突解决 ≠ 文本合并**：上游 r21 有 10 项接口级不兼容（库名/目标名/回调签名/枚举/地址结构/市场字典/数量口径/计时字段），必须逐项对齐头文件后再改，按冲突块"选一边"必然编不过。
+2. **构建链也是冲突面**：7 个文本冲突之外还有 6 处"无冲突但必炸"，只有真编译才暴露 → 冲突解决后**必须立刻全量编译**，不能只做静态检查。
+3. **工具链能力用变量表达**：`-std=c++17`、`-mprefer-vector-width` 改为"按编译器版本/探测"后，同一份 CMake 在 4.8.5 与新 gcc 下都能编。
+4. **注释里的旧字段会骗人**：`perf_runner` 两处注释仍描述已下线打点，复查阶段逐条扫符号才发现。
+5. **提交前必查二进制**：`git add <目录>` 曾把 7.3MB `.so` 与两个可执行文件带入暂存区（已 `rm --cached` + `--amend` + 补 `.gitignore`）。
+
+---
+
+## 附：可复现命令（执行后复核用）
 
 ```bash
-# 工作副本状态（必须 LANG，否则中文文件名报 UTF-8 错误）
+# 1) 工作副本状态（必须 LANG，否则中文文件名报 UTF-8 错误）
 docker exec otc bash -lc "cd /mnt/work/api_trunk/trunk && export LANG=zh_CN.utf8 && svn status"
+#   期望：无 C（冲突）、无 M（均已随 r23 提交），仅剩 ? 构建/日志产物
 
-# 冲突清单与临时文件
-docker exec otc bash -lc "cd /mnt/work/api_trunk/trunk/NewAPI/gone/api/mock/client/src && ls -la *.mine *.r17 *.r22"
+# 2) 冲突残留检查（应为 0）
+grep -rnE -e '<<<<<<<' -e '>>>>>>>' trunk/NewAPI | wc -l
+ls trunk/NewAPI/gone/api/mock/client/src/*.mine trunk/NewAPI/gone/api/mock/client/src/*.r[0-9]* 2>/dev/null | wc -l
 
-# 冲突块逐块查看
-grep -nE -e '<<<<<<<' -e '=======' -e '>>>>>>>' trunk/NewAPI/gone/api/mock/client/src/callback_handler.cpp
+# 3) clean 全量重编
+./build.sh clean && ./build.sh Release -DBUILD_MOCK=ON
+#   期望：lbcommon / g1api / perf_client / mock_client 四目标 Built target
 
-# 上游改动面
-docker exec otc bash -lc "cd /mnt/work/api_trunk/trunk && svn log -r 21 -v | grep -E '^   [MAD] /trunk/NewAPI/gone/api/(include|src)/'"
+# 4) 新接口符号核对
+nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -E "on_event|on_counter_status"
+nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -cE "on_error|err_event_type"   # 期望 0
 
-# 待确认/todo 清单
-cd trunk/NewAPI/gone/api && grep -rInE "待确认|\btodo\b" src include | wc -l    # 47
+# 5) 冒烟
+cd trunk/NewAPI/gone/api/mock/client && ../../lib/mock_client --help | head -12
+LD_LIBRARY_PATH=../../lib ../../lib/mock_client --config config/connection_config.json   # 见 on_link_status(counter_type,...)
+
+# 6) 后续待办清点
+cd trunk/NewAPI/gone/api && grep -rInE "待确认|\btodo\b" src include | wc -l            # 47
+grep -rn '"market_type": 1' mock/client/config/*.json | wc -l                              # 待改的旧字典值
 ```
+
+---
+
+

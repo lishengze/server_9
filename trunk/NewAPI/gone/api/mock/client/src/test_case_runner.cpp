@@ -444,7 +444,7 @@ bool TestCaseRunner::send_request(const TestCase& tc) {
                 }
                 int32_t ret = api_->order_insert(req);
                 LOG_INFO("[Runner] order_insert() 返回: " << ret
-                          << (is_etf ? " (ETF)" : "")); 
+                          << (is_etf ? " (ETF)" : ""));
                 return ret == 0;
             }
 
