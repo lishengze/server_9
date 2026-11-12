@@ -5,13 +5,18 @@
     "branch_id": "0001",
     "side": "1",
     "order_type": "2",
-    "policy_id": 0,
-    "tgw_id": 0,
     "security_id": "600007",
     "order_price": 250200,
-    "order_qty": 100,
+    "order_qty": 10000,
     "stop_price": 0,
     "client_seq_id": 0,
-    "market_type": 1
+    "market_type": 101
+  },
+  "_待确认": {
+    "待确认_market_type": "101=沪（600007）；须与配置 market_type、FTE 实例市场一致",
+    "待确认_order_qty": "10000 = 100 股 ×100（RUL-35）；须为 FTE buy_qty_unit 的整数倍",
+    "待确认_order_type": "'2'=限价（ATP 字典）；gw 侧按市场映射为 FTE SH '2'，联调确认",
+    "待确认_side": "'1'=买（与 FTE Side 同值）",
+    "待确认_price": "250200 = 25.02 元 ×10000（价格口径）"
   }
 }

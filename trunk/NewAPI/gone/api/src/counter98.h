@@ -504,7 +504,9 @@ namespace lb_api
       }
     }
 
-    /// ATP 定长字段(空格填充) → API std::array(NUL 结尾, 裁尾空格)
+    /// ATP 定长字段(空格填充) → API std::array(裁尾空格；满宽时不补 NUL)
+    /// 注意（2026-11-11 修正）：来源有效长度 >= 目标宽度时按满宽拷贝（同 gw 侧口径），
+    /// 避免 16 字节资金账号/客户号末位丢失；满宽字段按定长消费，勿当 C 串。
     template <size_t N, size_t M>
     static void from_atp_str(std::array<char, N> &dst, const std::array<char, M> &src)
     {
@@ -517,9 +519,9 @@ namespace lb_api
       {
         --n;
       }
-      if (n > N - 1)
+      if (n > N)
       {
-        n = N - 1;
+        n = N; ///< 允许占满整宽（此时无 NUL 终止符）
       }
       for (size_t i = 0; i < n; ++i)
       {
@@ -531,7 +533,10 @@ namespace lb_api
       }
     }
 
-    /// ATP 定长字段(空格填充) → C 串缓冲 (NUL 结尾, 裁尾空格)
+    /// ATP 定长字段(空格填充) → C 串缓冲 (裁尾空格)
+    /// 注意（2026-11-11 修正）：定长业务字段(fund/cust/account/branch)允许**占满整宽**，
+    /// 仅当 n < dst_len 时才补 NUL。此前一律按 dst_len-1 截断，导致 16 字节资金账号被截成
+    /// 15 位 → 极速柜台(FTE) CheckPasswd 的 key 匹配不到 → 登录回 kPasswdErr(4)。
     template <size_t M>
     static void from_atp_cstr(char *dst, size_t dst_len, const std::array<char, M> &src)
     {
@@ -544,9 +549,9 @@ namespace lb_api
       {
         --n;
       }
-      if (n > dst_len - 1)
+      if (n > dst_len)
       {
-        n = dst_len - 1;
+        n = dst_len; ///< 允许占满整宽（此时无 NUL 终止符，下游按定长处理）
       }
       for (size_t i = 0; i < n; ++i)
       {

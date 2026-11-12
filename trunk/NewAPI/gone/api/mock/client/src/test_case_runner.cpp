@@ -507,6 +507,12 @@ bool TestCaseRunner::validate_response(const TestCase& tc, std::vector<std::stri
         const FieldMatch& fm = tc.expected_fields[i];
         std::string detail;
 
+        // 约定：字段名以 '_' 开头 = 待确认/注释标记，不参与校验（允许把"待确认"留在用例里）
+        if (!fm.field_name.empty() && fm.field_name[0] == '_') {
+            skipped++;
+            continue;
+        }
+
         // 值为 null 的动态字段：跳过校验
         if (fm.expected_value.is_null()) {
             skipped++;
@@ -567,7 +573,9 @@ void TestCaseRunner::extract_response_fields(TestCaseType type, std::map<std::st
         out["order_price"] = std::to_string(rtn.order_price);
         out["order_qty"] = std::to_string(rtn.order_qty);
         out["client_seq_id"] = std::to_string(rtn.client_seq_id);
-        out["rtn_type"] = std::to_string((int)rtn.rtn_type);
+        // RTN_TYPE_CHAR_20261112：rtn_type 与 side/order_type 同为 char 型字典值，统一按字符输出
+        // （原 std::to_string((int)) 输出 49，与预期 "1" 不可比，属测试口径不一致）
+        out["rtn_type"] = std::string(1, rtn.rtn_type);
         out["err_code"] = std::to_string(rtn.err_code);
         out["order_sys_no"] = std::to_string(rtn.order_sys_no);
         out["frozen_amount"] = std::to_string(rtn.frozen_amount);

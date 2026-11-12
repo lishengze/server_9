@@ -7,8 +7,12 @@
     "order_type": "2",
     "security_id": "600007",
     "order_price": 250200,
-    "order_qty": 100,
+    "order_qty": 10000,
     "stop_price": 0,
-    "market_type": 1
+    "market_type": 101
+  },
+  "_待确认": {
+    "待确认_order_qty": "10000 = 100 股 ×100（RUL-35）",
+    "待确认_market_type": "101=沪"
   }
 }

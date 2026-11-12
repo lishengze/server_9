@@ -28,6 +28,8 @@ namespace lb_api
   static constexpr int16_t MARKET_TYPE_SH = 101;     ///< 上交所
   static constexpr int16_t MARKET_TYPE_SZ = 102;     ///< 深交所
   static constexpr int16_t MARKET_TYPE_BSE = 109;    ///< 北交所/北京 (委托 market_type 使用；仅深圳 API 实例支持，实例不配置此值)
+  static constexpr int16_t MARKET_TYPE_HKT_SH = 105; ///< 港股通-沪市（对齐 98 AgwMarketID::kHKTShangHai）
+  static constexpr int16_t MARKET_TYPE_HKT_SZ = 106; ///< 港股通-深市（对齐 98 AgwMarketID::kHKTShenZhen）
 
   /// 买卖方向 (AgwSide, char, 完整字典)
   static constexpr char ORDER_SIDE_ALL = '0';             ///< 所有
@@ -47,6 +49,40 @@ namespace lb_api
   static constexpr char ORDER_SIDE_SHORT_SELL = 'W';      ///< 融券卖出(独立，非98、个微字典)
   static constexpr char ORDER_SIDE_SELL_TO_REPAY = 'X';   ///< 卖券还款；todo: 待确认98业务映射，当前委托返回不支持
 
+  // ===== 以下为 98 CTE 侧别字典补齐（对齐 constants_agw_external.h AgwSide，2026-11-10）=====
+  // 说明：上面 S/T/U/V/W/X 为 ATP 扩展值（98/个微无此字符），以下为 98 专有侧别。
+  static constexpr char ORDER_SIDE_ACTIVATION = 'A'; ///< 密码激活（98 AgwSide::kActivation）
+  static constexpr char ORDER_SIDE_CANCELLATION = 'C'; ///< 密码注销（98 AgwSide::kCancellation）
+  static constexpr char ORDER_SIDE_SWAP = '5'; ///< 转股（98 AgwSide::kSwap）
+  static constexpr char ORDER_SIDE_PUT_BACK = '6'; ///< 回售（98 AgwSide::kPutBack）
+  static constexpr char ORDER_SIDE_TENDER_OFFER = '7'; ///< 预受要约（98 AgwSide::kTenderOffer）
+  static constexpr char ORDER_SIDE_DIS_TENDER_OFFER = '8'; ///< 解除预受要约（98 AgwSide::kDisTenderOffer）
+  static constexpr char ORDER_SIDE_LOAN = 'F'; ///< 出借（98 AgwSide::kLoan）
+  static constexpr char ORDER_SIDE_BORROW = 'G'; ///< 借入（98 AgwSide::kBorrow）
+  static constexpr char ORDER_SIDE_DESIGNATION_TRANSFER = 'J'; ///< 转托管（98 AgwSide::kDesignationTransfer）
+  static constexpr char ORDER_SIDE_REVERT_DESIGNATION_TRANSFER = 'K'; ///< 反向转托管（98 AgwSide::kRevertDesignationTransfer）
+  static constexpr char ORDER_SIDE_PHYSICAL_PURCHASE = 'P'; ///< 实物申购（98 AgwSide::kPhysicalPurchase）
+  static constexpr char ORDER_SIDE_QUERY = 'Q'; ///< 查询（98 AgwSide::kQuery）
+  static constexpr char ORDER_SIDE_PHYSICAL_REDEMPTION = 'R'; ///< 实物赎回（98 AgwSide::kPhysicalRedemption）
+  static constexpr char ORDER_SIDE_OPEN = 'O'; ///< 分拆（98 AgwSide::kOpen）
+  static constexpr char ORDER_SIDE_MERGE = 'M'; ///< 合并（98 AgwSide::kMerge）
+  static constexpr char ORDER_SIDE_LOCK = 'Z'; ///< 锁定（98 AgwSide::kLock）
+  static constexpr char ORDER_SIDE_UN_LOCK = 'Y'; ///< 解锁（98 AgwSide::kUnLock）
+  static constexpr char ORDER_SIDE_DISPOSAL = '@'; ///< 转处置（98 AgwSide::kDisposal）
+  static constexpr char ORDER_SIDE_DISPOSAL_RETURN = '%'; ///< 转处置返还（98 AgwSide::kDisposalReturn）
+  static constexpr char ORDER_SIDE_TRANSFORM_IN = 'a'; ///< 转入（98 AgwSide::kTransformIn）
+  static constexpr char ORDER_SIDE_TRANSFORM_OUT = 'b'; ///< 转出（98 AgwSide::kTransformOut）
+  static constexpr char ORDER_SIDE_ADD_CLOSE = 'c'; ///< 追加平仓（98 AgwSide::kAddClose）
+  static constexpr char ORDER_SIDE_CLEAR_CLOSE = 'd'; ///< 清偿平仓（98 AgwSide::kClearClose）
+  static constexpr char ORDER_SIDE_ADD_FORCE_SELL = 'e'; ///< 追加强卖（98 AgwSide::kAddForceSell）
+  static constexpr char ORDER_SIDE_CLEAR_FORCE_SELL = 'f'; ///< 清偿强卖（98 AgwSide::kClearForceSell）
+  static constexpr char ORDER_SIDE_ACTIVED_SELL_REPAY = 'g'; ///< 主动卖券还款（98 AgwSide::kActivedSellRepay）
+  static constexpr char ORDER_SIDE_PUTBACK_CANCEL = 'h'; ///< 回售撤销（98 AgwSide::kPutbackCancel）
+  static constexpr char ORDER_SIDE_CASH_CALL = 'i'; ///< 网下现金认购（98 AgwSide::kCashCall）
+  static constexpr char ORDER_SIDE_STOCK_CALL = 'j'; ///< 网下股票认购（98 AgwSide::kStockCall）
+  static constexpr char ORDER_SIDE_CONFIRM_TRANS_BUY = 'k'; ///< 确认成交买（98 AgwSide::kConfirmTransBuy）
+  static constexpr char ORDER_SIDE_CONFIRM_TRANS_SELL = 'l'; ///< 确认成交卖（98 AgwSide::kConfirmTransSell）
+
   /// 委托市价类型 (char, '1'-'7'; G1 FPGA 柜台时, 仅支持 '2' 限价)
   /// 98 回报中的委托类型（order_type）暂填 0，待确认如何映射为 API 类型。
   static constexpr char ORDER_TYPE_JDSC = '1'; ///< 最优五档即时成交剩余撤销
@@ -56,6 +92,14 @@ namespace lb_api
   static constexpr char ORDER_TYPE_DFZY = '5'; ///< 对手方最优
   static constexpr char ORDER_TYPE_FAK = '6';  ///< 即时成交剩余撤销申报(深交所)
   static constexpr char ORDER_TYPE_FOK = '7';  ///< 全额成交或撤销申报(深交所)
+
+  // ===== 98 CTE 委托类型字典（对齐 AgwOrdType）=====
+  // ⚠️ 值域与上面 ORDER_TYPE_*（ATP/交易所字典）不同：此处 '1'=市价，而 ATP '1'=最优五档即时成交剩余撤销。
+  //    上表用于 OrderReq.order_type 入参（ATP 语义）；本表仅用于对接 98 柜台时的报文转换。
+  static constexpr char ORDER_TYPE_98_MARKET = '1'; ///< 市价（98 AgwOrdType::kMarket）
+  static constexpr char ORDER_TYPE_98_FIXED = '2'; ///< 限价（98 AgwOrdType::kFixed）
+  static constexpr char ORDER_TYPE_98_LOCAL_OPTIMAL = 'U'; ///< 本方最优（98 AgwOrdType::kLocalOptimal）
+  static constexpr char ORDER_TYPE_98_TRANSFER_FIXED = 'K'; ///< 市价剩余转限价,适用于上交所（98 AgwOrdType::kTransferFixed）
 
   /// 委托状态 (AgwOrdStatus, uint8_t, 完整字典)
   static constexpr uint8_t ORDER_STATE_NEW = 0;                      ///< 已申报
@@ -76,8 +120,72 @@ namespace lb_api
   static constexpr char RSP_TYPE_CANCELED = '4'; ///< 已撤销
   static constexpr char RSP_TYPE_REJECTED = '8'; ///< 已拒绝 (含 API 层拒绝)
   static constexpr char RSP_TYPE_TRADE = 'F';    ///< 已成交
+  static constexpr char RSP_TYPE_GOLD = 'J';   ///< 黄金相关（98 AgwExecType::kGold）
 
   /// 证券类别 (SecurityType_def, uint16_t, 完整字典)
+  // ===== 98 CTE 业务类型字典（对齐 AgwBusinessType，54 项，2026-11-10 补齐）=====
+  // 用于回报/请求中的 business_type 字段；FTE 侧同名同值（如 201 两融、203 担保品、12 ETF）。
+  static constexpr uint8_t BUSINESS_TYPE_ALL = 0; ///< 所有类型（98 AgwBusinessType::kAll）
+  static constexpr uint8_t BUSINESS_TYPE_CASH_AUCTION = 1; ///< 现货集中交易（98 AgwBusinessType::kCashAuction）
+  static constexpr uint8_t BUSINESS_TYPE_PLEDGE = 2; ///< 质押式回购交易（98 AgwBusinessType::kPledge）
+  static constexpr uint8_t BUSINESS_TYPE_BOND_DISTRIBUTION = 3; ///< 债券分销（98 AgwBusinessType::kBondDistribution）
+  static constexpr uint8_t BUSINESS_TYPE_OPTION_AUCTION = 4; ///< 期权集中交易（98 AgwBusinessType::kOptionAuction）
+  static constexpr uint8_t BUSINESS_TYPE_BLOCK_TRADE = 5; ///< 协议交易(大宗交易)（98 AgwBusinessType::kBlockTrade）
+  static constexpr uint8_t BUSINESS_TYPE_AFTER_HOURS_PRICING = 6; ///< 盘后定价交易（98 AgwBusinessType::kAfterHoursPricing）
+  static constexpr uint8_t BUSINESS_TYPE_REFINANCING = 7; ///< 转融通（98 AgwBusinessType::kRefinancing）
+  static constexpr uint8_t BUSINESS_TYPE_ASSET_TRANSFER = 8; ///< 资产管理计划份额转让（98 AgwBusinessType::kAssetTransfer）
+  static constexpr uint8_t BUSINESS_TYPE_CASH_PLEDGE_REPO = 9; ///< 股票质押式回购（98 AgwBusinessType::kCashPledgeRepo）
+  static constexpr uint8_t BUSINESS_TYPE_AGREED_REPO = 10; ///< 约定购回（98 AgwBusinessType::kAgreedRepo）
+  static constexpr uint8_t BUSINESS_TYPE_PLEDGE_QUOTE_REPO = 11; ///< 质押式报价回购（98 AgwBusinessType::kPledgeQuoteRepo）
+  static constexpr uint8_t BUSINESS_TYPE_ETF_REAL_TIME_PURCHASE_REDEMPTION = 12; ///< ETF实时申购赎回（98 AgwBusinessType::kETFRealTimePurchaseRedemption）
+  static constexpr uint8_t BUSINESS_TYPE_ISSUE = 13; ///< 网上发行认购（98 AgwBusinessType::kIssue）
+  static constexpr uint8_t BUSINESS_TYPE_SUBSCRIPTION_RATIO = 14; ///< 配股认购（98 AgwBusinessType::kSubscriptionRatio）
+  static constexpr uint8_t BUSINESS_TYPE_BOND_SELL_BACK = 15; ///< 债券转股回售（98 AgwBusinessType::kBondSellBack）
+  static constexpr uint8_t BUSINESS_TYPE_OPTION_EXERCISE = 16; ///< 期权行权（98 AgwBusinessType::kOptionExercise）
+  static constexpr uint8_t BUSINESS_TYPE_OPEN_FUND_PURCHASE_REDEMPTION = 17; ///< 开放式基金申购赎回（98 AgwBusinessType::kOpenFundPurchaseRedemption）
+  static constexpr uint8_t BUSINESS_TYPE_TENDER_OFFER = 18; ///< 要约收购（98 AgwBusinessType::kTenderOffer）
+  static constexpr uint8_t BUSINESS_TYPE_PLEDGE_REPO_PLEDGE_OR_SIGN = 19; ///< 质押式回购质押解押（98 AgwBusinessType::kPledgeRepoPledgeOrSign）
+  static constexpr uint8_t BUSINESS_TYPE_DESIGNATION = 20; ///< 转托管（98 AgwBusinessType::kDesignation）
+  static constexpr uint8_t BUSINESS_TYPE_VOTE = 21; ///< 网络投票（98 AgwBusinessType::kVote）
+  static constexpr uint8_t BUSINESS_TYPE_DESIGNATED_TRANSACTION = 22; ///< 指定交易（98 AgwBusinessType::kDesignatedTransaction）
+  static constexpr uint8_t BUSINESS_TYPE_WARRANTS_EXERCISE = 23; ///< 权证行权（98 AgwBusinessType::kWarrantsExercise）
+  static constexpr uint8_t BUSINESS_TYPE_PASSWORD_SERVICE = 24; ///< 密码服务（98 AgwBusinessType::kPasswordService）
+  static constexpr uint8_t BUSINESS_TYPE_OPEN_MARGIN_QUERY = 25; ///< 保证金查询（98 AgwBusinessType::kOpenMarginQuery）
+  static constexpr uint8_t BUSINESS_TYPE_OPEN_FUND_SETTING = 26; ///< 开放式基金转托管、分红方式设置（98 AgwBusinessType::kOpenFundSetting）
+  static constexpr uint8_t BUSINESS_TYPE_TURN_TO_DISPOSAL = 27; ///< 转处置（98 AgwBusinessType::kTurnToDisposal）
+  static constexpr uint8_t BUSINESS_TYPE_COUPON_SWAP = 28; ///< 垫券还券（98 AgwBusinessType::kCouponSwap）
+  static constexpr uint8_t BUSINESS_TYPE_PAY_OFF = 29; ///< 待清偿扣划（98 AgwBusinessType::kPayOff）
+  static constexpr uint8_t BUSINESS_TYPE_BOND_PLEDGE_AGREEMENT_REPO = 30; ///< 债券质押式协议回购（98 AgwBusinessType::kBondPledgeAgreementRepo）
+  static constexpr uint8_t BUSINESS_TYPE_LEVEL_FUND_REAL_TIME_OPEN_OR_MERGE = 31; ///< 分级基金实时分拆合并（98 AgwBusinessType::kLevelFundRealTimeOpenOrMerge）
+  static constexpr uint8_t BUSINESS_TYPE_COVER_LOCK_OR_UNLOCK = 32; ///< 备兑锁定解锁（98 AgwBusinessType::kCoverLockOrUnlock）
+  static constexpr uint8_t BUSINESS_TYPE_OPTION_COMBINATION = 34; ///< 期权组合策略保证金（98 AgwBusinessType::kOptionCombination）
+  static constexpr uint8_t BUSINESS_TYPE_HK_STOCKS_THROUGH = 63; ///< 港股通（98 AgwBusinessType::kHKStocksThrough）
+  static constexpr uint8_t BUSINESS_TYPE_TIB_AFTER_HOUR = 97; ///< 科创板股票盘后定价交易业务（98 AgwBusinessType::kTibAfterHour）
+  static constexpr uint8_t BUSINESS_TYPE_MARGIN_TRADE = 99; ///< 融资融券交易业务（98 AgwBusinessType::kMarginTrade）
+  static constexpr uint8_t BUSINESS_TYPE_CREDIT_AUCTION = 200; ///< 信用账户普通买入/普通卖出（卖券还款）交易业务（98 AgwBusinessType::kCreditAuction）
+  static constexpr uint8_t BUSINESS_TYPE_MARGIN_TRADING = 201; ///< 融资融券交易业务（98 AgwBusinessType::kMarginTrading）
+  static constexpr uint8_t BUSINESS_TYPE_DIRECT_REPAY = 202; ///< 直接还款（98 AgwBusinessType::kDirectRepay）
+  static constexpr uint8_t BUSINESS_TYPE_COLLATERAL_IN_OR_OUT = 203; ///< 担保品划转（98 AgwBusinessType::kCollateralInOrOut）
+  static constexpr uint8_t BUSINESS_TYPE_BUY_SECU_REPAY = 204; ///< 买券还券（98 AgwBusinessType::kBuySecuRepay）
+  static constexpr uint8_t BUSINESS_TYPE_CUR_SECU_REPAY = 205; ///< 现券还券（98 AgwBusinessType::kCurSecuRepay）
+  static constexpr uint8_t BUSINESS_TYPE_CREDIT_VOTE = 207; ///< 信用账户投票（98 AgwBusinessType::kCreditVote）
+  static constexpr uint8_t BUSINESS_TYPE_DIRECT_REPAY_APPOINT = 208; ///< 指定合约还款（98 AgwBusinessType::kDirectRepayAppoint）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_AGREEMENT_TRANSFER = 209; ///< 股转协议转让（98 AgwBusinessType::kThirdAgreementTransfer）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_TENDER_OFFER = 210; ///< 股转要约收购（98 AgwBusinessType::kThirdTenderOffer）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_ISSUE = 211; ///< 股转发行（98 AgwBusinessType::kThirdIssue）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_CASH_AUCTION = 212; ///< 新三板集中交易(挂牌做市, 股转挂牌连续竞价, 挂牌集合竞价)（98 AgwBusinessType::kThirdCashAuction）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_BLOCK_TRADE = 213; ///< 股转大宗交易（98 AgwBusinessType::kThirdBlockTrade）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_CASH_AUCTION_DELIST = 214; ///< 新三板集中交易(两网公司及退市公司股票)（98 AgwBusinessType::kThirdCashAuctionDelist）
+  static constexpr uint8_t BUSINESS_TYPE_OFFLINE_ETF_SUBSCRIBE = 215; ///< 网下ETF发行认购（98 AgwBusinessType::kOfflineETFSubscribe）
+  static constexpr uint8_t BUSINESS_TYPE_LOF_DIVIDE_POLICY_SET = 217; ///< LOF基金分红方式设置（98 AgwBusinessType::kLOFDividePolicySet）
+  static constexpr uint8_t BUSINESS_TYPE_THIRD_DELIST_AGREEMENT = 218; ///< 股转摘牌协议转让（98 AgwBusinessType::kThirdDelistAgreement）
+
+  // ===== 98 CTE 订单有效期字典（对齐 AgwTimeInForce）=====
+  static constexpr char TIME_IN_FORCE_GFD = '0'; ///< 当日有效（98 AgwTimeInForce::kGFD）
+  static constexpr char TIME_IN_FORCE_IOC = '3'; ///< 即时成交剩余撤销（98 AgwTimeInForce::kIOC）
+  static constexpr char TIME_IN_FORCE_FOK = '4'; ///< 即时全部成交或撤销,适用于上交所（98 AgwTimeInForce::kFOK）
+  static constexpr char TIME_IN_FORCE_AT_CROSSING = '9'; ///< 竞价限价盘,适用于深交所（98 AgwTimeInForce::kAtCrossing）
+
   static constexpr uint16_t SECURITY_TYPE_NULL = 0;                       ///< 默认类型
   static constexpr uint16_t SECURITY_TYPE_MAIN_A_STOCK = 1;               ///< 主板A股
   static constexpr uint16_t SECURITY_TYPE_SME_STOCK = 2;                  ///< 中小板股票

@@ -139,6 +139,22 @@ void ClientSession::handle_message(const raw_agw_header &hdr,
 // 登录/心跳
 // ============================================================
 
+namespace {
+// 定长字段 → std::string：先截到首个 NUL，再去掉尾部空格/TAB
+// （真实柜台按 trim 语义比较；API 侧按定长空格填充发送，mock 必须同样处理）
+std::string fixed_to_string(const char *p, size_t n) {
+    size_t len = 0;
+    while (len < n && p[len] != '\0') ++len;
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t' || p[len - 1] == '\r' || p[len - 1] == '\n')) --len;
+    return std::string(p, len);
+}
+std::string trim_string(const std::string &s) {
+    size_t end = s.size();
+    while (end > 0 && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r' || s[end - 1] == '\n')) --end;
+    return s.substr(0, end);
+}
+} // namespace
+
 void ClientSession::handle_agw_login(const char *body, int32_t body_len) {
     lb_counter98::AgwMsgLogin req;
     if (!decode_body(req, body, body_len)) {
@@ -146,8 +162,9 @@ void ClientSession::handle_agw_login(const char *body, int32_t body_len) {
         return;
     }
 
-    std::string agw_user(req.sender_comp_id.data(), strnlen(req.sender_comp_id.data(), req.sender_comp_id.size()));
-    std::string agw_pwd(req.password.data(), strnlen(req.password.data(), req.password.size()));
+    // [待确认-实柜语义] 真实 AGW 是否也按 trim 比较待联调确认；此处与 API 的空格填充对齐
+    std::string agw_user = fixed_to_string(req.sender_comp_id.data(), req.sender_comp_id.size());
+    std::string agw_pwd = trim_string(std::string(req.password.data(), strnlen(req.password.data(), req.password.size())));
 
     bool ok = acct_mgr_->verify_agw_user(agw_user, agw_pwd);
 
@@ -179,8 +196,8 @@ void ClientSession::handle_cust_login(const char *body, int32_t body_len) {
         return;
     }
 
-    std::string fund_account(req.fund_account_id.data(), strnlen(req.fund_account_id.data(), req.fund_account_id.size()));
-    std::string password(req.password);
+    std::string fund_account = fixed_to_string(req.fund_account_id.data(), req.fund_account_id.size());
+    std::string password = trim_string(req.password);
 
     bool ok = acct_mgr_->verify_account(fund_account, password);
 

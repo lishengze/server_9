@@ -45,8 +45,11 @@ file(GLOB JSON_UTILS_SRC
 )
 
 # API 头文件路径（libg1api.so 的接口定义）
+# MOCK_INC_FIX_20261112：API_SRC_DIR 原为 ../src（= gone/api/mock/src），
+# 但 api_event_msg.h 位于 gone/api/src，容器内重建 mock_client 时报
+# "api_event_msg.h: No such file or directory"；改为 ../../src 指向 API src。
 set(API_INCLUDE_DIR ../../include)
-set(API_SRC_DIR ../src)
+set(API_SRC_DIR ../../src)
 
 # 可执行文件
 add_executable(mock_client ${MOCK_CLIENT_SRC} ${JSON_UTILS_SRC})

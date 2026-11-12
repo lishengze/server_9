@@ -55,7 +55,10 @@ namespace lb_api
       }
     }
 
-    /// FTE 定长字段(空格填充) → API 数组(NUL 结尾, 裁尾空格)
+    /// FTE 定长字段(空格填充) → API 数组(裁尾空格；满宽时不补 NUL)
+    /// 注意（2026-11-11 修正）：当来源有效长度 >= 目标宽度时按**满宽拷贝**，
+    /// 不再强制保留 NUL 位。原因：16 字节资金账号/客户号恰好占满，若按 N-1 截断
+    /// 会丢失末位字符（登录回报字段与柜台应答不一致）。满宽字段按定长消费，勿当 C 串。
     template <size_t N, size_t M>
     void from_fte_str(std::array<char, N> &dst, const std::array<char, M> &src)
     {
@@ -64,9 +67,9 @@ namespace lb_api
       {
         --n;
       }
-      if (n > N - 1)
+      if (n > N)
       {
-        n = N - 1; ///< 保留 NUL 位
+        n = N; ///< 允许占满整宽（此时无 NUL 终止符）
       }
       for (size_t i = 0; i < n; ++i)
       {
@@ -155,29 +158,83 @@ namespace lb_api
       return static_cast<int16_t>(fte_market);
     }
 
-    /// FTE 订单状态 → API ORDER_STATE_* (API 字典=98 ATP AgwOrdStatus; 映射表, RUL-16):
-    /// FTE {0空闲,1新报,2部成,3全成,4撤中,5全撤,8废} 与 ATP 同值不同义, 须显式映射
+    /// FTE 订单状态 → API ORDER_STATE_*
+    /// 依据（2026-11-10 修正）：FTE 回报字段类型为 OrdStatus_def（common::OrdStatus，见
+    ///   fte/include/common/ute_types.h:878），其取值与 98 CTE AgwOrdStatus、API ORDER_STATE_* **同义**：
+    ///   0 已申报 / 1 部分成交 / 2 全部成交 / 3 部成部撤 / 4 已撤销 / 5 部分撤销 /
+    ///   8 已拒绝 / 9 未申报 / 10 正报 / 11 待撤销 / 12 部成待撤。→ **直通**，不再做"值→义"换算。
+    /// 仅 FTE 内部扩展值需兜底：13 已处理、99 无（两者 98/API 均无对应，联调关注）。
+    /// 注：旧实现按 {0空闲,1新报,2部成,3全成,4撤中,5全撤,8废} 换算，与协议字段语义不符，已废弃。
     uint8_t map_fte_ord_status(uint8_t st)
     {
       switch (st)
       {
-      case 0:
-        return ORDER_STATE_UNSENT; // 9 未申报
-      case 1:
-        return ORDER_STATE_NEW; // 0 已申报
-      case 2:
-        return ORDER_STATE_PART_FILLED;
-      case 3:
-        return ORDER_STATE_FILLED;
-      case 4:
-        return ORDER_STATE_WAIT_CANCEL; // 11 待撤销
-      case 5:
-        return ORDER_STATE_CANCELED; // 4 已撤销
-      case 8:
-        return ORDER_STATE_REJECTED;
+      case ORDER_STATE_NEW:                     // FTE 0 已申报
+      case ORDER_STATE_PART_FILLED:             // 1 部分成交
+      case ORDER_STATE_FILLED:                  // 2 全部成交
+      case ORDER_STATE_PART_FILLED_PART_CANCEL: // 3 部成部撤
+      case ORDER_STATE_CANCELED:                // 4 已撤销
+      case ORDER_STATE_PART_CANCELED:           // 5 部分撤销
+      case ORDER_STATE_REJECTED:                // 8 已拒绝
+      case ORDER_STATE_UNSENT:                  // 9 未申报
+      case ORDER_STATE_SENDING:                 // 10 正报
+      case ORDER_STATE_WAIT_CANCEL:             // 11 待撤销
+      case ORDER_STATE_PART_FILLED_WAIT_CANCEL: // 12 部成待撤
+        return st;
+      case 13:                                    // FTE kProcessed 已处理（内部值）
+        return ORDER_STATE_NEW;
+      case 99:                                    // FTE kNull 无（内部值）
+        return ORDER_STATE_UNSENT;
       default:
         return st; ///< 未知值透传不吞信息, 联调关注
       }
+    }
+
+    /// API 委托类型（ATP 7 值统一字典）→ FTE 委托类型（**按市场两套字典**，见 ute_types.h）
+    ///   SHOrderType: '1' 五档即时成交剩余撤销 / '2' 限价 / '3' 五档即时成交剩余转限价 / '4' 本方最优 / '5' 对手方最优
+    ///   SZOrderType: '1' 限价 / '2' 本方最优 / '3' 对手方最优或限价 / '4' 即时成交剩余撤销 / '5' 全额成交或撤销 / '6' 五档全额成交或撤销
+    /// 代码依据：FTE FillOrderFieldsSH 直接透传 order_type（要求 SH 交易所码）；
+    ///          FillOrderFieldsSZ 以 SZOrderType 值域查表 fte_to_sz_order_type 转换。
+    /// @return false = 该市场不支持该委托类型 → 调用方返回 LBAPI_ERR_UNSUPPORTED_TYPE
+    static bool map_api_order_type_to_fte(char api_type, uint16_t market_id, char &o_fte_type)
+    {
+      // FTE 侧取值（对齐 fte/include/common/ute_types.h）
+      const char SH_FIVE_LEVEL_IOC = '1';
+      const char SH_LIMIT = '2';
+      const char SH_FIVE_LEVEL_LIMIT = '3';
+      const char SH_LOCAL_OPTIMAL = '4';
+      const char SH_COUNTER_OPTIMAL = '5';
+      const char SZ_LIMIT = '1';
+      const char SZ_LOCAL_OPTIMAL = '2';
+      const char SZ_COUNTER_OPTIMAL_OR_LIMIT = '3';
+      const char SZ_IOC = '4';
+      const char SZ_FOK = '5';
+
+      if (market_id == MARKET_TYPE_SH)
+      {
+        switch (api_type)
+        {
+        case ORDER_TYPE_JDSC: o_fte_type = SH_FIVE_LEVEL_IOC;     return true;  // 最优五档即时成交剩余撤销
+        case ORDER_TYPE_FIX:  o_fte_type = SH_LIMIT;              return true;  // 限价
+        case ORDER_TYPE_JDSZ: o_fte_type = SH_FIVE_LEVEL_LIMIT;   return true;  // 最优五档即时成交剩余转限价
+        case ORDER_TYPE_BFZY: o_fte_type = SH_LOCAL_OPTIMAL;      return true;  // 本方最优
+        case ORDER_TYPE_DFZY: o_fte_type = SH_COUNTER_OPTIMAL;    return true;  // 对手方最优
+        default:                                                    return false; // '6'FAK/'7'FOK 沪市无对应
+        }
+      }
+      if (market_id == MARKET_TYPE_SZ)
+      {
+        switch (api_type)
+        {
+        case ORDER_TYPE_FIX:  o_fte_type = SZ_LIMIT;                     return true; // 限价（SZ 限价码为 '1'）
+        case ORDER_TYPE_BFZY: o_fte_type = SZ_LOCAL_OPTIMAL;             return true; // 本方最优
+        case ORDER_TYPE_DFZY: o_fte_type = SZ_COUNTER_OPTIMAL_OR_LIMIT;  return true; // 对手方最优或限价
+        case ORDER_TYPE_FAK:  o_fte_type = SZ_IOC;                       return true; // 即时成交剩余撤销
+        case ORDER_TYPE_FOK:  o_fte_type = SZ_FOK;                       return true; // 全额成交或撤销
+        default:                                                          return false; // '1'五档IOC/'3'五档剩转限价 深市无对应
+        }
+      }
+      return false;
     }
 
     /// FTE exec_type → API 回报类型 (转换挂点: 字符集与 ATP AgwExecType 相同 '0'/'4'/'8'/'F', 直通)
@@ -197,13 +254,14 @@ namespace lb_api
       out.side = er.side;
       out.order_type = er.ord_type;
       out.policy_id = 0;                                     ///< FTE 协议无策略佣金字段
-      out.order_status = map_fte_ord_status(er.ord_status);  ///< [待确认] source 字典映射
-      out.market_type = map_fte_market_to_api(er.market_id); ///< [待确认] 市场字段
+      out.order_status = map_fte_ord_status(er.ord_status);  ///< FTE OrdStatus 与 API 同义，直通（内部值 13/99 兜底）
+      out.market_type = map_fte_market_to_api(er.market_id); ///< [确认] 市场字段 - FTE 与 API 值域相同，直通
       from_fte_str(out.security_id, er.security_id);
       out.order_price = er.price;
       out.order_qty = er.order_qty;
       out.client_seq_id = er.client_seq_id;
-      out.order_sys_no = fte_order_sys_no(er); ///< 待确认: 个微 order_id = order_sys_no (委托/成交/撤单应答同源, 对齐 api-tmp-source)
+      out.order_sys_no = er.clordno; /// 确认: 个微撤单请求 原委托的客户订单号，
+                                     /// 需要的是 ​​clordno, 撤单时柜台需要；
       out.frozen_amount = er.frozen_trade_value;
       out.fee = 0; ///< source: 委托回报费用置 0 (成交回报单独覆盖)
       out.trade_qty = er.cum_qty;
@@ -263,6 +321,19 @@ namespace lb_api
         (req.market_type != MARKET_TYPE_SH && req.market_type != MARKET_TYPE_SZ))
     {
       return LBAPI_ERR_INVALID_PARAM;
+    }
+    // 委托类型校验：API(ATP 7 值) → FTE(按市场两套字典)；无对应则在入队前拒绝
+    // （极速柜台返回 UNSUPPORTED_TYPE 不触发 98 回退，与 开发者升级说明.txt 口径一致）
+    if (side_ctl == 0)
+    {
+      char fte_order_type = 0;
+      if (!map_api_order_type_to_fte(req.order_type, req.market_type, fte_order_type))
+      {
+        lb_common::lb_log_hand tlh(log_);
+        error_log(tlh) << "gw deal_order_req: unsupported order_type=" << req.order_type
+                       << ", market=" << req.market_type << ", client_seq_id=" << req.client_seq_id << end_log;
+        return LBAPI_ERR_UNSUPPORTED_TYPE;
+      }
     }
     
     if (unlikely(lb_common::atomic_load16(&trade_link_connect_) == 0))
@@ -367,8 +438,10 @@ namespace lb_api
     fill_req_user(body, req.fund_account_id.data(), req.branch_id.data(), info, req.client_seq_id);
     to_fte_str(body.security_id, req.security_id.data());
     body.market_id = map_api_market_to_fte(req.market_type); ///< 市场: FTE 与 API(=ATP) 值域相同, 直通
-    body.side = req.side;                                    ///< [待确认-联调] FTE side 字典未证实, 现按与 ATP 相同 ('1'买/'2'卖) 透传, 差异在此挂映射
-    body.order_type = req.order_type;                        ///< [待确认-联调] FTE order_type 字典未证实, 现按与 ATP 相同透传, 差异在此挂映射
+    body.side = req.side;                                    ///< side: 买卖/申赎与 FTE Side 同值同义（'1'/'2'/'D'/'E'），直通
+    char fte_order_type = req.order_type;                    ///< order_type: API(ATP) → FTE(按市场 SH/SZ 两套字典)
+    map_api_order_type_to_fte(req.order_type, req.market_type, fte_order_type);
+    body.order_type = fte_order_type;
     body.order_qty = req.order_qty;                          ///< 数量: API 与 FTE 均 ×100, 直传 (RUL-35)
     body.order_price = req.order_price;                      ///< 单位口径: 价×10000 直传
     body.stop_px = req.stop_price;
@@ -385,8 +458,11 @@ namespace lb_api
     to_fte_str(body.security_id, req.security_id.data());
     body.market_id = map_api_market_to_fte(req.market_type);
     body.side = req.side;
-    //todo: 待确认 ETF 申购赎回不区分市价类型，报文固定填 '2'。
-    body.order_type = req.order_type;
+    // ETF 申购/赎回不区分市价类型 → 固定按"限价"语义下发：
+    // 注意 SZ 限价码是 '1'、SH 是 '2'，不能硬编码 '2'（否则深市会被当作"本方最优"）。
+    char fte_order_type = ORDER_TYPE_FIX;
+    map_api_order_type_to_fte(ORDER_TYPE_FIX, req.market_type, fte_order_type);
+    body.order_type = fte_order_type;
     body.order_qty = req.order_qty;                          ///< 数量: API 与 FTE 均 ×100, 直传 (RUL-35)
     body.order_price = req.order_price;
     body.stop_px = req.stop_price;
@@ -870,8 +946,8 @@ namespace lb_api
     from_fte_str(out.account_id, er.account_id);
     from_fte_str(out.branch_id, er.branch_id);
     out.market_type = map_fte_market_to_api(er.market_id);
-    out.order_sys_no = fte_order_sys_no(er); ///< 被撤原单柜台委托号 (待确认: 取 order_id, 对齐 api-tmp-source)
-    out.client_seq_id = er.client_seq_id;    ///< 待确认: 撤单回报客户号即撤单请求号
+    out.order_sys_no = er.orig_clordno; ///确认: 原委托的客户订单号 → 把撤单结果关联回原委托（最关键的关联键）,是委托响应时的 clordno
+    out.client_seq_id = er.client_seq_id;    ///< 确认: 撤单请求里客户端自填的流水号，FTE 原样回显
     out.err_code = er_err_code(er);
     out.rej_api = 0;
 

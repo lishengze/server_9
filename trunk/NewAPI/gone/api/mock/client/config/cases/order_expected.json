@@ -7,15 +7,14 @@
     "branch_id": "0001",
     "side": "1",
     "order_type": "2",
-    "order_status": 0,
+    "order_status": 10,
     "policy_id": 0,
-    "market_type": 1,
-    "reserved": 0,
+    "market_type": 101,
     "security_id": "600007",
     "order_price": 250200,
-    "order_qty": 100,
+    "order_qty": 10000,
     "client_seq_id": null,
-    "rtn_type": 1,
+    "rtn_type": "1",
     "err_code": 0,
     "order_sys_no": null,
     "frozen_amount": null,
@@ -24,5 +23,10 @@
     "cancel_qty": 0,
     "order_time": null,
     "update_time": null
+  },
+  "_待确认": {
+    "待确认_market_type": "101=沪",
+    "已确认_order_status": "10=正报（FTE common::OrdStatus::kSended=10，见 fte/include/common/ute_types.h:891；实测委托确认即此值）",
+    "已确认_rtn_type": "'1'=内部执行（API RSP_TYPE_INTERNAL，char 型；实测 49=ASCII '1'）"
   }
 }

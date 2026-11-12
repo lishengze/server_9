@@ -1,6 +1,6 @@
 {
   "api_instance_name": "gw_multi_test_client",
-  "market_type": 1,
+  "market_type": 101,
   "fast_counter_type": 1,
   "speed_link_type": 1,
   "speed_counter_addr": {
@@ -16,10 +16,8 @@
   "heartbeat_interval": 5,
   "agw_user_login_timeout": 10,
   "send_queue_size_mb": 64,
-  "single_cust_per_link": false,
   "log_level": 1,
   "log_output_dir": "./api_log",
-
   "perf_test": {
     "enable": true,
     "duration_sec": 10,
@@ -36,9 +34,13 @@
       "order_type": "2",
       "security_id": "600007",
       "order_price": 250200,
-      "order_qty": 100,
+      "order_qty": 10000,
       "stop_price": 0,
-      "market_type": 1
+      "market_type": 101,
+      "_待确认_order_qty": "10000 = 100 股 ×100（RUL-35）"
     }
-  }
+  },
+  "_待确认_market_type": "101=沪市；与 FTE 实例市场、上场数据须一致，联调确认",
+  "need_multi_cust": 1,
+  "_待确认_need_multi_cust": "1=多客户（等价旧键 single_cust_per_link=false）；r21 起配置项改名"
 }

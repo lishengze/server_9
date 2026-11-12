@@ -44,7 +44,7 @@
       }
     ],
     "perf_test": {
-      "enable": true,
+      "enable": false,
       "duration_sec": 10,
       "tps": 8000,
       "warmup_sec": 3,
@@ -53,5 +53,8 @@
       "net_time_map_file": "/tmp/api_net_time_map_gw_plan.txt",
       "order_file": "cases/perf_order_request.json"
     }
+  },
+  "_待确认": {
+    "待确认_perf_enable": "功能测试阶段关闭（FTE 8000TPS 高负载易断链，会污染功能判定）；性能测试请单独置 true 并参考 result_contrast.md 口径"
   }
 }

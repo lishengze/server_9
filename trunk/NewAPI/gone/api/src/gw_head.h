@@ -749,6 +749,10 @@ public:
     int64_t order_qty;
     int64_t order_price;
     int64_t stop_px;
+    // POLICYID_FIX_20261112：FTE 侧 message::TradeOrderInfo 末尾有 PolicyID_def policy_id
+    // (uint16, 策略编号)，API 侧原缺此字段导致委托体 106B < FTE TradeOrderReqLayout 108B，
+    // 被 ccu_trade_impl 判为 "order req length 106 too short" 直接丢单。补齐后体长 108B 与 FTE 一致。
+    uint16_t policy_id;
     // TradeOrderInfo 展开结束
 
     void reset()
@@ -766,6 +770,7 @@ public:
         order_qty = 0;
         order_price = 0;
         stop_px = 0;
+        policy_id = 0;
     }
 
     std::string dump()
@@ -783,7 +788,8 @@ public:
            << "order_type: " << order_type << "\n"
            << "order_qty: " << order_qty << "\n"
            << "order_price: " << order_price << "\n"
-           << "stop_px: " << stop_px << "\n";
+           << "stop_px: " << stop_px << "\n"
+           << "policy_id: " << policy_id << "\n";
         return os.str();
     }
 
@@ -805,6 +811,7 @@ public:
         be64 = detail::HostToNetwork(static_cast<uint64_t>(order_qty));  memcpy(dest + off, &be64, 8); off += 8;
         be64 = detail::HostToNetwork(static_cast<uint64_t>(order_price)); memcpy(dest + off, &be64, 8); off += 8;
         be64 = detail::HostToNetwork(static_cast<uint64_t>(stop_px));    memcpy(dest + off, &be64, 8); off += 8;
+        be16 = detail::HostToNetwork(policy_id);                         memcpy(dest + off, &be16, 2); off += 2;  // POLICYID_FIX_20261112
         return off;
     }
 
@@ -827,6 +834,7 @@ public:
         memcpy(&be64, data + off, 8); order_qty = static_cast<int64_t>(detail::HostToNetwork(be64)); off += 8;
         memcpy(&be64, data + off, 8); order_price = static_cast<int64_t>(detail::HostToNetwork(be64)); off += 8;
         memcpy(&be64, data + off, 8); stop_px = static_cast<int64_t>(detail::HostToNetwork(be64)); off += 8;
+        memcpy(&be16, data + off, 2); policy_id = detail::HostToNetwork(be16); off += 2;  // POLICYID_FIX_20261112
         return true;
     }
 };

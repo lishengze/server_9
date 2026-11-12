@@ -159,7 +159,7 @@ int64_t order_qty;         ///< 委托数量
 int64_t leaves_qty;         ///< 未成交数量
 int64_t cum_qty;         ///< 累计成交数量
 char side;         ///< 买卖方向
-int64_t transact_time;         ///< 回报时间 -- 精度 todo
+int64_t transact_time;         ///< 回报时间 -- 精度,统一取纳秒;
 std::array<char, 64> user_info;         ///< 用户私有信息
 std::array<char, 16> order_id;         ///< 交易所订单编号, 取值为数字
 std::array<char, 10> cl_ord_id;         ///< 申报合同号,上交所：以QP1开头,表示为交易所保证金强制平仓；以CV1开头,表示为交易所备兑强制平仓；

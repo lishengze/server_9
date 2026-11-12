@@ -69,7 +69,7 @@ namespace lb_api
     /// 柜台自行校验；极速柜台返回 UNSUPPORTED_OP 或 COUNTER_OFFLINE 时回退 98。
     /// FPGA 仅沪深买卖且限价，市价返回 UNSUPPORTED_TYPE，不触发回退。
     /// 现实操作：向支持该业务的柜台提交客户委托。
-    /// @return api_errno，LBAPI_OK 表示已入发送队列；卖券还款 X 待确认，暂不支持。
+    /// @return api_errno，LBAPI_OK 表示已入发送队列；卖券还款 X 还是走非加速模式。
     virtual int32_t order_insert(const OrderReq &req) = 0;
 
     /// 委托撤单(发送到极速柜台)

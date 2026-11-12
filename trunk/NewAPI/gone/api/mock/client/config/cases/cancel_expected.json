@@ -6,10 +6,13 @@
     "fund_account_id": "1000000000000001",
     "account_id": "A12345678901",
     "branch_id": "0001",
-    "market_type": 1,
+    "market_type": 101,
     "order_sys_no": null,
     "client_seq_id": null,
     "err_code": 50046,
     "rej_api": 0
+  },
+  "_待确认": {
+    "待确认_err_code": "50046 = FTE kOrigOrderWrongStatus（原委托状态无法撤单）：因前置委托已成交；若要测『撤单成功』需改为未成交委托并置 err_code=0"
   }
 }

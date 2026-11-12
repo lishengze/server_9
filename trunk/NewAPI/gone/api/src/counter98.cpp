@@ -288,6 +288,14 @@ namespace lb_api
     msg.side = side;
     using lb_counter98::AgwOrdType;
     // todo : 待确认，委托市价类型如何映射98字典
+    // 映射依据（2026-11-11 按已确认字典 constants_agw_external.h::AgwOrdType 4 值）：
+    //   API '2' 限价        → kFixed('2')
+    //   API '4' 本方最优    → kLocalOptimal('U')
+    //   API '3' 五档剩转限价 → kTransferFixed('K')（仅沪市语义）
+    //   API '1'/'5'/'6'/'7'（五档IOC/对手方最优/FAK/FOK）→ kMarket('1') 市价
+    //      ⚠️ 语义收窄：98 无对应精细类型，只能按市价下发；对手方最优按市价成交可能偏离客户预期，
+    //         若业务不接受该降级，需在 deal_order_req 中前置拒绝（当前未实现，属待确认项）。
+    //   default：保持原值透传（未识别类型），由柜台校验拒绝 → 回报 err 便于联调定位。
     switch (req.order_type)
     {
     case ORDER_TYPE_FIX:
@@ -318,6 +326,12 @@ namespace lb_api
   char counter98::api_order_side(uint8_t business_type, char side)
   {
     // todo : 待确认，98 的委托方向和业务类型如何映射回 api 的委托方向字典
+    // 说明（2026-11-11）：API 侧 ORDER_SIDE_* 已按 98 CTE AgwSide 41 值补齐（同名同值），
+    //   因此"非折叠业务"的 side 直通即可；仅以下三类业务在 API 侧被折叠进 side，
+    //   需由 (business_type, side) 反推为 API 侧别：
+    //     kSubscriptionRatio + side '9' → ORDER_SIDE_SUBSCRIPTION（配股认购）
+    //     kCreditAuction     + '1'/'2'  → ORDER_SIDE_COLLATERAL_BUY/SELL（担保品买/卖）
+    //     kMarginTrading     + '1'/'2'  → ORDER_SIDE_MARGIN_BUY/SHORT_SELL（融资买/融券卖）
     using lb_counter98::AgwBusinessType;
     if (business_type == AgwBusinessType::kSubscriptionRatio && side == '9')
       return ORDER_SIDE_SUBSCRIPTION;
@@ -334,10 +348,31 @@ namespace lb_api
     return side;
   }
 
-  char counter98::api_order_type(char /*order_type*/)
+  char counter98::api_order_type(char order_type)
   {
     // todo: 待确认 98 的委托市价类型如何映射回 API 字典，暂填 0。
-    return 0;
+    // 映射依据（2026-11-11 按已确认字典 AgwOrdType 4 值 → API ORDER_TYPE_*）：
+    //   kFixed('2')           → ORDER_TYPE_FIX('2')      限价
+    //   kLocalOptimal('U')    → ORDER_TYPE_BFZY('4')     本方最优
+    //   kTransferFixed('K')   → ORDER_TYPE_JDSZ('3')     最优五档即时成交剩余转限价
+    //   kMarket('1')          → 返回 0（API 字典无"通用市价"值；'1' 在 API 是"最优五档即时成交剩余撤销"，
+    //                            不可混用，故以 0=未知返回，由调用方按原委托记录还原类型）
+    using lb_counter98::AgwOrdType;
+    // 注: AgwOrdType::kXxx 为 vendor 侧 static const（定义在 .cpp），非 constexpr，
+    //     不能用作 switch case 标签，故用 if 比较。
+    if (order_type == AgwOrdType::kFixed)
+    {
+      return ORDER_TYPE_FIX;
+    }
+    if (order_type == AgwOrdType::kLocalOptimal)
+    {
+      return ORDER_TYPE_BFZY;
+    }
+    if (order_type == AgwOrdType::kTransferFixed)
+    {
+      return ORDER_TYPE_JDSZ;
+    }
+    return 0; ///< kMarket 及其它 → 0 = 未知（见上说明；行为与旧实现一致）
   }
 
   // deal_order_req: 所有业务共用支持判定、会话查询及发送队列。
@@ -1125,24 +1160,41 @@ namespace lb_api
     return LBAPI_OK;
   }
 
+  // 定长字段满宽拷贝：清 0 后拷入全部有效字符（不因 dst_size-1 截断），尾部保持 NUL
+  // 背景: str_copy_format 最多拷 dst_size-1 字节, 16 字节资金账号会被截成 15 位,
+  //       导致 FTE CheckPasswd 的 key(fund_account_id) 匹配不到 → kPasswdErr(4)。
+  static void copy_fixed_full(char *dst, size_t dst_size, const char *src, size_t src_size)
+  {
+    if (dst == nullptr || dst_size == 0)
+    {
+      return;
+    }
+    std::memset(dst, 0, dst_size);
+    size_t n = strnlen(src, src_size);
+    if (n > dst_size)
+    {
+      n = dst_size; ///< 允许占满整个定长字段（此时无 NUL 终止符）
+    }
+    std::memcpy(dst, src, n);
+  }
+
   void counter98::build_cust_login_event(const LoginReq &req, acc_login_event_info &o_info)
   {
     o_info.cust_req_no = req.client_req_no;
-    lb_common::comm_utils::str_copy_format(o_info.cust_id, req.cust_id.data(), sizeof(o_info.cust_id));
-    lb_common::comm_utils::str_copy_format(o_info.fund_account_id, req.fund_account_id.data(),
-                                           sizeof(o_info.fund_account_id));
-    lb_common::comm_utils::str_copy_format(o_info.account_id, req.account_id.data(), sizeof(o_info.account_id));
-    lb_common::comm_utils::str_copy_safe(o_info.branch_id, (int32)sizeof(o_info.branch_id),
-                                         req.branch_id.data(), (int32)sizeof(req.branch_id));
+    copy_fixed_full(o_info.cust_id, sizeof(o_info.cust_id), req.cust_id.data(), req.cust_id.size());
+    copy_fixed_full(o_info.fund_account_id, sizeof(o_info.fund_account_id), req.fund_account_id.data(),
+                    req.fund_account_id.size());
+    copy_fixed_full(o_info.account_id, sizeof(o_info.account_id), req.account_id.data(), req.account_id.size());
+    copy_fixed_full(o_info.branch_id, sizeof(o_info.branch_id), req.branch_id.data(), req.branch_id.size());
 
     o_info.order_way_ext[0] = req.order_way_ext[0];
     o_info.order_way_ext[1] = req.order_way_ext[1];
     std::memcpy(o_info.session, agw_session, sizeof(o_info.session)); ///< agw 登录应答回填的会话号
     // 用户数组源不保证 NUL 后清零: 经 str_copy_format 规范化(有效字符后全\0)
-    lb_common::comm_utils::str_copy_format(o_info.password, req.password.data(), (int32)sizeof(o_info.password));
-    lb_common::comm_utils::str_copy_format(o_info.user_info, req.user_info.data(), (int32)sizeof(o_info.user_info));
-    lb_common::comm_utils::str_copy_format(o_info.client_feature_code, req.client_feature_code.data(),
-                                           (int32)sizeof(o_info.client_feature_code));
+    copy_fixed_full(o_info.password, sizeof(o_info.password), req.password.data(), req.password.size());
+    copy_fixed_full(o_info.user_info, sizeof(o_info.user_info), req.user_info.data(), req.user_info.size());
+    copy_fixed_full(o_info.client_feature_code, sizeof(o_info.client_feature_code),
+                    req.client_feature_code.data(), req.client_feature_code.size());
     o_info.user_origin = 1;
     o_info.filled = 0;
   }
