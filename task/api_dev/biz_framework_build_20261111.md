@@ -51,6 +51,17 @@
 
 > 适配只解决了 `PktIPOAndXjbFundFrzReport` 一类问题（ATP 头里有），但 `not_need_check_pwd`、大宗/CTE/GRisk/信用T0 等**在整机均无定义**，无法靠路径解决。
 
+> **2026-11-12 跟踪：`external_query.h` 的适配已恢复为原始实现**（`GetPacket()->not_need_check_pwd`）。
+> 依据：`Common/util/include/messages_atp_te.h` 已于 2026-11-12 同步为 ATP 新版，
+> `PktExternalQuery` 含 `Bool_def not_need_check_pwd`（该文件第 2855 行）；用工程真实编译参数
+> （`build_root/compile_commands.json`）对 `cust_pwd_checker.cpp`、`order_query.cpp`、
+> `engine_business_processor.cpp` 做 `-fsyntax-only` 均 **rc=0 / 0 error**。
+> ⚠️ **耦合前提**：该 util 头同步目前是 gt_trunk 的**未提交工作区改动**（HEAD 版无该字段），
+> 恢复后的 `external_query.h` 必须与 util 头同步**同批提交**，否则干净 HEAD 检出仍会编译失败。
+> 语义影响：原适配是"进程内缓存、不写报文"，而 `not_need_check_pwd` 由上上游按报文下发，
+> 缓存版读到的恒为 0 → `cust_pwd_checker` 会退回"一律验密"；恢复后按报文取标志，语义正确。
+> 备份 `external_query.h.bak_abfver` 已可删除（等 util 头同步提交后）。
+
 ## 4. 与 DSE `exit=157` 的关系（结论）
 
 - 自编 dse 链接时用 8 个 **stub 空归档**即可通过（说明 dse 未直接引用 abf_te/query/md/detail 的符号）；
