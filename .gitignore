@@ -114,3 +114,7 @@ trunk/NewAPI/gone/api/lib/perf_client
 trunk/NewAPI/gone/api/mock/*/build/
 trunk/NewAPI/common/lib/*.a
 trunk/NewAPI/common/build/
+
+# NewAPI 测试运行产物（2026-11-12）：mock_client 的报告/分析、客户端日志目录均为运行期生成，勿入库
+trunk/NewAPI/gone/api/mock/client/result/
+trunk/NewAPI/gone/api/mock/client/api_log/
