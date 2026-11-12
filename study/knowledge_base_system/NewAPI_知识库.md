@@ -55,6 +55,7 @@
 42. [仓库目录核对与 api-compare 参考模块](#42-仓库目录核对与-api-compare-参考模块2026-11-05)
 43. [SVN r21/r22 上游接口变更与冲突处置](#43-svn-r21r22-上游接口变更与冲突处置2026-11-06)
 44. [r21 冲突解决与本地编译适配（已通过）](#44-r21-冲突解决与本地编译适配已通过2026-11-06)
+45. [三方字典映射：API vs 98 CTE vs FTE](#45-三方字典映射api-vs-98-cte-vs-fte2026-11-10)
 
 ---
 
@@ -2615,3 +2616,90 @@ trunk/NewAPI/
 2. 上游删除的 10 个查询用例需适配 `client_seq_id` 与批量查询接口。
 3. 47 处 `待确认/todo` 全部依赖真实柜台联调。
 4. 功能/性能回归（`--plan` 双柜台 5/5、743 项离线检查）需在柜台环境执行。
+
+---
+
+## 45. 三方字典映射：API vs 98 CTE vs FTE（2026-11-10）
+
+> 完整分析（逐域明细、FTE 按市场映射表、各报文映射清单、优先级与验证方法）见 `task/api_dev/dict_mapping_20261110.md`。本节留检索用结论。
+
+### 45.1 三个字典源
+
+| 方 | 文件 | 形态 |
+|----|------|------|
+| API | `gone/api/include/order_trade_type.h` | `lb_api::Xxx` 常量（136 条） |
+| 98 CTE | `gt_trunk/DYS-FRAMEWORK/gw_external_msg/V2/external/{include,src}/...constants_agw_external.{h,cpp}` | `atp::gw::Xxx` 结构体（37 个，取值分散在 .h/.cpp） |
+| FTE | `gt_trunk/DYS-FRAMEWORK/fte/include/common/ute_types.h`（+ `src/common/ute_types.cpp`） | `common::Xxx` 结构体（71 个） |
+
+### 45.2 关键结论（两条 P0）
+
+1. **`map_fte_ord_status()` 用错字典（P0）**：FTE 回报 `ord_status` 字段类型是 `OrdStatus_def`（= `common::OrdStatus`），取值与 CTE/API **同义**（0 新报/1 部成/2 全成/3 部成部撤/4 已撤/5 部撤/8 拒/9 未申报/10 正报/11 待撤/12 部成待撤），**应直通**；当前按"0 空闲/1 新报/2 部成/3 全成/4 撤中/5 全撤/8 废"转换 → 除 0/8 外全错。
+2. **`order_type` 不能直通（P0）**：FTE 委托类型**按市场两套字典**，同字符不同义：
+
+| 字符 | SH(101) `SHOrderType` | SZ(102) `SZOrderType` |
+|:----:|----------------------|----------------------|
+| `'1'` | 五档即时成交剩余撤销 | **限价** |
+| `'2'` | **限价** | 本方最优 |
+| `'3'` | 五档即时成交剩余转限价 | 对手方最优或限价 |
+| `'4'` | 本方最优 | 即时成交剩余撤销(IOC) |
+| `'5'` | 对手方最优 | 全额成交或撤销(FOK) |
+| `'6'` | — | 五档全额成交或撤销 |
+
+> 代码依据：`uplink_biz_processor.cpp` 的 `FillOrderFieldsSH` **直接透传** `order_type`；`FillOrderFieldsSZ` 用 `fte_to_sz_order_type[]`（以 `SZOrderType` 值域索引）转换。
+> ⇒ API(ATP 7 值统一字典) 必须：`'2'`(限价)→SZ `'1'`、`'4'`(本方最优)→SZ `'2'`、`'5'`(对手方最优)→SZ `'3'`、`'6'`→SZ `'4'`、`'7'`→SZ `'5'`；`'1'/'3'` 在 SZ、`'6'/'7'` 在 SH 无对应 → 应返回 `LBAPI_ERR_UNSUPPORTED_TYPE`。
+
+### 45.3 三方字典差异速查
+
+| 域 | API | 98 CTE | FTE | 要点 |
+|----|:---:|:------:|:---:|------|
+| Market | 4（0/101/102/109） | 6（+105/106 港股通） | 13（+103/107/108/110/111/112/199） | API 最窄，回报越界需兜底 |
+| OrdType | 7（`1`~`7`） | 4（`1` 市价/`2` 限价/`U` 本方最优/`K` 市价剩转） | **SH 5 / SZ 6（按市场）** | 三方三套，**同值不同义** |
+| Side | 16（含 `S/T/U/V/W/X`） | 41 | 47 | API 把业务折叠进 side；98/FTE 用 side+business_type |
+| OrdStatus | 11 | 11 | 13（+13/99） | **完全同义可直通** |
+| ExecType | 5（`0/1/4/8/F`） | 6（+`J` 黄金） | 7（+`K` 模拟） | API 缺 J/K |
+| BusinessType | **无字典** | 54 | 20（两侧同名同值：201/203/204/14/12） | 建议补 API 常量 |
+| TimeInForce | **无字典** | 4（`0/3/4/9`） | 无独立字典（由 order_type 推导） | 建议补 API 常量 |
+
+### 45.4 98 侧映射口径（与 `开发者升级说明.txt` 一致）
+
+委托类型：`'2'`→`'2'`；`'4'`(本方最优)→`'U'`；`'3'`(五档剩转限价)→`'K'`；其余市价类 `'1'/'5'/'6'/'7'`→`'1'`（市价，**语义收窄**，需业务确认）。回报中 `order_type` 暂填 0 表示未知，调用方应从原委托记录取类型。
+
+### 45.5 修复与字典补齐（2026-11-10 已实施）
+
+| 项 | 改动 |
+|----|------|
+| P0-1 | `gw_counter_direct.cpp::map_fte_ord_status()` 改为**直通**（0~12 原值返回），仅 `13 已处理`→`ORDER_STATE_NEW`、`99 无`→`ORDER_STATE_UNSENT` 兜底 |
+| P0-2 | 新增 `map_api_order_type_to_fte(api_type, market_id, &o_fte_type)`：SH 取 5 值、SZ 取 5 值；`deal_order_req` 入队前校验，不支持返回 `LBAPI_ERR_UNSUPPORTED_TYPE`（不触发 98 回退） |
+| ETF | `build_etf_order_msg` 不再硬编码 `'2'`，改为按市场取限价码（SH `'2'` / SZ `'1'`）——原写法在 SZ 会被当作"本方最优" |
+| 字典 | `order_trade_type.h` 补齐 96 个常量：`MARKET_TYPE_HKT_SH/SZ`、`ORDER_SIDE_*`(+31)、`ORDER_TYPE_98_*`(4)、`RSP_TYPE_GOLD`、`BUSINESS_TYPE_*`(54)、`TIME_IN_FORCE_*`(4) |
+
+**两点关键取舍**：
+1. `ORDER_TYPE_*` 主字典**保持 ATP 7 值**，新增 `ORDER_TYPE_98_*` 承担 98 转换——因 CTE `'1'`=市价与 ATP `'1'`=最优五档即时成交剩余撤销**同值不同义**，无法合并；若要改主字典语义属对外契约变更，需单独决策。
+2. 深市无"五档 IOC / 五档剩转限价"、沪市无 FAK/FOK → 显式拒绝，而非静默降级。
+
+**验证**：clean 编译四目标通过；脚本核对字典覆盖 41/6/6/54/4/4 全命中、232 常量无重名；与 FTE 实报文往返仍需联调。
+
+### 45.6 待确认项复盘（2026-11-10，38 标记 / 20 逻辑项）
+
+> 完整清单（含逐项影响与确认方式）见 `task/api_dev/todo_review_20261110.md`。
+
+- **数量变化**：字典修复前 47 处 → 现 **38 处**（本轮闭环 9：gw 7 + `api_interface.h` 1 + `common_struct.h` 1）。
+- **三项 P0（静默出错，建议列为联调首日必验）**：
+  1. `counter98.cpp:819/1536` —— `AgwMsgLogin` 无错误字段，现语义"收到同号(3)即登录成功"；若柜台失败也回同号 → **登录假成功**，后续全部拒单。
+  2. `counter98.cpp:392` —— ETF `business_type` 取 12，另有候选 2(质押式回购)；**判错可能被当回购处理**（资金/持仓风险）。
+  3. `counter98.cpp:8` —— 报文 `host_to_network=false`（主机序直通），**判错则全字段字节序错乱**（现象离谱、极难排查）。
+- **两处易被忽略的行为缺口**：
+  - `order_trade_type.h:50` 卖券还款 `X`：`gw_counter_direct` 返回 `UNSUPPORTED_OP`、`counter98` side 分派**无 `X` 分支** → 该业务**全链路不可用**（需定 98 侧 side/business_type 组合）。
+  - `counter98.cpp:1867` 任意柜台错误码**统一折叠为 `LBAPI_ERR_INVALID_PARAM`** → 客户端拿不到真实拒绝原因，排障成本高（无标记，人工复核发现）。
+- **更正一处旧判断**：`gw_counter_direct` 对 `S/T/U/V/W/X` 返回 `UNSUPPORTED_OP` **属设计正确**——该错误会触发 98 回退，两融/担保品/配股由 `counter98` 承接（`counter98.cpp:400~430` 已实现）。此前"会被拒单"的说法不成立。
+- **剩余待确认几乎全部依赖真实柜台联调**（98 AGW / FTE），离线无法闭环；`struct_req.h` 14 条"回报未知"属协议资料缺口。
+
+### 45.7 gw counter 功能测试（登录/委托/撤单）就绪度（2026-11-10）
+
+> 详见 `task/api_dev/todo_review_20261110.md` §6。测试链路：`mock_client --plan` → `libg1api` → `gw_counter_direct` → FTE(33001) → tgw_simulator。
+
+- **前置硬约束**：`api_impl::login()` 第 1 步是 **98 AGW 同步登录**（`api_instance.cpp:394` → `counter98::deal_agw_login`）。**98 mock(9003) 不通则极速登录根本不会发起**。
+- **阻断级 4 项**：① 配置 `market_type` 仍是旧字典 `1`（须 101/102，否则 `deal_order_req` 直接 `INVALID_PARAM`）；② 98 mock 未实现 `AgwMsgSync/SyncFinish`（测试配置勿设 `counter98_report_sync`，否则等同步超时）；③ FTE 部署产物(10-19)落后于源码(11-02) 需重编；④ 用例数据须与 FTE 上场数据三方一致（pbu 空格填充、密码取自 `ext_mod_user_info_ute_*.xml`）。
+- **回报单号口径（已核实正确，勿再改）**：`fill_er_common()` 用 `er.clordno`（委托/成交回报 = FTE 内部单号，客户撤单时原样回传）；`deal_cancel_rsp()` 用 `er.orig_clordno`（撤单回报 = 被撤原单号）。依据 FTE `gw_external_message.cpp:641 FillWithInternalOrderInfo()`：`orig_clordno` 仅在撤单路径（`uplink_biz_processor.cpp:1468/1591`）被赋值，普通委托恒 0。
+- **范围界定**：gw 测试只走 FTE，**98 的 A 组字典/回报待确认项与本目标无关**（98 仅承担 AGW 登录）；D1/D2 仅在异常场景暴露。
+- **已就位**：心跳 ×1000（API 侧 `gw_counter_direct.cpp:502`，FTE 直赋）、业务链接就绪判断 `trade_link_ready()`、`order_type` 按市场映射（P0-2 已修）。

@@ -303,7 +303,7 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
 2026年10月13日
     1. 撤单里的 order_no 必填[FTE内部生成]， order_id 非必填，交易所所需。
 
-    2.既然 对于撤单请求来说，FTE 需要的是 ​​orig_clordno​，那么在委托响应回报时，
+    2.既然 对于撤单请求来说，FTE 需要的是 ​​orig_clordno ​，那么在委托响应回报时，
         可以把这个字段通过 OrderRtn 的 order_sys_no 返回给客户端。
         然后客户端在撤单时，直接使用这个字段即可，是否就不需要中间的缓存了？
 
@@ -340,7 +340,7 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
 2026年10月19日
     任务: gw_counter 撤单优化
     1. 先对当前 gw_counter 的撤单逻辑进行优化，优化点在于：
-        对于撤单请求来说，FTE 需要的是 ​​orig_clordno​，其他是非必填，那么在处理委托响应回报时，
+        对于撤单请求来说，FTE 需要的是 ​​orig_clordno ​，其他是非必填，那么在处理委托响应回报时，
         可以把这个字段通过 OrderRtn 的 order_sys_no 返回给客户端。
         然后客户端在撤单时，直接使用这个字段即可，不需要额外的的缓存了。
     2. 按照这个思路，设计完整的优化方案 输出到 task/api_dev/api_compare.md 中。
@@ -365,3 +365,29 @@ svn commit -m  "[NGTP-T202612257] 增加测试客户端和柜台信息"
 
     任务:代码合并
     1. callback_handler.cpp​ 
+
+2026年11月10日
+    任务:字典映射
+    详细描述:
+        1. 当前api的字典是以98对接的 CTE 柜台为准，包括，市场，买卖类型等等。那么到 gw_counter 的api层面就会有对应的转换；
+        2. 98 CTE 对应的字典文件是: 
+            /home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/gw_external_msg/V2/external/include/gw/external/codec/constants_agw_external.h
+            /home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/gw_external_msg/V2/external/src/gw/external/codec/constants_agw_external.cpp            
+        3. gw_counter 对接FTE柜台的字典文件是: /home/lsz/code/work/gt_trunk/DYS-FRAMEWORK/fte/include/common/ute_types.h
+        4. 新 api 本地的字典定义在 trunk/NewAPI/gone/api/include/order_trade_type.h 中； 
+        
+    任务要求：
+        1. 仔细比对 api 本地的字典定义 和 98 CTE 对应的字典文件 的定义， 校验 本地的字典已经设置的部分和98 CTE的是否有
+           不一致的地方，缺少的地方， 将这些信息统计出来。
+
+        2. 仔细对比 98 CTE字典和FTE柜台字典的差别，然后考虑 ​gw_counter_direct.cpp 中对应各类请求和回报中的字段的
+           映射转换。
+
+        3. 将上面两个要求的分析统计，输出到一份专门的文档中，用于后期的更改与开发。
+
+    任务：部分修复
+    概述: 目标是能完成 gw counter 的 登陆，委托，撤单 等相关业务功能测试。 
+    1. 先分析如果要完成这个目标，必须完成哪些部分的修改？
+       补充到刚刚的文档中。
+
+    任务: 

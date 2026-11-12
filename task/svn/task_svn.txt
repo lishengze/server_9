@@ -231,3 +231,131 @@ svn update                                      # 同步工作副本到 r23
 # ./build.sh Release -DBUILD_MOCK=ON            # 期望四目标 Built target：lbcommon/g1api/perf_client/mock_client
 # nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -E "on_event|on_counter_status"   # 新接口符号在
 # nm -D trunk/NewAPI/gone/api/lib/libg1api.so | grep -cE "on_error|err_event_type"     # 期望 0
+
+2026年11月12日
+    任务: 当前 NewAPI（API）未提交改动的 SVN 提交命令
+
+    说明:
+      1. 工作副本：docker otc 容器内 /mnt/work/api_trunk/trunk
+         （URL https://jyjs2.svn.gtja.net/svn/NewAPI/trunk；本批从 r23 起，已提交 r24~r30，
+         工作副本根仍显示 Revision 23，属未 update 的混合版本，正常）。
+      2. 初盘 21 个已版本化文件为 M（已随 r24~r30 提交）；当前仅剩 2 个（见第零步）；**无新增版本化文件，无需 svn add**。
+      3. 未版本化项一律不提交：lib/{mock_client,perf_client}、mock/*/build/、mock/client/api_log/、
+         mock/client/result/、mock/client/*.log。result/ 在 SVN 未版本化（git 侧跟踪，两套制度不同），
+         不要 svn add。
+      4. 必须 LANG=zh_CN.utf8，否则中文文件名触发 E000022。
+      5. task/、work_log/、study/ 属 git 体系文件，不进 SVN；本批只提交 trunk/NewAPI 下代码与配置。
+      6. **执行状态（2026-11-12 12:45 补记）**：本文件第 1~6 批已由用户提交为 SVN **r24~r30**；
+         当时未先删诊断块，故 r24~r30 含 3 处 `[临时诊断]`。诊断块随后已在代码中删除
+         （git 提交 d7acaa3），SVN 工作副本仅剩 2 个文件待补提交，见第零步。
+
+# ============================================================
+# 第零步（2026-11-12 12:45 更新）：本批只剩"删除临时诊断块"
+# ============================================================
+# 现状：3 处 [临时诊断] 块已随 r24~r30 提交，之后在代码中删除（git d7acaa3），
+#       因此 SVN 工作副本剩 2 个文件为 M，差异为纯删除、无功能变化（删除后用例复测 5/5 通过）：
+#         NewAPI/gone/api/src/gw_counter_direct.cpp     （DIAG_ORDER、DIAG_LOGIN 两块）
+#         NewAPI/gone/api/src/single_socket_engine.cpp  （DIAG_SEND 一块）
+#
+# 0.1 确认差异只有诊断删除（应只见 DIAG_/临时诊断 的 - 行）
+cd /mnt/work/api_trunk/trunk
+svn diff NewAPI/gone/api/src/gw_counter_direct.cpp NewAPI/gone/api/src/single_socket_engine.cpp | grep -c '^+[^+]'   # 期望 0（无新增行）
+grep -rn "DIAG_\|临时诊断" NewAPI/gone/api/src | wc -l                                                            # 期望 0
+#
+# 0.2 补提交
+svn commit -m "[NewAPI] 删除临时诊断日志（DIAG_ORDER / DIAG_LOGIN / DIAG_SEND）" \
+  NewAPI/gone/api/src/gw_counter_direct.cpp \
+  NewAPI/gone/api/src/single_socket_engine.cpp
+#
+# 0.3 校验
+svn status | grep -E '^[MC]'      # 期望无输出
+svn info | grep '^Revision'       # 期望 >= r31
+
+# ============================================================
+# 第一步：提交前自检
+# ============================================================
+svn status | grep -c '^C'                      # 冲突数，期望 0
+grep -rnE -e '<<<<<<<' -e '>>>>>>>' NewAPI | wc -l # 冲突标记，期望 0
+svn status | grep -E '^[MAD]' | wc -l              # 期望 21（第零步只是删除诊断，不改文件数）
+
+# ============================================================
+# 第二步：分批提交（按风险由低到高，6 批合计 21 个文件）
+# ⚠️ 以下 6 批已于 2026-11-12 提交为 r24~r30，**留档查阅，勿重复执行**；
+#    当前唯一待提交的是第零步的 2 个文件（诊断块删除）。
+# ============================================================
+
+# ---------- 第 1 批（低风险：测试数据与连接配置，9 个）----------
+svn commit -m "[NewAPI] 测试用例与连接配置按 FTE 实测口径校准（market_type 101 / order_qty x100 / need_multi_cust）" \
+  NewAPI/gone/api/mock/client/config/cases/cancel_expected.json \
+  NewAPI/gone/api/mock/client/config/cases/login_expected.json \
+  NewAPI/gone/api/mock/client/config/cases/order_expected.json \
+  NewAPI/gone/api/mock/client/config/cases/order_request.json \
+  NewAPI/gone/api/mock/client/config/cases/perf_order_request.json \
+  NewAPI/gone/api/mock/client/config/cases/trade_expected.json \
+  NewAPI/gone/api/mock/client/config/connection_config_gw_multi.json \
+  NewAPI/gone/api/mock/client/config/connection_config_gw_single.json \
+  NewAPI/gone/api/mock/client/config/test_plan_gw.json
+
+# ---------- 第 2 批（中风险：测试客户端构建与报告字段，2 个）----------
+svn commit -m "[NewAPI] mock_client: 修正 API 头文件搜索路径；rtn_type 按字符输出（与 side/order_type 口径一致）" \
+  NewAPI/gone/api/mock/client/CMakeLists.txt \
+  NewAPI/gone/api/mock/client/src/test_case_runner.cpp
+
+# ---------- 第 3 批（核心：委托报文体长修复，2 个）----------
+# 背景：FTE TradeOrderReqLayout=108B，API 侧 TradeOrderReq 原缺 PolicyID_def policy_id（2B），
+#       组包仅 106B，被 ccu_trade_impl 判 "order req length 106 too short" 丢单。
+#       补字段后体长 108B，GW 用例委托/成交回报由 FAIL 转 PASS。
+svn commit -m "[NewAPI] 修复委托请求体缺 policy_id 导致 FTE 拒单（体长 106->108B，对齐 TradeOrderReqLayout）" \
+  NewAPI/gone/api/include/gw_head.h \
+  NewAPI/gone/api/src/gw_head.h
+
+# ---------- 第 4 批（中风险：字典补齐与注释，3 个）----------
+svn commit -m "[NewAPI] 补齐 98 CTE 市场/侧别/委托类型字典（含 105/106 港股通），校正字段注释" \
+  NewAPI/gone/api/include/api_interface.h \
+  NewAPI/gone/api/include/common_struct.h \
+  NewAPI/gone/api/include/order_trade_type.h
+
+# ---------- 第 5 批（高风险：gw/counter98 报文映射与登录会话，4 个）----------
+# 依赖第零步：本批两个 .cpp 含诊断块，未删则随本批上线（逐笔 info 日志）。
+svn commit -m "[NewAPI] gw/counter98: 委托类型按市场映射、登录与会话字段 trim 及回填修正" \
+  NewAPI/gone/api/src/gw_counter_direct.cpp \
+  NewAPI/gone/api/src/counter98.cpp \
+  NewAPI/gone/api/src/counter98.h \
+  NewAPI/gone/api/src/single_socket_engine.cpp
+
+# ---------- 第 6 批（低风险：mock 98 柜台，1 个）----------
+svn commit -m "[NewAPI] mock 98 柜台: 定长字段按 trim 语义比较（与 API 空格填充对齐）" \
+  NewAPI/gone/api/mock/98_counter/src/client_session.cpp
+
+# ============================================================
+# 第三步：提交后校验（缺一步都不算完成）
+# ============================================================
+export LANG=zh_CN.utf8
+svn status | grep -E '^[MC]'                     # 期望：无输出（M/C = 0）
+svn info | grep '^Revision'                  # 期望：r23+6（无他人提交时即 r29）
+svn log -l 6 | grep -E '^r[0-9]+'                 # 期望：看到上述 6 条提交信息
+svn update                                       # 同步工作副本到 HEAD
+
+# 未版本化项抽查（应仍为 ?，说明没有被误加）
+svn status | grep '^?' | grep -E 'build|result|api_log|lib/' | wc -l
+
+# ============================================================
+# 第四步：回滚方式（任一批有问题时）
+# ============================================================
+# 单批回滚（示例：回滚第 3 批，N 为该提交版本号）：
+# svn merge -c -N .            && svn commit -m "[NewAPI] revert rN (policy_id 修复)"
+# 单文件回到 HEAD：svn revert NewAPI/gone/api/include/gw_head.h
+
+# ============================================================
+# 附：本批文件分组速查（21 个）
+# ============================================================
+# 第1批 测试数据/配置 9：cases/{cancel_expected,login_expected,order_expected,order_request,
+#        perf_order_request,trade_expected}.json、connection_config_gw_{multi,single}.json、test_plan_gw.json
+# 第2批 客户端 2：mock/client/CMakeLists.txt、mock/client/src/test_case_runner.cpp
+# 第3批 报文体 2：include/gw_head.h、src/gw_head.h
+# 第4批 字典/注释 3：include/{api_interface,common_struct,order_trade_type}.h
+# 第5批 gw/柜台 4：src/{gw_counter_direct,counter98}.cpp、src/counter98.h、src/single_socket_engine.cpp
+# 第6批 mock 柜台 1：mock/98_counter/src/client_session.cpp
+#
+# 与 git 的关系：本仓库同时用 git 管体系文件（task/ work_log/ study/），SVN 只管 trunk/NewAPI 代码，
+# 两套互不覆盖；提交 SVN 后 git 侧仍会显示同样文件为 M，属正常（git 提交按三仓纪律另行处理）。
